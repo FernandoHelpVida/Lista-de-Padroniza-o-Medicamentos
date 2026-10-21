@@ -6,6 +6,7 @@ export interface UserProfile extends RecordModel {
   email: string
   name?: string
   avatar?: string
+  role?: 'admin' | 'comum'
 }
 
 interface AuthContextType {
@@ -72,7 +73,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const isAdmin =
-    user?.email?.toLowerCase() === 'fernandofernandes@helpvida.com.br' || Boolean(user?.is_admin)
+    user?.email?.toLowerCase() === 'fernandofernandes@helpvida.com.br' ||
+    user?.role === 'admin' ||
+    Boolean(user?.is_admin)
 
   return (
     <AuthContext.Provider

@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-10-21T21:11:37.806Z",
+  "generatedAt": "2026-10-21T21:17:37.749Z",
   "collections": [
     {
       "name": "users",
       "type": "auth",
       "apiRules": {
-        "list": "id = @request.auth.id",
-        "view": "id = @request.auth.id",
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
         "create": "",
-        "update": "id = @request.auth.id",
+        "update": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
         "delete": "id = @request.auth.id"
       },
       "fields": [
@@ -37,6 +37,13 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["admin", "comum"]
         }
       ],
       "indexes": [
@@ -105,6 +112,146 @@
         "CREATE INDEX idx_med_status ON medicamentos (status)",
         "CREATE INDEX idx_med_classe ON medicamentos (classe)",
         "CREATE INDEX idx_med_status_classe ON medicamentos (status, classe)"
+      ]
+    },
+    {
+      "name": "historico_importacoes",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin'",
+        "delete": "@request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "nome_arquivo",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "total_itens",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "criados",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "atualizados",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "inalterados",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ignorados",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "usuario",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_hist_imp_created ON historico_importacoes (created DESC)",
+        "CREATE INDEX idx_hist_imp_usuario ON historico_importacoes (usuario)"
+      ]
+    },
+    {
+      "name": "solicitacoes",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "medicamento",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "medicamentos"
+        },
+        {
+          "name": "solicitante",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "justificativa",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["Pendente", "Aprovada", "Atendida", "Negada"]
+        },
+        {
+          "name": "resposta_comissao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_solic_status ON solicitacoes (status)",
+        "CREATE INDEX idx_solic_medicamento ON solicitacoes (medicamento)",
+        "CREATE INDEX idx_solic_solicitante ON solicitacoes (solicitante)",
+        "CREATE INDEX idx_solic_created ON solicitacoes (created DESC)"
       ]
     }
   ]

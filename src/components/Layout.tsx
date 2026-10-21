@@ -14,6 +14,8 @@ import {
   ChevronRight,
   HelpCircle,
   ShieldCheck,
+  FileQuestion,
+  Users,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -50,16 +52,31 @@ export default function Layout() {
     const path = location.pathname
     if (path === '/') return 'Visão Geral da Padronização'
     if (path.startsWith('/medicamentos')) return 'Catálogo de Medicamentos'
+    if (path.startsWith('/solicitacoes')) return 'Solicitações de Padronização'
     if (path.startsWith('/importar')) return 'Importar Lista Padronizada (PDF)'
+    if (path.startsWith('/equipe')) return 'Gestão de Contas da Equipe'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
     if (path.startsWith('/configuracoes')) return 'Configurações do Usuário'
     return 'Help Vida'
   }
 
+  // Itens da barra de navegação lateral (Desktop)
   const navItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
     { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
+    { title: 'Solicitações', path: '/solicitacoes', icon: FileQuestion },
     ...(isAdmin ? [{ title: 'Importar PDF', path: '/importar', icon: FileUp }] : []),
+    ...(isAdmin ? [{ title: 'Equipe', path: '/equipe', icon: Users }] : []),
+    { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
+    { title: 'Configurações', path: '/configuracoes', icon: Settings },
+  ]
+
+  // Barra de navegação inferior mobile: estritamente 5 itens para caber com folga em telas de 360px
+  // Início, Medicamentos, Solicitações, Assistente, Configurações (com acesso a Equipe e Importar no menu/topo)
+  const mobileNavItems = [
+    { title: 'Início', path: '/', icon: LayoutDashboard },
+    { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
+    { title: 'Solicitações', path: '/solicitacoes', icon: FileQuestion },
     { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
     { title: 'Configurações', path: '/configuracoes', icon: Settings },
   ]
@@ -267,14 +284,30 @@ export default function Layout() {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {isAdmin && (
-                  <DropdownMenuItem
-                    onClick={() => navigate('/importar')}
-                    className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
-                  >
-                    <FileUp size={14} className="mr-2 text-[#0D8272]" />
-                    Importar Lista (PDF)
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => navigate('/importar')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
+                    >
+                      <FileUp size={14} className="mr-2 text-[#0D8272]" />
+                      Importar Lista (PDF)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => navigate('/equipe')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
+                    >
+                      <Users size={14} className="mr-2 text-[#0D8272]" />
+                      Gestão da Equipe
+                    </DropdownMenuItem>
+                  </>
                 )}
+                <DropdownMenuItem
+                  onClick={() => navigate('/solicitacoes')}
+                  className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
+                >
+                  <FileQuestion size={14} className="mr-2 text-[#0D8272]" />
+                  Solicitações
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => navigate('/configuracoes')}
                   className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
@@ -314,7 +347,7 @@ export default function Layout() {
         aria-label="Navegação inferior mobile"
         className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md border-t border-emerald-950/10 z-40 flex items-stretch justify-around px-1 shadow-[0_-4px_16px_rgba(12,67,54,0.08)] pb-safe"
       >
-        {navItems.map((item) => {
+        {mobileNavItems.map((item) => {
           const Icon = item.icon
           const isActive =
             item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path)
@@ -324,7 +357,7 @@ export default function Layout() {
               key={item.path}
               to={item.path}
               className={cn(
-                'flex flex-col items-center justify-center flex-1 h-full min-h-[48px] min-w-[48px] transition-all relative select-none',
+                'flex flex-col items-center justify-center flex-1 h-full min-h-[48px] min-w-[44px] transition-all relative select-none px-1',
                 isActive
                   ? 'text-[#0F5342] font-bold'
                   : 'text-slate-500 hover:text-slate-800 active:text-[#0F5342]',
@@ -340,14 +373,16 @@ export default function Layout() {
                 )}
               >
                 <Icon
-                  size={20}
+                  size={19}
                   className={cn(
                     'transition-transform',
-                    isActive ? 'text-[#0F5342] scale-110' : 'text-slate-500',
+                    isActive ? 'text-[#0F5342] scale-105' : 'text-slate-500',
                   )}
                 />
               </div>
-              <span className="text-[10.5px] mt-0.5 tracking-tight">{item.title}</span>
+              <span className="text-[10px] mt-0.5 tracking-tight truncate max-w-[56px] text-center">
+                {item.title}
+              </span>
             </NavLink>
           )
         })}

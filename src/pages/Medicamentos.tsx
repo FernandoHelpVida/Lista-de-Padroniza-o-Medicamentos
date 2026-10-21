@@ -21,6 +21,8 @@ import {
   Loader2,
   AlertCircle,
   FileUp,
+  FileQuestion,
+  Send,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -51,7 +53,7 @@ const ITEMS_PER_PAGE = 25
 export default function Medicamentos() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { isAdmin } = useAuth()
+  const { user, isAdmin } = useAuth()
   const { toast } = useToast()
 
   const [todosMedicamentos, setTodosMedicamentos] = useState<MedicamentoRecord[]>([])
@@ -108,6 +110,12 @@ export default function Medicamentos() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [recordToDelete, setRecordToDelete] = useState<MedicamentoRecord | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // Modal de solicitação de medicamento não padronizado
+  const [solicitarModalOpen, setSolicitarModalOpen] = useState(false)
+  const [medParaSolicitar, setMedParaSolicitar] = useState<MedicamentoRecord | null>(null)
+  const [justificativaSolicitacao, setJustificativaSolicitacao] = useState('')
+  const [enviandoSolicitacao, setEnviandoSolicitacao] = useState(false)
 
   // Formulário de criar/editar
   const [formNome, setFormNome] = useState('')
@@ -166,6 +174,53 @@ export default function Medicamentos() {
 
   const clearAllFilters = () => {
     setSearchParams({}, { replace: true })
+  }
+
+  const handleOpenSolicitarModal = (med: MedicamentoRecord) => {
+    setMedParaSolicitar(med)
+    setJustificativaSolicitacao('')
+    setSolicitarModalOpen(true)
+  }
+
+  const handleEnviarSolicitacao = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!medParaSolicitar || !user) return
+
+    if (!justificativaSolicitacao.trim()) {
+      toast({
+        title: 'Justificativa obrigatória',
+        description: 'Por favor, informe a justificativa clínica da solicitação.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setEnviandoSolicitacao(true)
+    try {
+      await pb.collection('solicitacoes').create({
+        medicamento: medParaSolicitar.id,
+        solicitante: user.id,
+        justificativa: justificativaSolicitacao.trim(),
+        status: 'Pendente',
+      })
+
+      toast({
+        title: 'Solicitação registrada!',
+        description: `Sua solicitação de padronização para ${medParaSolicitar.nome} foi enviada para avaliação técnica.`,
+      })
+      setSolicitarModalOpen(false)
+      setJustificativaSolicitacao('')
+    } catch (err: unknown) {
+      console.error('Erro ao enviar solicitação:', err)
+      const msg = err instanceof Error ? err.message : 'Falha ao registrar solicitação.'
+      toast({
+        title: 'Erro ao enviar',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setEnviandoSolicitacao(false)
+    }
   }
 
   const hasActiveFilters = Boolean(
@@ -678,18 +733,28 @@ export default function Medicamentos() {
               )}
 
               {selectedMed.status === 'Não Padronizado' && (
-                <div className="p-3.5 rounded-xl bg-[#FEF8EC] border border-[#F5B31C]/40 text-[#92400E] text-xs flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-[#F5B31C] shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <strong className="block font-bold">Medicamento NÃO Padronizado</strong>
-                    <span className="text-slate-700">
-                      A solicitação médica requer justificativa fundamentada submetida à avaliação
-                      da comissão técnica ou responsável técnico.
-                    </span>
+                <div className="p-3.5 rounded-xl bg-[#FEF8EC] border border-[#F5B31C]/40 text-[#92400E] text-xs space-y-3">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-[#F5B31C] shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <strong className="block font-bold">Medicamento NÃO Padronizado</strong>
+                      <span className="text-slate-700">
+                        A solicitação médica requer justificativa fundamentada submetida à avaliação
+                        da comissão técnica ou responsável técnico.
+                      </span>
+                    </div>
                   </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => handleOpenSolicitarModal(selectedMed)}
+                    className="w-full bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-9 rounded-xl shadow-xs flex items-center justify-center gap-1.5"
+                  >
+                    <FileQuestion size={14} className="text-[#F5B31C]" />
+                    Solicitar Padronização com Justificativa
+                  </Button>
                 </div>
               )}
-
               {selectedMed.status === 'Inativo' && (
                 <div className="p-4 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 text-xs flex items-start gap-3">
                   <Archive className="h-5 w-5 text-slate-500 shrink-0 mt-0.5" />
@@ -887,6 +952,87 @@ export default function Medicamentos() {
                   </>
                 ) : (
                   'Salvar Alterações'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* 5.1. MODAL DE SOLICITAÇÃO COM JUSTIFICATIVA MÉDICA */}
+      <Dialog open={solicitarModalOpen} onOpenChange={setSolicitarModalOpen}>
+        <DialogContent className="max-w-md p-6 rounded-2xl bg-white">
+          <form onSubmit={handleEnviarSolicitacao} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                <FileQuestion className="h-5 w-5 text-[#0D8272]" />
+                Solicitar Padronização de Medicamento
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-500 pt-1">
+                Conforme o regulamento da Help Vida, medicamentos não padronizados demandam
+                justificativa técnica prévia.
+              </DialogDescription>
+            </DialogHeader>
+
+            {medParaSolicitar && (
+              <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 text-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Medicamento Avaliado
+                </span>
+                <p className="font-bold text-slate-900 mt-0.5">{medParaSolicitar.nome}</p>
+                <p className="text-slate-500 text-[11px] mt-0.5">
+                  Classe: {medParaSolicitar.classe}
+                </p>
+              </div>
+            )}
+
+            <div className="p-3 rounded-xl bg-[#FEF8EC] border border-[#F5B31C]/30 text-[11px] text-[#92400E] leading-relaxed">
+              <strong>Aviso Institucional:</strong> Os medicamentos não padronizados deverão ser
+              solicitados mediante justificativa médica fundamentada apresentada à comissão de
+              farmácia e terapêutica da Help Vida.
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="justificativa" className="text-xs font-bold text-slate-700">
+                Justificativa Clínica / Motivo da Demanda *
+              </Label>
+              <Textarea
+                id="justificativa"
+                placeholder="Descreva a indicação clínica do paciente, falha ou inadequação de opções já padronizadas, dosagem e tempo estimado de uso..."
+                value={justificativaSolicitacao}
+                onChange={(e) => setJustificativaSolicitacao(e.target.value)}
+                required
+                rows={4}
+                className="text-xs focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
+              />
+            </div>
+
+            <DialogFooter className="pt-2 flex flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSolicitarModalOpen(false)}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={enviandoSolicitacao || !justificativaSolicitacao.trim()}
+                className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs h-9 min-h-[38px] font-bold rounded-xl"
+              >
+                {enviandoSolicitacao ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Enviando...
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
+                    Enviar Solicitação
+                  </>
                 )}
               </Button>
             </DialogFooter>

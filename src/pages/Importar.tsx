@@ -32,7 +32,11 @@ import {
   HelpCircle,
   AlertCircle,
   Download,
+  History,
+  User as UserIcon,
+  Calendar,
 } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +53,24 @@ export interface PreviewItem extends ParsedMedicamento {
   existingId?: string
   existingStatus?: StatusPadronizacao
   selected: boolean
+}
+
+export interface HistoricoImportacaoRecord {
+  id: string
+  nome_arquivo: string
+  total_itens: number
+  criados: number
+  atualizados: number
+  inalterados: number
+  ignorados: number
+  usuario?: string
+  created: string
+  expand?: {
+    usuario?: {
+      name?: string
+      email?: string
+    }
+  }
 }
 
 export default function Importar() {
@@ -83,12 +105,33 @@ export default function Importar() {
   // Estado de gravação
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
+  const [activeTab, setActiveTab] = useState<'importar' | 'historico'>('importar')
+  const [historicoList, setHistoricoList] = useState<HistoricoImportacaoRecord[]>([])
+  const [loadingHistorico, setLoadingHistorico] = useState(false)
   const [importSummary, setImportSummary] = useState<{
     novos: number
     atualizados: number
     inalterados: number
     ignorados: number
   } | null>(null)
+
+  // Carregar histórico de importações
+  const loadHistorico = async () => {
+    setLoadingHistorico(true)
+    try {
+      const records = await pb
+        .collection('historico_importacoes')
+        .getFullList<HistoricoImportacaoRecord>({
+          sort: '-created',
+          expand: 'usuario',
+        })
+      setHistoricoList(records)
+    } catch (err) {
+      console.error('Erro ao carregar histórico:', err)
+    } finally {
+      setLoadingHistorico(false)
+    }
+  }
 
   // 1. Carregar base de medicamentos existente para comparação
   const loadExistingMedicamentos = async () => {
@@ -111,6 +154,7 @@ export default function Importar() {
 
   useEffect(() => {
     loadExistingMedicamentos()
+    loadHistorico()
   }, [])
 
   // Mapa de medicamentos existentes indexado pela chave normalizada (nome + classe)
@@ -366,6 +410,22 @@ export default function Importar() {
       }
       setImportSummary(summary)
 
+      // Gravar automaticamente no histórico de importações
+      try {
+        await pb.collection('historico_importacoes').create({
+          nome_arquivo: documentStats?.fileName || selectedFile?.name || 'documento.pdf',
+          total_itens: previewItems.length,
+          criados: countNovos,
+          atualizados: countAtualizados,
+          inalterados: countInalterados,
+          ignorados: countIgnorados,
+          usuario: user?.id || null,
+        })
+        loadHistorico()
+      } catch (histErr) {
+        console.error('Erro ao registrar histórico de importação:', histErr)
+      }
+
       // Atualizar status dos itens na tela
       setPreviewItems((prev) =>
         prev.map((item) => {
@@ -463,441 +523,603 @@ export default function Importar() {
         </div>
       </div>
 
-      {/* Resumo pós-importação */}
-      {importSummary && (
-        <Card className="border-emerald-500/30 bg-[#E6F5F2]/80 shadow-xs">
-          <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="h-10 w-10 rounded-xl bg-[#0F5342] text-white flex items-center justify-center shrink-0">
-                <CheckCircle2 size={22} className="text-[#F5B31C]" />
+      {/* Abas: Importar / Histórico */}
+      <Tabs
+        value={activeTab}
+        onValueChange={(val) => setActiveTab(val as 'importar' | 'historico')}
+        className="w-full"
+      >
+        <TabsList className="bg-white border border-emerald-950/10 p-1 rounded-xl h-11 w-full sm:w-auto grid grid-cols-2">
+          <TabsTrigger
+            value="importar"
+            className="text-xs font-bold data-[state=active]:bg-[#0F5342] data-[state=active]:text-white rounded-lg px-4"
+          >
+            <UploadCloud size={15} className="mr-1.5" />
+            Nova Importação
+          </TabsTrigger>
+          <TabsTrigger
+            value="historico"
+            className="text-xs font-bold data-[state=active]:bg-[#0F5342] data-[state=active]:text-white rounded-lg px-4"
+          >
+            <History size={15} className="mr-1.5" />
+            Histórico ({historicoList.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="importar" className="space-y-4 sm:space-y-6 mt-4">
+          {/* Resumo pós-importação */}
+          {importSummary && (
+            <Card className="border-emerald-500/30 bg-[#E6F5F2]/80 shadow-xs">
+              <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-[#0F5342] text-white flex items-center justify-center shrink-0">
+                    <CheckCircle2 size={22} className="text-[#F5B31C]" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-[#0C4336]">
+                      Processo de Importação Concluído com Sucesso!
+                    </h4>
+                    <div className="flex flex-wrap items-center gap-2.5 mt-1.5 text-xs">
+                      <span className="font-semibold text-emerald-800">
+                        Novos adicionados: <strong>{importSummary.novos}</strong>
+                      </span>
+                      <span className="text-slate-300">•</span>
+                      <span className="font-semibold text-amber-800">
+                        Status atualizados: <strong>{importSummary.atualizados}</strong>
+                      </span>
+                      <span className="text-slate-300">•</span>
+                      <span className="font-medium text-slate-600">
+                        Sem alteração: {importSummary.inalterados}
+                      </span>
+                      <span className="text-slate-300">•</span>
+                      <span className="font-medium text-slate-500">
+                        Desmarcados: {importSummary.ignorados}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  onClick={() => navigate('/medicamentos')}
+                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shrink-0"
+                >
+                  Ver no Catálogo &rarr;
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Área de Upload / Seleção de Arquivo */}
+          <Card className="border-emerald-950/10 bg-white shadow-xs">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                  <UploadCloud className="h-5 w-5 text-[#0D8272]" />
+                  1. Selecionar Arquivo do Novo ANEXO (PDF)
+                </CardTitle>
+                {documentStats && (
+                  <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-xs font-semibold">
+                    {documentStats.totalPages} páginas analisadas
+                  </Badge>
+                )}
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-[#0C4336]">
-                  Processo de Importação Concluído com Sucesso!
-                </h4>
-                <div className="flex flex-wrap items-center gap-2.5 mt-1.5 text-xs">
-                  <span className="font-semibold text-emerald-800">
-                    Novos adicionados: <strong>{importSummary.novos}</strong>
-                  </span>
-                  <span className="text-slate-300">•</span>
-                  <span className="font-semibold text-amber-800">
-                    Status atualizados: <strong>{importSummary.atualizados}</strong>
-                  </span>
-                  <span className="text-slate-300">•</span>
-                  <span className="font-medium text-slate-600">
-                    Sem alteração: {importSummary.inalterados}
-                  </span>
-                  <span className="text-slate-300">•</span>
-                  <span className="font-medium text-slate-500">
-                    Desmarcados: {importSummary.ignorados}
-                  </span>
+              <CardDescription className="text-xs text-slate-500">
+                A extração roda inteiramente no navegador via PDF.js, sem transferir dados para
+                serviços externos.
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept=".pdf,application/pdf"
+                className="hidden"
+              />
+
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  'border-2 border-dashed rounded-2xl p-6 sm:p-8 text-center cursor-pointer transition',
+                  'hover:border-[#0D8272] hover:bg-[#F4FAF8]',
+                  extracting ? 'pointer-events-none opacity-60' : '',
+                  selectedFile
+                    ? 'border-emerald-400 bg-[#F4FAF8]/60'
+                    : 'border-slate-200 bg-slate-50/50',
+                )}
+              >
+                <div className="flex flex-col items-center justify-center space-y-2">
+                  <div className="h-12 w-12 rounded-2xl bg-white border border-emerald-900/10 flex items-center justify-center text-[#0D8272] shadow-xs">
+                    <FileText size={24} />
+                  </div>
+
+                  {selectedFile ? (
+                    <div className="space-y-0.5">
+                      <p className="text-sm font-bold text-[#0C4336]">{selectedFile.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Clique para trocar de
+                        arquivo
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-700">
+                        Clique aqui para selecionar o arquivo PDF do seu computador ou celular
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para testar com o
+                        ANEXO I oficial
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-            <Button
-              onClick={() => navigate('/medicamentos')}
-              className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shrink-0"
-            >
-              Ver no Catálogo &rarr;
-            </Button>
-          </CardContent>
-        </Card>
-      )}
 
-      {/* Área de Upload / Seleção de Arquivo */}
-      <Card className="border-emerald-950/10 bg-white shadow-xs">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
-              <UploadCloud className="h-5 w-5 text-[#0D8272]" />
-              1. Selecionar Arquivo do Novo ANEXO (PDF)
-            </CardTitle>
-            {documentStats && (
-              <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-xs font-semibold">
-                {documentStats.totalPages} páginas analisadas
-              </Badge>
-            )}
-          </div>
-          <CardDescription className="text-xs text-slate-500">
-            A extração roda inteiramente no navegador via PDF.js, sem transferir dados para serviços
-            externos.
-          </CardDescription>
-        </CardHeader>
+              {/* Barra de Progresso da Extração */}
+              {extracting && (
+                <div className="space-y-2 p-4 rounded-xl bg-emerald-50/60 border border-emerald-950/10">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-[#0C4336] flex items-center gap-1.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#0D8272]" />
+                      {extractionStage}
+                    </span>
+                    <span className="font-mono text-emerald-800 font-bold">
+                      {extractionProgress}%
+                    </span>
+                  </div>
+                  <Progress value={extractionProgress} className="h-2 bg-emerald-100" />
+                </div>
+              )}
 
-        <CardContent className="space-y-4">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".pdf,application/pdf"
-            className="hidden"
-          />
+              {/* Barra de Progresso da Gravação */}
+              {importing && (
+                <div className="space-y-2 p-4 rounded-xl bg-[#FEF8EC] border border-[#F5B31C]/30">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-[#92400E] flex items-center gap-1.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F5B31C]" />
+                      Gravando medicamentos na coleção Help Vida...
+                    </span>
+                    <span className="font-mono text-amber-900 font-bold">{importProgress}%</span>
+                  </div>
+                  <Progress value={importProgress} className="h-2 bg-amber-100" />
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className={cn(
-              'border-2 border-dashed rounded-2xl p-6 sm:p-8 text-center cursor-pointer transition',
-              'hover:border-[#0D8272] hover:bg-[#F4FAF8]',
-              extracting ? 'pointer-events-none opacity-60' : '',
-              selectedFile
-                ? 'border-emerald-400 bg-[#F4FAF8]/60'
-                : 'border-slate-200 bg-slate-50/50',
-            )}
-          >
-            <div className="flex flex-col items-center justify-center space-y-2">
-              <div className="h-12 w-12 rounded-2xl bg-white border border-emerald-900/10 flex items-center justify-center text-[#0D8272] shadow-xs">
-                <FileText size={24} />
+          {/* 2. Tabela de Conferência e Pré-visualização */}
+          {previewItems.length > 0 && (
+            <Card className="border-emerald-950/10 bg-white shadow-xs">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                      <FileCheck2 className="h-5 w-5 text-[#0D8272]" />
+                      2. Conferência dos Medicamentos Extraídos
+                    </CardTitle>
+                    <CardDescription className="text-xs text-slate-500">
+                      Verifique o casamento com a base atual. Você pode desmarcar itens que não
+                      deseja gravar.
+                    </CardDescription>
+                  </div>
+
+                  {/* Botão de Gravação Principal */}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={handleExecuteImport}
+                      disabled={importing || counts.selecionados === 0}
+                      className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 min-h-[42px] px-5 rounded-xl shadow-xs"
+                    >
+                      {importing ? (
+                        <>
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          Gravando ({importProgress}%)...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="mr-1.5 h-4 w-4 text-[#F5B31C]" />
+                          Importar {counts.selecionados} Medicamento
+                          {counts.selecionados === 1 ? '' : 's'}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Chips de Resumo de Casamento */}
+                <div className="flex flex-wrap items-center gap-2 pt-3">
+                  <button
+                    onClick={() => setFilterDiff('TODOS')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
+                      filterDiff === 'TODOS'
+                        ? 'bg-[#0F5342] text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                    )}
+                  >
+                    <span>Todos</span>
+                    <span className="font-mono text-[10px] px-1.5 py-0.2 bg-black/10 rounded-full">
+                      {counts.total}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setFilterDiff('NOVO')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
+                      filterDiff === 'NOVO'
+                        ? 'bg-emerald-700 text-white'
+                        : 'bg-emerald-50 text-emerald-800 border border-emerald-200/60 hover:bg-emerald-100',
+                    )}
+                  >
+                    <PlusCircle size={13} className="text-emerald-500" />
+                    <span>Novos</span>
+                    <span className="font-mono text-[10px] px-1.5 py-0.2 bg-emerald-200/50 rounded-full font-bold">
+                      {counts.novos}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setFilterDiff('EXISTENTE')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
+                      filterDiff === 'EXISTENTE'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200/60 hover:bg-amber-100',
+                    )}
+                  >
+                    <RefreshCw size={13} className="text-amber-500" />
+                    <span>Com alteração</span>
+                    <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 rounded-full font-bold">
+                      {counts.existentes}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setFilterDiff('SEM_ALTERACAO')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
+                      filterDiff === 'SEM_ALTERACAO'
+                        ? 'bg-slate-700 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                    )}
+                  >
+                    <CheckCircle2 size={13} className="text-slate-400" />
+                    <span>Sem alteração</span>
+                    <span className="font-mono text-[10px] px-1.5 py-0.2 bg-slate-200 rounded-full">
+                      {counts.semAlteracao}
+                    </span>
+                  </button>
+                </div>
+              </CardHeader>
+
+              <CardContent className="space-y-3">
+                {/* Filtro de Texto e Ações de Seleção Rápida */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                    <Input
+                      type="search"
+                      placeholder="Filtrar nesta pré-visualização por nome ou classe..."
+                      value={filterSearch}
+                      onChange={(e) => setFilterSearch(e.target.value)}
+                      className="h-9 pl-8 text-xs bg-[#F4FAF8] border-emerald-950/15"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSelectAllFiltered(true)}
+                      className="text-xs h-8 text-emerald-800 border-emerald-200 hover:bg-emerald-50"
+                    >
+                      Marcar visíveis
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSelectAllFiltered(false)}
+                      className="text-xs h-8 text-slate-600 border-slate-200 hover:bg-slate-50"
+                    >
+                      Desmarcar visíveis
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Tabela de Itens Extraídos */}
+                <div className="border border-emerald-950/10 rounded-xl overflow-hidden overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#F4FAF8] text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-emerald-950/10">
+                      <tr>
+                        <th className="py-2.5 px-3 w-10 text-center">
+                          <Checkbox
+                            checked={
+                              filteredPreview.length > 0 && filteredPreview.every((i) => i.selected)
+                            }
+                            onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}
+                            aria-label="Selecionar todos os visíveis"
+                          />
+                        </th>
+                        <th className="py-2.5 px-3">Medicamento (Grafia Exata)</th>
+                        <th className="py-2.5 px-3">Classe Terapêutica</th>
+                        <th className="py-2.5 px-3">Status no Documento</th>
+                        <th className="py-2.5 px-3">Situação / Ação</th>
+                        <th className="py-2.5 px-3 w-16 text-center">Pág.</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-emerald-950/5">
+                      {filteredPreview.map((item, idx) => {
+                        const originalIndex = previewItems.findIndex(
+                          (p) =>
+                            makeMedicamentoKey(p.nome, p.classe) ===
+                            makeMedicamentoKey(item.nome, item.classe),
+                        )
+
+                        return (
+                          <tr
+                            key={`${item.nome}-${item.classe}-${idx}`}
+                            className={cn(
+                              'hover:bg-emerald-50/40 transition',
+                              item.selected ? 'bg-white' : 'bg-slate-50/50 opacity-60',
+                            )}
+                          >
+                            <td className="py-2 px-3 text-center">
+                              <Checkbox
+                                checked={item.selected}
+                                onCheckedChange={() => toggleItemSelection(originalIndex)}
+                                aria-label={`Selecionar ${item.nome}`}
+                              />
+                            </td>
+
+                            <td className="py-2 px-3 font-semibold text-slate-900">
+                              <span className="block leading-tight">{item.nome}</span>
+                              {item.observacao && (
+                                <span className="text-[10px] text-slate-400 truncate block mt-0.5">
+                                  {item.observacao}
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="py-2 px-3 text-slate-600 font-medium">{item.classe}</td>
+
+                            <td className="py-2 px-3">
+                              {item.status === 'Padronizado' && (
+                                <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[10px] font-bold">
+                                  Padronizado
+                                </Badge>
+                              )}
+                              {item.status === 'Não Padronizado' && (
+                                <Badge className="bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40 text-[10px] font-bold">
+                                  Não Padronizado
+                                </Badge>
+                              )}
+                              {item.status === 'Inativo' && (
+                                <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
+                                  Inativo
+                                </Badge>
+                              )}
+                            </td>
+
+                            <td className="py-2 px-3">
+                              {item.diffStatus === 'NOVO' && (
+                                <Badge className="bg-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 w-fit">
+                                  <PlusCircle size={11} />
+                                  NOVO ITEM
+                                </Badge>
+                              )}
+                              {item.diffStatus === 'EXISTENTE' && (
+                                <div className="space-y-0.5">
+                                  <Badge className="bg-amber-500 text-white text-[10px] font-bold flex items-center gap-1 w-fit">
+                                    <RefreshCw size={10} />
+                                    ATUALIZAR STATUS
+                                  </Badge>
+                                  <span className="text-[10px] text-slate-500 block">
+                                    De &quot;{item.existingStatus}&quot; para &quot;{item.status}
+                                    &quot;
+                                  </span>
+                                </div>
+                              )}
+                              {item.diffStatus === 'SEM_ALTERACAO' && (
+                                <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1">
+                                  <CheckCircle2 size={12} className="text-slate-400" />
+                                  Já cadastrado igual
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="py-2 px-3 text-center text-[11px] text-slate-400 font-mono">
+                              {item.pageNumber || '-'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {filteredPreview.length === 0 && (
+                  <div className="text-center py-8 text-slate-400 text-xs">
+                    Nenhum medicamento encontrado para os filtros selecionados.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 3. Bloco de Itens Não Reconhecidos (para revisão manual) */}
+          {unrecognizedItems.length > 0 && (
+            <Card className="border-amber-200/80 bg-amber-50/40 shadow-xs">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-bold text-amber-900 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    Itens Não Reconhecidos ({unrecognizedItems.length})
+                  </CardTitle>
+                  <Badge variant="outline" className="text-[10px] text-amber-800 border-amber-300">
+                    Revisão Manual
+                  </Badge>
+                </div>
+                <CardDescription className="text-xs text-amber-800/80">
+                  Linhas do documento com texto que aparenta ser medicamento mas cuja classe
+                  terapêutica não pôde ser associada automaticamente.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {unrecognizedItems.map((unrec, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-lg bg-white border border-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1.5"
+                    >
+                      <div className="space-y-0.5">
+                        <p className="font-mono font-semibold text-slate-800">{unrec.text}</p>
+                        <p className="text-[11px] text-amber-700">{unrec.reason}</p>
+                      </div>
+                      <span className="text-[10px] text-slate-400 shrink-0 font-mono">
+                        Página {unrec.pageNumber}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ABA HISTÓRICO DE IMPORTAÇÕES */}
+        <TabsContent value="historico" className="space-y-4 mt-4">
+          <Card className="border-emerald-950/10 bg-white shadow-xs">
+            <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                  <History className="h-5 w-5 text-[#0D8272]" />
+                  Histórico de Importações Concluídas
+                </CardTitle>
+                <CardDescription className="text-xs text-slate-500">
+                  Registro de auditoria com data, hora, usuário responsável e quantitativo de itens
+                  processados.
+                </CardDescription>
               </div>
-
-              {selectedFile ? (
-                <div className="space-y-0.5">
-                  <p className="text-sm font-bold text-[#0C4336]">{selectedFile.name}</p>
-                  <p className="text-xs text-slate-500">
-                    {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Clique para trocar de
-                    arquivo
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadHistorico}
+                disabled={loadingHistorico}
+                className="h-8 text-xs border-emerald-950/15 text-[#0C4336] hover:bg-[#E6F5F2]"
+              >
+                <RefreshCw size={12} className={cn('mr-1.5', loadingHistorico && 'animate-spin')} />
+                Atualizar Histórico
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {loadingHistorico ? (
+                <div className="py-12 flex flex-col items-center justify-center text-slate-400">
+                  <Loader2 className="h-6 w-6 animate-spin text-[#0D8272] mb-2" />
+                  <p className="text-xs">Carregando histórico de importações...</p>
+                </div>
+              ) : historicoList.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 space-y-2">
+                  <FileText className="h-10 w-10 mx-auto text-slate-300" />
+                  <p className="text-xs font-medium text-slate-600">
+                    Nenhuma importação registrada até o momento.
+                  </p>
+                  <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                    Ao confirmar uma importação nesta tela, um registro com o nome do arquivo, seu
+                    usuário e as quantidades processadas será arquivado aqui automaticamente.
                   </p>
                 </div>
               ) : (
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-slate-700">
-                    Clique aqui para selecionar o arquivo PDF do seu computador ou celular
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para testar com o ANEXO I
-                    oficial
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Barra de Progresso da Extração */}
-          {extracting && (
-            <div className="space-y-2 p-4 rounded-xl bg-emerald-50/60 border border-emerald-950/10">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#0C4336] flex items-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#0D8272]" />
-                  {extractionStage}
-                </span>
-                <span className="font-mono text-emerald-800 font-bold">{extractionProgress}%</span>
-              </div>
-              <Progress value={extractionProgress} className="h-2 bg-emerald-100" />
-            </div>
-          )}
-
-          {/* Barra de Progresso da Gravação */}
-          {importing && (
-            <div className="space-y-2 p-4 rounded-xl bg-[#FEF8EC] border border-[#F5B31C]/30">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#92400E] flex items-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F5B31C]" />
-                  Gravando medicamentos na coleção Help Vida...
-                </span>
-                <span className="font-mono text-amber-900 font-bold">{importProgress}%</span>
-              </div>
-              <Progress value={importProgress} className="h-2 bg-amber-100" />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* 2. Tabela de Conferência e Pré-visualização */}
-      {previewItems.length > 0 && (
-        <Card className="border-emerald-950/10 bg-white shadow-xs">
-          <CardHeader className="pb-3">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
-                  <FileCheck2 className="h-5 w-5 text-[#0D8272]" />
-                  2. Conferência dos Medicamentos Extraídos
-                </CardTitle>
-                <CardDescription className="text-xs text-slate-500">
-                  Verifique o casamento com a base atual. Você pode desmarcar itens que não deseja
-                  gravar.
-                </CardDescription>
-              </div>
-
-              {/* Botão de Gravação Principal */}
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={handleExecuteImport}
-                  disabled={importing || counts.selecionados === 0}
-                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 min-h-[42px] px-5 rounded-xl shadow-xs"
-                >
-                  {importing ? (
-                    <>
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      Gravando ({importProgress}%)...
-                    </>
-                  ) : (
-                    <>
-                      <Check className="mr-1.5 h-4 w-4 text-[#F5B31C]" />
-                      Importar {counts.selecionados} Medicamento
-                      {counts.selecionados === 1 ? '' : 's'}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            {/* Chips de Resumo de Casamento */}
-            <div className="flex flex-wrap items-center gap-2 pt-3">
-              <button
-                onClick={() => setFilterDiff('TODOS')}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
-                  filterDiff === 'TODOS'
-                    ? 'bg-[#0F5342] text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
-                )}
-              >
-                <span>Todos</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 bg-black/10 rounded-full">
-                  {counts.total}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setFilterDiff('NOVO')}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
-                  filterDiff === 'NOVO'
-                    ? 'bg-emerald-700 text-white'
-                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200/60 hover:bg-emerald-100',
-                )}
-              >
-                <PlusCircle size={13} className="text-emerald-500" />
-                <span>Novos</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 bg-emerald-200/50 rounded-full font-bold">
-                  {counts.novos}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setFilterDiff('EXISTENTE')}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
-                  filterDiff === 'EXISTENTE'
-                    ? 'bg-amber-600 text-white'
-                    : 'bg-amber-50 text-amber-800 border border-amber-200/60 hover:bg-amber-100',
-                )}
-              >
-                <RefreshCw size={13} className="text-amber-500" />
-                <span>Com alteração</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 rounded-full font-bold">
-                  {counts.existentes}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setFilterDiff('SEM_ALTERACAO')}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 min-h-[32px]',
-                  filterDiff === 'SEM_ALTERACAO'
-                    ? 'bg-slate-700 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
-                )}
-              >
-                <CheckCircle2 size={13} className="text-slate-400" />
-                <span>Sem alteração</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 bg-slate-200 rounded-full">
-                  {counts.semAlteracao}
-                </span>
-              </button>
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-3">
-            {/* Filtro de Texto e Ações de Seleção Rápida */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <Input
-                  type="search"
-                  placeholder="Filtrar nesta pré-visualização por nome ou classe..."
-                  value={filterSearch}
-                  onChange={(e) => setFilterSearch(e.target.value)}
-                  className="h-9 pl-8 text-xs bg-[#F4FAF8] border-emerald-950/15"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleSelectAllFiltered(true)}
-                  className="text-xs h-8 text-emerald-800 border-emerald-200 hover:bg-emerald-50"
-                >
-                  Marcar visíveis
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleSelectAllFiltered(false)}
-                  className="text-xs h-8 text-slate-600 border-slate-200 hover:bg-slate-50"
-                >
-                  Desmarcar visíveis
-                </Button>
-              </div>
-            </div>
-
-            {/* Tabela de Itens Extraídos */}
-            <div className="border border-emerald-950/10 rounded-xl overflow-hidden overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#F4FAF8] text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-emerald-950/10">
-                  <tr>
-                    <th className="py-2.5 px-3 w-10 text-center">
-                      <Checkbox
-                        checked={
-                          filteredPreview.length > 0 && filteredPreview.every((i) => i.selected)
-                        }
-                        onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}
-                        aria-label="Selecionar todos os visíveis"
-                      />
-                    </th>
-                    <th className="py-2.5 px-3">Medicamento (Grafia Exata)</th>
-                    <th className="py-2.5 px-3">Classe Terapêutica</th>
-                    <th className="py-2.5 px-3">Status no Documento</th>
-                    <th className="py-2.5 px-3">Situação / Ação</th>
-                    <th className="py-2.5 px-3 w-16 text-center">Pág.</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-emerald-950/5">
-                  {filteredPreview.map((item, idx) => {
-                    const originalIndex = previewItems.findIndex(
-                      (p) =>
-                        makeMedicamentoKey(p.nome, p.classe) ===
-                        makeMedicamentoKey(item.nome, item.classe),
-                    )
+                <div className="space-y-3">
+                  {historicoList.map((item) => {
+                    const dataObj = new Date(item.created)
+                    const dataFormatada = dataObj.toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                    const autorNome =
+                      item.expand?.usuario?.name ||
+                      item.expand?.usuario?.email ||
+                      'Usuário institucional'
 
                     return (
-                      <tr
-                        key={`${item.nome}-${item.classe}-${idx}`}
-                        className={cn(
-                          'hover:bg-emerald-50/40 transition',
-                          item.selected ? 'bg-white' : 'bg-slate-50/50 opacity-60',
-                        )}
+                      <div
+                        key={item.id}
+                        className="p-3.5 sm:p-4 rounded-xl border border-emerald-950/10 bg-[#F4FAF8]/60 hover:bg-[#F4FAF8] transition space-y-2.5"
                       >
-                        <td className="py-2 px-3 text-center">
-                          <Checkbox
-                            checked={item.selected}
-                            onCheckedChange={() => toggleItemSelection(originalIndex)}
-                            aria-label={`Selecionar ${item.nome}`}
-                          />
-                        </td>
-
-                        <td className="py-2 px-3 font-semibold text-slate-900">
-                          <span className="block leading-tight">{item.nome}</span>
-                          {item.observacao && (
-                            <span className="text-[10px] text-slate-400 truncate block mt-0.5">
-                              {item.observacao}
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="py-2 px-3 text-slate-600 font-medium">{item.classe}</td>
-
-                        <td className="py-2 px-3">
-                          {item.status === 'Padronizado' && (
-                            <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[10px] font-bold">
-                              Padronizado
-                            </Badge>
-                          )}
-                          {item.status === 'Não Padronizado' && (
-                            <Badge className="bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40 text-[10px] font-bold">
-                              Não Padronizado
-                            </Badge>
-                          )}
-                          {item.status === 'Inativo' && (
-                            <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
-                              Inativo
-                            </Badge>
-                          )}
-                        </td>
-
-                        <td className="py-2 px-3">
-                          {item.diffStatus === 'NOVO' && (
-                            <Badge className="bg-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 w-fit">
-                              <PlusCircle size={11} />
-                              NOVO ITEM
-                            </Badge>
-                          )}
-                          {item.diffStatus === 'EXISTENTE' && (
-                            <div className="space-y-0.5">
-                              <Badge className="bg-amber-500 text-white text-[10px] font-bold flex items-center gap-1 w-fit">
-                                <RefreshCw size={10} />
-                                ATUALIZAR STATUS
-                              </Badge>
-                              <span className="text-[10px] text-slate-500 block">
-                                De &quot;{item.existingStatus}&quot; para &quot;{item.status}&quot;
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <FileText className="h-4 w-4 text-[#0D8272] shrink-0" />
+                              <h4 className="text-xs sm:text-sm font-bold text-[#0C4336] truncate">
+                                {item.nome_arquivo}
+                              </h4>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 pt-0.5">
+                              <span className="flex items-center gap-1 font-medium">
+                                <Calendar size={12} className="text-slate-400" />
+                                {dataFormatada}
+                              </span>
+                              <span>•</span>
+                              <span className="flex items-center gap-1 font-medium text-slate-700">
+                                <UserIcon size={12} className="text-[#0D8272]" />
+                                {autorNome}
                               </span>
                             </div>
-                          )}
-                          {item.diffStatus === 'SEM_ALTERACAO' && (
-                            <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1">
-                              <CheckCircle2 size={12} className="text-slate-400" />
-                              Já cadastrado igual
-                            </span>
-                          )}
-                        </td>
+                          </div>
 
-                        <td className="py-2 px-3 text-center text-[11px] text-slate-400 font-mono">
-                          {item.pageNumber || '-'}
-                        </td>
-                      </tr>
+                          <Badge className="bg-[#0F5342] text-white text-[11px] font-bold w-fit">
+                            {item.total_itens} itens analisados
+                          </Badge>
+                        </div>
+
+                        {/* Detalhes de criação/atualização */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-emerald-950/10 text-xs">
+                          <div className="bg-white p-2 rounded-lg border border-emerald-950/5">
+                            <span className="text-[10px] uppercase font-bold text-emerald-700 block">
+                              Criados
+                            </span>
+                            <span className="text-sm font-bold text-emerald-900">
+                              {item.criados || 0}
+                            </span>
+                          </div>
+                          <div className="bg-white p-2 rounded-lg border border-emerald-950/5">
+                            <span className="text-[10px] uppercase font-bold text-amber-700 block">
+                              Atualizados
+                            </span>
+                            <span className="text-sm font-bold text-amber-900">
+                              {item.atualizados || 0}
+                            </span>
+                          </div>
+                          <div className="bg-white p-2 rounded-lg border border-emerald-950/5">
+                            <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                              Inalterados
+                            </span>
+                            <span className="text-sm font-bold text-slate-700">
+                              {item.inalterados || 0}
+                            </span>
+                          </div>
+                          <div className="bg-white p-2 rounded-lg border border-emerald-950/5">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                              Ignorados
+                            </span>
+                            <span className="text-sm font-bold text-slate-500">
+                              {item.ignorados || 0}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                     )
                   })}
-                </tbody>
-              </table>
-            </div>
-
-            {filteredPreview.length === 0 && (
-              <div className="text-center py-8 text-slate-400 text-xs">
-                Nenhum medicamento encontrado para os filtros selecionados.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 3. Bloco de Itens Não Reconhecidos (para revisão manual) */}
-      {unrecognizedItems.length > 0 && (
-        <Card className="border-amber-200/80 bg-amber-50/40 shadow-xs">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-bold text-amber-900 flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 text-amber-600" />
-                Itens Não Reconhecidos ({unrecognizedItems.length})
-              </CardTitle>
-              <Badge variant="outline" className="text-[10px] text-amber-800 border-amber-300">
-                Revisão Manual
-              </Badge>
-            </div>
-            <CardDescription className="text-xs text-amber-800/80">
-              Linhas do documento com texto que aparenta ser medicamento mas cuja classe terapêutica
-              não pôde ser associada automaticamente.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 max-h-60 overflow-y-auto">
-              {unrecognizedItems.map((unrec, idx) => (
-                <div
-                  key={idx}
-                  className="p-2.5 rounded-lg bg-white border border-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1.5"
-                >
-                  <div className="space-y-0.5">
-                    <p className="font-mono font-semibold text-slate-800">{unrec.text}</p>
-                    <p className="text-[11px] text-amber-700">{unrec.reason}</p>
-                  </div>
-                  <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                    Página {unrec.pageNumber}
-                  </span>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
