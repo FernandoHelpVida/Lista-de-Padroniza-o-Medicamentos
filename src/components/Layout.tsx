@@ -5,6 +5,7 @@ import logoHelpVida from '@/assets/logo-helpvida-e2205.jpeg'
 import {
   LayoutDashboard,
   Pill,
+  FileUp,
   BotMessageSquare,
   Settings,
   LogOut,
@@ -49,6 +50,7 @@ export default function Layout() {
     const path = location.pathname
     if (path === '/') return 'Visão Geral da Padronização'
     if (path.startsWith('/medicamentos')) return 'Catálogo de Medicamentos'
+    if (path.startsWith('/importar')) return 'Importar Lista Padronizada (PDF)'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
     if (path.startsWith('/configuracoes')) return 'Configurações do Usuário'
     return 'Help Vida'
@@ -57,6 +59,7 @@ export default function Layout() {
   const navItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
     { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
+    ...(isAdmin ? [{ title: 'Importar PDF', path: '/importar', icon: FileUp }] : []),
     { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
     { title: 'Configurações', path: '/configuracoes', icon: Settings },
   ]
@@ -263,6 +266,15 @@ export default function Layout() {
                   </p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {isAdmin && (
+                  <DropdownMenuItem
+                    onClick={() => navigate('/importar')}
+                    className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
+                  >
+                    <FileUp size={14} className="mr-2 text-[#0D8272]" />
+                    Importar Lista (PDF)
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onClick={() => navigate('/configuracoes')}
                   className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"

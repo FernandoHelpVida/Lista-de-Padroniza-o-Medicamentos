@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { MedicamentoRecord } from './Index'
@@ -20,6 +20,7 @@ import {
   ChevronDown,
   Loader2,
   AlertCircle,
+  FileUp,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -49,6 +50,7 @@ const ITEMS_PER_PAGE = 25
 
 export default function Medicamentos() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const { isAdmin } = useAuth()
   const { toast } = useToast()
 
@@ -406,7 +408,7 @@ export default function Medicamentos() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             onClick={exportToCsv}
             variant="outline"
@@ -418,14 +420,26 @@ export default function Medicamentos() {
           </Button>
 
           {isAdmin && (
-            <Button
-              onClick={handleOpenCreateModal}
-              size="sm"
-              className="flex-1 sm:flex-initial h-9 min-h-[38px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shadow-xs"
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
-              Novo Item
-            </Button>
+            <>
+              <Button
+                onClick={() => navigate('/importar')}
+                variant="outline"
+                size="sm"
+                className="flex-1 sm:flex-initial h-9 min-h-[38px] border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
+              >
+                <FileUp className="mr-1.5 h-3.5 w-3.5 text-[#0D8272]" />
+                Importar PDF
+              </Button>
+
+              <Button
+                onClick={handleOpenCreateModal}
+                size="sm"
+                className="flex-1 sm:flex-initial h-9 min-h-[38px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shadow-xs"
+              >
+                <Plus className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
+                Novo Item
+              </Button>
+            </>
           )}
         </div>
       </div>
