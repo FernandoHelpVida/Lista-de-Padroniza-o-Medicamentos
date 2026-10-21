@@ -74,6 +74,14 @@ export default {
           border: 'hsl(var(--sidebar-border))',
           ring: 'hsl(var(--sidebar-ring))',
         },
+        brand: {
+          dark: '#0C4336',
+          help: '#0F5342',
+          vida: '#0D8272',
+          teal: '#1A8F7E',
+          yellow: '#F5B31C',
+          light: '#F4FAF8',
+        },
         chart: {
           1: 'hsl(var(--chart-1))',
           2: 'hsl(var(--chart-2))',

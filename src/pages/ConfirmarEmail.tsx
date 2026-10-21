@@ -81,8 +81,8 @@ export default function ConfirmarEmail() {
               utilizando o novo e-mail.
             </p>
             <Link to="/login" className="block pt-2">
-              <Button className="w-full text-xs bg-teal-600 hover:bg-teal-700">
-                <ArrowLeft className="mr-2 h-3.5 w-3.5" />
+              <Button className="w-full h-12 min-h-[48px] text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] text-white rounded-xl">
+                <ArrowLeft className="mr-2 h-3.5 w-3.5 text-[#F5B31C]" />
                 Acessar com novo e-mail
               </Button>
             </Link>

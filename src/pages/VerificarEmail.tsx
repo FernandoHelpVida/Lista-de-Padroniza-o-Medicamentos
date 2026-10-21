@@ -77,7 +77,7 @@ export default function VerificarEmail() {
               Sua conta está ativada e pronta para uso no sistema de Consulta de Medicamentos.
             </p>
             <Link to="/login" className="block pt-2">
-              <Button className="w-full text-xs bg-teal-600 hover:bg-teal-700">
+              <Button className="w-full h-12 min-h-[48px] text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] text-white rounded-xl">
                 Ir para o Login
               </Button>
             </Link>

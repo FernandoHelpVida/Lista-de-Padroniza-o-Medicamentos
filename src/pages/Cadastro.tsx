@@ -92,7 +92,6 @@ export default function Cadastro() {
               <AlertDescription className="text-xs">{error}</AlertDescription>
             </Alert>
           )}
-
           <div className="space-y-1.5">
             <Label htmlFor="name" className="text-xs font-semibold text-slate-700">
               Nome completo
@@ -107,7 +106,6 @@ export default function Cadastro() {
               className="h-10 text-sm focus-visible:ring-teal-500"
             />
           </div>
-
           <div className="space-y-1.5">
             <Label htmlFor="email" className="text-xs font-semibold text-slate-700">
               E-mail institucional
@@ -123,7 +121,6 @@ export default function Cadastro() {
               className="h-10 text-sm focus-visible:ring-teal-500"
             />
           </div>
-
           <div className="space-y-1.5">
             <Label htmlFor="password" className="text-xs font-semibold text-slate-700">
               Senha (mínimo 8 caracteres)
@@ -139,7 +136,6 @@ export default function Cadastro() {
               className="h-10 text-sm focus-visible:ring-teal-500"
             />
           </div>
-
           <div className="space-y-1.5">
             <Label htmlFor="passwordConfirm" className="text-xs font-semibold text-slate-700">
               Confirmar senha
@@ -155,11 +151,10 @@ export default function Cadastro() {
               className="h-10 text-sm focus-visible:ring-teal-500"
             />
           </div>
-
           <Button
             type="submit"
             disabled={loading}
-            className="w-full h-10 bg-teal-600 hover:bg-teal-700 text-white font-medium mt-2 shadow-sm"
+            className="w-full h-12 min-h-[48px] bg-[#0F5342] hover:bg-[#0C4336] text-white font-bold mt-2 shadow-xs rounded-xl"
           >
             {loading ? (
               <>
@@ -168,23 +163,22 @@ export default function Cadastro() {
               </>
             ) : (
               <>
-                <UserPlus className="mr-2 h-4 w-4" />
-                Cadastrar
+                <UserPlus className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                Concluir Cadastro
               </>
             )}
           </Button>
-
           <div className="pt-3 text-center border-t border-slate-100">
-            <p className="text-xs text-slate-500">
-              Já possui cadastro?{' '}
+            <p className="text-xs text-slate-600">
+              Já possui cadastro institucional?{' '}
               <Link
                 to="/login"
-                className="font-semibold text-teal-600 hover:text-teal-700 hover:underline"
+                className="font-bold text-[#0D8272] hover:text-[#0C4336] hover:underline"
               >
                 Fazer login
               </Link>
             </p>
-          </div>
+          </div>{' '}
         </form>
       )}
     </AuthLayout>

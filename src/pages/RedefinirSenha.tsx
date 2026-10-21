@@ -4,7 +4,7 @@ import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, CheckCircle2, Key, Loader2, ArrowLeft } from 'lucide-react'
+import { AlertCircle, CheckCircle2, KeyRound, Loader2, ArrowLeft } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import pb from '@/lib/pocketbase/client'
 
@@ -82,7 +82,7 @@ export default function RedefinirSenha() {
             Sua nova senha foi gravada. Redirecionando para a tela de autenticação...
           </p>
           <Link to="/login" className="block pt-2">
-            <Button className="w-full text-xs bg-teal-600 hover:bg-teal-700">
+            <Button className="w-full h-12 min-h-[48px] text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] text-white rounded-xl">
               Ir para o Login
             </Button>
           </Link>
@@ -131,25 +131,24 @@ export default function RedefinirSenha() {
           <Button
             type="submit"
             disabled={loading}
-            className="w-full h-10 bg-teal-600 hover:bg-teal-700 text-white font-medium mt-2 shadow-sm"
+            className="w-full h-12 min-h-[48px] bg-[#0F5342] hover:bg-[#0C4336] text-white font-bold shadow-xs rounded-xl"
           >
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Atualizando senha...
+                Salvando nova senha...
               </>
             ) : (
               <>
-                <Key className="mr-2 h-4 w-4" />
-                Salvar nova senha
+                <KeyRound className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                Salvar Nova Senha
               </>
             )}
           </Button>
-
           <div className="pt-3 text-center border-t border-slate-100">
             <Link
               to="/login"
-              className="inline-flex items-center text-xs font-medium text-slate-600 hover:text-teal-600"
+              className="inline-flex items-center text-xs font-bold text-[#0D8272] hover:text-[#0C4336]"
             >
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
               Cancelar e voltar ao login

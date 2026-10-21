@@ -141,20 +141,22 @@ export default function Configuracoes() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Configurações da Conta</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-[#0C4336] tracking-tight">
+          Configurações da Conta
+        </h2>
         <p className="text-xs text-slate-500 mt-0.5">
           Gerenciamento de perfil, credenciais de acesso e dados institucionais da Help Vida
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         {/* 1. SEÇÃO DE PERFIL */}
-        <Card className="border-slate-200 bg-white shadow-sm">
+        <Card className="border-emerald-950/10 bg-white shadow-xs">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <User className="h-4 w-4 text-teal-600" />
+            <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+              <User className="h-4 w-4 text-[#0D8272]" />
               Perfil do Usuário
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
@@ -162,9 +164,9 @@ export default function Configuracoes() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleUpdateName} className="space-y-4">
+            <form onSubmit={handleUpdateName} className="space-y-3 sm:space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="userName" className="text-xs font-semibold text-slate-700">
+                <Label htmlFor="userName" className="text-xs font-bold text-slate-700">
                   Nome Completo
                 </Label>
                 <Input
@@ -174,35 +176,36 @@ export default function Configuracoes() {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Nome e Sobrenome"
                   required
-                  className="h-10 text-xs focus-visible:ring-teal-500"
+                  className="h-11 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-700">
-                  E-mail atual cadastrado
-                </Label>
+                <Label className="text-xs font-bold text-slate-700">E-mail atual cadastrado</Label>
                 <Input
                   type="email"
                   value={user?.email || ''}
                   disabled
-                  className="h-10 text-xs bg-slate-50 text-slate-500 cursor-not-allowed"
+                  className="h-11 text-xs sm:text-sm bg-slate-50 text-slate-500 cursor-not-allowed rounded-xl"
                 />
               </div>
 
               <Button
                 type="submit"
-                disabled={savingName}
                 size="sm"
-                className="bg-teal-600 hover:bg-teal-700 text-white text-xs"
+                disabled={savingName}
+                className="w-full sm:w-auto h-11 min-h-[44px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl"
               >
                 {savingName ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Salvando...
+                    Atualizando...
                   </>
                 ) : (
-                  'Salvar Nome'
+                  <>
+                    <CheckCircle2 className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
+                    Salvar Nome
+                  </>
                 )}
               </Button>
             </form>
@@ -210,10 +213,10 @@ export default function Configuracoes() {
         </Card>
 
         {/* 2. SEÇÃO DE TROCA DE E-MAIL */}
-        <Card className="border-slate-200 bg-white shadow-sm">
+        <Card className="border-emerald-950/10 bg-white shadow-xs">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Mail className="h-4 w-4 text-teal-600" />
+            <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+              <Mail className="h-4 w-4 text-[#0D8272]" />
               Alterar E-mail Institucional
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
@@ -222,10 +225,10 @@ export default function Configuracoes() {
           </CardHeader>
           <CardContent>
             {emailRequested ? (
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-center space-y-2">
-                <CheckCircle2 className="h-8 w-8 text-emerald-600 mx-auto" />
-                <p className="text-xs font-bold text-emerald-950">Confirmação Solicitada</p>
-                <p className="text-[11px] text-emerald-800 leading-relaxed">
+              <div className="p-4 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/30 text-center space-y-2">
+                <CheckCircle2 className="h-8 w-8 text-[#0D8272] mx-auto" />
+                <p className="text-xs font-bold text-[#0C4336]">Confirmação Solicitada</p>
+                <p className="text-[11px] text-[#0C4336]/80 leading-relaxed">
                   Acesse sua caixa de entrada no novo e-mail para validar a alteração. O endereço só
                   será trocado após a confirmação.
                 </p>
@@ -233,15 +236,15 @@ export default function Configuracoes() {
                   variant="outline"
                   size="sm"
                   onClick={() => setEmailRequested(false)}
-                  className="text-xs mt-2"
+                  className="text-xs mt-2 text-[#0C4336] border-[#0D8272]/30 hover:bg-white"
                 >
                   Solicitar para outro e-mail
                 </Button>
               </div>
             ) : (
-              <form onSubmit={handleRequestEmailChange} className="space-y-4">
+              <form onSubmit={handleRequestEmailChange} className="space-y-3 sm:space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="newEmail" className="text-xs font-semibold text-slate-700">
+                  <Label htmlFor="newEmail" className="text-xs font-bold text-slate-700">
                     Novo E-mail
                   </Label>
                   <Input
@@ -251,7 +254,7 @@ export default function Configuracoes() {
                     onChange={(e) => setNewEmail(e.target.value)}
                     placeholder="novo.email@helpvida.com.br"
                     required
-                    className="h-10 text-xs focus-visible:ring-teal-500"
+                    className="h-11 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
                   />
                 </div>
 
@@ -259,7 +262,7 @@ export default function Configuracoes() {
                   type="submit"
                   disabled={requestingEmail || !newEmail.trim()}
                   size="sm"
-                  className="bg-teal-600 hover:bg-teal-700 text-white text-xs"
+                  className="w-full sm:w-auto h-11 min-h-[44px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl"
                 >
                   {requestingEmail ? (
                     <>
@@ -276,10 +279,10 @@ export default function Configuracoes() {
         </Card>
 
         {/* 3. SEÇÃO DE TROCA DE SENHA */}
-        <Card className="border-slate-200 bg-white shadow-sm md:col-span-2">
+        <Card className="border-emerald-950/10 bg-white shadow-xs md:col-span-2">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Lock className="h-4 w-4 text-teal-600" />
+            <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+              <Lock className="h-4 w-4 text-[#0D8272]" />
               Segurança & Senha
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
@@ -290,7 +293,7 @@ export default function Configuracoes() {
             <form onSubmit={handleChangePassword} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="oldPass" className="text-xs font-semibold text-slate-700">
+                  <Label htmlFor="oldPass" className="text-xs font-bold text-slate-700">
                     Senha Atual *
                   </Label>
                   <Input
@@ -300,12 +303,12 @@ export default function Configuracoes() {
                     value={oldPassword}
                     onChange={(e) => setOldPassword(e.target.value)}
                     required
-                    className="h-10 text-xs focus-visible:ring-teal-500"
+                    className="h-11 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="newPass" className="text-xs font-semibold text-slate-700">
+                  <Label htmlFor="newPass" className="text-xs font-bold text-slate-700">
                     Nova Senha *
                   </Label>
                   <Input
@@ -315,12 +318,12 @@ export default function Configuracoes() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="h-10 text-xs focus-visible:ring-teal-500"
+                    className="h-11 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="confPass" className="text-xs font-semibold text-slate-700">
+                  <Label htmlFor="confPass" className="text-xs font-bold text-slate-700">
                     Confirmar Nova Senha *
                   </Label>
                   <Input
@@ -330,7 +333,7 @@ export default function Configuracoes() {
                     value={passwordConfirm}
                     onChange={(e) => setPasswordConfirm(e.target.value)}
                     required
-                    className="h-10 text-xs focus-visible:ring-teal-500"
+                    className="h-11 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
                   />
                 </div>
               </div>
@@ -339,7 +342,7 @@ export default function Configuracoes() {
                 type="submit"
                 disabled={changingPassword || !oldPassword || !password}
                 size="sm"
-                className="bg-teal-600 hover:bg-teal-700 text-white text-xs"
+                className="w-full sm:w-auto h-11 min-h-[44px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl"
               >
                 {changingPassword ? (
                   <>
@@ -355,15 +358,15 @@ export default function Configuracoes() {
         </Card>
       </div>
 
-      {/* 4. CARD SOBRE A HELP VIDA (DADOS VERBATIM DO PDF) */}
-      <Card className="border-teal-200/80 bg-gradient-to-br from-white to-teal-50/50 shadow-sm">
+      {/* 4. CARD SOBRE A HELP VIDA */}
+      <Card className="border-emerald-950/10 bg-gradient-to-br from-white to-[#E6F5F2]/50 shadow-xs">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-teal-600" />
+            <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-[#0D8272]" />
               Sobre a Help Vida & Comissão Técnica
             </CardTitle>
-            <span className="text-[11px] font-semibold uppercase px-2 py-0.5 rounded bg-teal-100 text-teal-800">
+            <span className="text-[11px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/20">
               Documento Oficial
             </span>
           </div>
@@ -372,9 +375,9 @@ export default function Configuracoes() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
-            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/80 border border-teal-100/80">
-              <Phone className="h-4 w-4 text-teal-600 shrink-0 mt-0.5" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 pt-1">
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/90 border border-emerald-950/10">
+              <Phone className="h-4 w-4 text-[#0D8272] shrink-0 mt-0.5" />
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                   Telefones
@@ -385,8 +388,8 @@ export default function Configuracoes() {
               </div>
             </div>
 
-            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/80 border border-teal-100/80">
-              <MapPin className="h-4 w-4 text-teal-600 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/90 border border-emerald-950/10">
+              <MapPin className="h-4 w-4 text-[#0D8272] shrink-0 mt-0.5" />
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                   Endereço
@@ -397,8 +400,8 @@ export default function Configuracoes() {
               </div>
             </div>
 
-            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/80 border border-teal-100/80">
-              <Globe className="h-4 w-4 text-teal-600 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/90 border border-emerald-950/10">
+              <Globe className="h-4 w-4 text-[#0D8272] shrink-0 mt-0.5" />
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                   Website Oficial
@@ -407,22 +410,22 @@ export default function Configuracoes() {
                   href="https://www.helpvida.com.br"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs font-semibold text-teal-700 hover:underline mt-0.5 block"
+                  className="text-xs font-semibold text-[#0D8272] hover:underline mt-0.5 block"
                 >
                   www.helpvida.com.br
                 </a>
               </div>
             </div>
 
-            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/80 border border-teal-100/80">
-              <Mail className="h-4 w-4 text-teal-600 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-white/90 border border-emerald-950/10">
+              <Mail className="h-4 w-4 text-[#0D8272] shrink-0 mt-0.5" />
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                   E-mail Institucional
                 </p>
                 <a
                   href="mailto:contato@helpvida.com.br"
-                  className="text-xs font-semibold text-teal-700 hover:underline mt-0.5 block"
+                  className="text-xs font-semibold text-[#0D8272] hover:underline mt-0.5 block"
                 >
                   contato@helpvida.com.br
                 </a>
@@ -430,9 +433,9 @@ export default function Configuracoes() {
             </div>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-teal-100/60 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-500 gap-2">
+          <div className="mt-4 pt-3 border-t border-[#0D8272]/20 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-500 gap-2">
             <span>Sistema Spincare – Controle da Farmácia Help Vida</span>
-            <span className="font-medium text-teal-800">
+            <span className="font-bold text-[#0C4336]">
               Cuiabá / MT — Atenção Domiciliar & Cuidados Especiais
             </span>
           </div>

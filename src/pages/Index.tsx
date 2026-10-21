@@ -32,16 +32,16 @@ export interface MedicamentoRecord extends RecordModel {
 }
 
 const COLORS = [
-  '#0D9488', // teal-600
-  '#0284C7', // sky-600
-  '#6366F1', // indigo-500
-  '#8B5CF6', // violet-500
-  '#EC4899', // pink-500
-  '#F59E0B', // amber-500
-  '#10B981', // emerald-500
-  '#14B8A6', // teal-500
-  '#3B82F6', // blue-500
-  '#64748B', // slate-500
+  '#0F5342', // Verde escuro Help Vida (primária)
+  '#0D8272', // Teal Help Vida (secundária)
+  '#F5B31C', // Amarelo Asterisco Help Vida (destaque)
+  '#1A8F7E', // Teal vibrante
+  '#2C6E5C', // Verde médio floresta
+  '#E69500', // Âmbar dourado
+  '#0C4336', // Verde profundo
+  '#3AA99F', // Menta marinho
+  '#5FA691', // Salvia hospitalar
+  '#D97706', // Âmbar escuro
 ]
 
 export default function Index() {
@@ -147,19 +147,19 @@ export default function Index() {
     switch (status) {
       case 'Padronizado':
         return (
-          <Badge className="bg-[#DCFCE7] text-[#15803D] hover:bg-[#DCFCE7] border-0 text-[11px] font-semibold">
+          <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/20 hover:bg-[#E6F5F2] text-[11px] font-bold">
             Padronizado
           </Badge>
         )
       case 'Não Padronizado':
         return (
-          <Badge className="bg-[#FEF3C7] text-[#B45309] hover:bg-[#FEF3C7] border-0 text-[11px] font-semibold">
+          <Badge className="bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/30 hover:bg-[#FEF8EC] text-[11px] font-bold">
             Não Padronizado
           </Badge>
         )
       case 'Inativo':
         return (
-          <Badge className="bg-[#E2E8F0] text-[#475569] hover:bg-[#E2E8F0] border-0 text-[11px] font-semibold">
+          <Badge className="bg-[#F1F5F9] text-[#475569] border border-slate-200 hover:bg-[#F1F5F9] text-[11px] font-medium">
             Inativo
           </Badge>
         )
@@ -167,159 +167,159 @@ export default function Index() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in-50 duration-300">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in-50 duration-300">
       {/* 1. CABEÇALHO DE BOAS-VINDAS */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-2 border-b border-slate-200/80">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-emerald-950/10">
         <div>
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
-            Olá, {user?.name ? user.name.split(' ')[0] : 'Profissional'}!
+          <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight text-[#0C4336]">
+            Olá, {user?.name ? user.name.split(' ')[0] : 'Doutor(a)'}!
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500 capitalize mt-1 flex items-center gap-2">
+          <p className="text-xs sm:text-sm text-slate-600 capitalize mt-0.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
             <span>{currentDate}</span>
-            <span className="inline-block w-1 h-1 rounded-full bg-slate-300" />
-            <span className="text-teal-700 font-medium">Comissão de Padronização Help Vida</span>
+            <span className="hidden sm:inline-block w-1 h-1 rounded-full bg-[#F5B31C]" />
+            <span className="text-[#0D8272] font-semibold text-[11px] sm:text-xs">
+              Comissão de Padronização Help Vida
+            </span>
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 pt-1 sm:pt-0">
           <Button
             onClick={() => navigate('/assistente')}
             variant="outline"
             size="sm"
-            className="border-teal-200 text-teal-700 hover:bg-teal-50 text-xs font-semibold"
+            className="flex-1 sm:flex-initial h-9 min-h-[38px] border-[#0D8272]/30 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
           >
-            <Sparkles className="mr-1.5 h-3.5 w-3.5 text-teal-600" />
+            <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
             Dúvidas com Assistente
           </Button>
           <Button
             onClick={() => navigate('/medicamentos')}
             size="sm"
-            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-sm"
+            className="flex-1 sm:flex-initial h-9 min-h-[38px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shadow-xs"
           >
-            Ver Catálogo Completo
+            Ver Catálogo
             <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
 
-      {/* 2. BARRA DE BUSCA CENTRALIZADA GRANDE */}
+      {/* 2. BARRA DE BUSCA CENTRALIZADA GRANDE (MÉDICOS NO CELULAR) */}
       <div className="w-full max-w-3xl mx-auto">
         <form onSubmit={handleSearchSubmit} className="relative group">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400 group-focus-within:text-teal-600 transition-colors" />
+          <Search className="absolute left-3.5 sm:left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-emerald-800/50 group-focus-within:text-[#0D8272] transition-colors" />
           <Input
             type="search"
-            placeholder="Buscar medicamento por nome ou classe terapêutica…"
+            placeholder="Buscar por nome ou classe terapêutica…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="h-14 pl-12 pr-28 text-base bg-white border border-slate-200 rounded-2xl shadow-sm focus-visible:ring-4 focus-visible:ring-teal-500/20 focus-visible:border-teal-500 transition-all placeholder:text-slate-400"
+            className="h-12 sm:h-14 pl-11 sm:pl-12 pr-24 sm:pr-28 text-sm sm:text-base bg-white border border-emerald-950/15 rounded-2xl shadow-xs focus-visible:ring-4 focus-visible:ring-[#0D8272]/20 focus-visible:border-[#0D8272] transition-all placeholder:text-slate-400"
           />
           <Button
             type="submit"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 h-9 px-4 bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold rounded-xl transition"
+            className="absolute right-1.5 sm:right-2.5 top-1/2 -translate-y-1/2 h-9 sm:h-10 px-3.5 sm:px-4 bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold rounded-xl transition"
           >
             Buscar
           </Button>
         </form>
       </div>
 
-      {/* 3. CARDS DE ESTATÍSTICA (CLICÁVEIS) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 3. CARDS DE ESTATÍSTICA (GRID 2x2 COMPACTO NO MOBILE < 640px) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         {/* Total */}
         <div
           onClick={() => navigate('/medicamentos')}
-          className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-emerald-950/10 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 tracking-wider uppercase">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500 tracking-wider uppercase truncate">
               Total Avaliado
             </span>
-            <div className="h-10 w-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center group-hover:bg-teal-600 group-hover:text-white transition">
-              <Pill className="h-5 w-5" />
+            <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-[#E6F5F2] text-[#0F5342] flex items-center justify-center group-hover:bg-[#0F5342] group-hover:text-white transition shrink-0">
+              <Pill className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-slate-900 font-mono">
+          <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
+            <span className="text-2xl sm:text-3xl font-extrabold text-[#0C4336] font-mono">
               {loading ? '...' : stats.total}
             </span>
-            <span className="text-xs text-slate-400 font-medium flex items-center gap-1 group-hover:text-teal-600 transition">
+            <span className="text-[11px] sm:text-xs text-[#0D8272] font-medium hidden sm:flex items-center gap-1 group-hover:underline">
               Ver todos <ArrowRight className="h-3 w-3" />
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Todos os itens catalogados</p>
+          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Itens catalogados</p>
         </div>
 
         {/* Padronizados */}
         <div
           onClick={() => navigate('/medicamentos?status=Padronizado')}
-          className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-emerald-200/80 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-700 tracking-wider uppercase">
+            <span className="text-[10px] sm:text-xs font-bold text-[#0F5342] tracking-wider uppercase truncate">
               Padronizados
             </span>
-            <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition">
-              <CheckCircle2 className="h-5 w-5" />
+            <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-[#E6F5F2] text-[#0F5342] flex items-center justify-center group-hover:bg-[#0F5342] group-hover:text-white transition shrink-0">
+              <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-emerald-600 font-mono">
+          <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
+            <span className="text-2xl sm:text-3xl font-extrabold text-[#0F5342] font-mono">
               {loading ? '...' : stats.padronizados}
             </span>
-            <span className="text-xs text-emerald-600/80 font-medium flex items-center gap-1 group-hover:text-emerald-700 transition">
+            <span className="text-[11px] sm:text-xs text-[#0F5342]/80 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
               Filtrar <ArrowRight className="h-3 w-3" />
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Disponíveis na rotina da Help Vida</p>
+          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Rotina Help Vida</p>
         </div>
 
         {/* Não Padronizados */}
         <div
           onClick={() => navigate('/medicamentos?status=Não+Padronizado')}
-          className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-amber-200/80 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-700 tracking-wider uppercase">
+            <span className="text-[10px] sm:text-xs font-bold text-[#B45309] tracking-wider uppercase truncate">
               Não Padronizados
             </span>
-            <div className="h-10 w-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition">
-              <AlertTriangle className="h-5 w-5" />
+            <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition shrink-0">
+              <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-amber-600 font-mono">
+          <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
+            <span className="text-2xl sm:text-3xl font-extrabold text-amber-600 font-mono">
               {loading ? '...' : stats.naoPadronizados}
             </span>
-            <span className="text-xs text-amber-600/80 font-medium flex items-center gap-1 group-hover:text-amber-700 transition">
+            <span className="text-[11px] sm:text-xs text-amber-600/80 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
               Filtrar <ArrowRight className="h-3 w-3" />
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Exigem justificativa médica fundamentada
-          </p>
+          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Exigem justificativa</p>
         </div>
 
         {/* Inativos */}
         <div
           onClick={() => navigate('/medicamentos?status=Inativo')}
-          className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 tracking-wider uppercase">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500 tracking-wider uppercase truncate">
               Inativos
             </span>
-            <div className="h-10 w-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center group-hover:bg-slate-700 group-hover:text-white transition">
-              <Archive className="h-5 w-5" />
+            <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center group-hover:bg-slate-700 group-hover:text-white transition shrink-0">
+              <Archive className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-slate-600 font-mono">
+          <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
+            <span className="text-2xl sm:text-3xl font-extrabold text-slate-600 font-mono">
               {loading ? '...' : stats.inativos}
             </span>
-            <span className="text-xs text-slate-400 font-medium flex items-center gap-1 group-hover:text-slate-600 transition">
+            <span className="text-[11px] sm:text-xs text-slate-400 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
               Filtrar <ArrowRight className="h-3 w-3" />
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Descontinuados no sistema Spincare</p>
+          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Descontinuados</p>
         </div>
       </div>
 
@@ -389,8 +389,8 @@ export default function Index() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-teal-600" />
+                <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-[#0D8272]" />
                   Distribuição por Classe Terapêutica
                 </CardTitle>
                 <CardDescription className="text-xs text-slate-500">
@@ -401,14 +401,14 @@ export default function Index() {
           </CardHeader>
           <CardContent className="pt-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-              {/* Gráfico Donut Recharts */}
-              <div className="h-64 relative flex items-center justify-center">
+              {/* Gráfico Donut Recharts - Otimizado para Mobile */}
+              <div className="h-56 sm:h-64 relative flex items-center justify-center">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={classDistribution.top10Chart}
-                      innerRadius={65}
-                      outerRadius={95}
+                      innerRadius={55}
+                      outerRadius={85}
                       paddingAngle={3}
                       dataKey="value"
                     >
@@ -424,29 +424,29 @@ export default function Index() {
                     <RechartsTooltip
                       formatter={(val, name) => [`${val} medicamentos`, name]}
                       contentStyle={{
-                        backgroundColor: '#0F172A',
-                        borderRadius: '8px',
+                        backgroundColor: '#082921',
+                        borderRadius: '10px',
                         color: '#fff',
                         fontSize: '12px',
-                        border: 'none',
+                        border: '1px solid #0F5342',
                       }}
                       itemStyle={{ color: '#fff' }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-2xl font-black text-slate-800 font-mono">
+                  <span className="text-2xl font-black text-[#0C4336] font-mono">
                     {stats.total}
                   </span>
-                  <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                  <span className="text-[10px] text-emerald-800 uppercase tracking-wider font-bold">
                     Itens
                   </span>
                 </div>
               </div>
 
               {/* Lista dos Top 5 mais representativos */}
-              <div className="space-y-3">
-                <span className="text-xs font-semibold text-slate-700 block">
+              <div className="space-y-2.5 sm:space-y-3">
+                <span className="text-xs font-bold text-[#0C4336] block">
                   Top 5 Classes com maior volume:
                 </span>
                 {classDistribution.top5List.map((item, idx) => {
@@ -457,10 +457,10 @@ export default function Index() {
                       onClick={() =>
                         navigate(`/medicamentos?classe=${encodeURIComponent(item.name)}`)
                       }
-                      className="group cursor-pointer p-2 rounded-lg hover:bg-slate-50 transition border border-transparent hover:border-slate-200"
+                      className="group cursor-pointer p-2 rounded-lg hover:bg-[#E6F5F2]/50 transition border border-transparent hover:border-emerald-200"
                     >
                       <div className="flex items-center justify-between text-xs mb-1">
-                        <span className="font-medium text-slate-700 truncate max-w-[180px] group-hover:text-teal-600 transition">
+                        <span className="font-semibold text-slate-700 truncate max-w-[170px] sm:max-w-[180px] group-hover:text-[#0D8272] transition">
                           {idx + 1}. {item.name}
                         </span>
                         <span className="font-mono text-slate-500 font-semibold">
@@ -485,18 +485,18 @@ export default function Index() {
         </Card>
 
         {/* Medicamentos Recentes (1 Coluna) */}
-        <Card className="border-slate-200 bg-white shadow-sm flex flex-col">
+        <Card className="border-emerald-950/10 bg-white shadow-xs flex flex-col">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Clock className="h-4 w-4 text-teal-600" />
+              <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                <Clock className="h-4 w-4 text-[#0D8272]" />
                 Atualizados Recentemente
               </CardTitle>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => navigate('/medicamentos')}
-                className="text-xs text-teal-700 hover:text-teal-800 p-0 h-auto font-medium"
+                className="text-xs text-[#0D8272] hover:text-[#0C4336] hover:bg-[#E6F5F2] p-1 h-auto font-semibold"
               >
                 Ver todos
               </Button>
@@ -512,11 +512,11 @@ export default function Index() {
                 <div
                   key={med.id}
                   onClick={() => navigate(`/medicamentos?q=${encodeURIComponent(med.nome)}`)}
-                  className="py-3 group cursor-pointer hover:bg-slate-50/80 -mx-3 px-3 rounded-lg transition"
+                  className="py-3 group cursor-pointer hover:bg-[#E6F5F2]/50 -mx-3 px-3 rounded-lg transition"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-800 truncate group-hover:text-teal-600 transition">
+                      <p className="text-xs font-bold text-slate-800 truncate group-hover:text-[#0F5342] transition">
                         {med.nome}
                       </p>
                       <p className="text-[11px] text-slate-400 truncate mt-0.5">{med.classe}</p>
@@ -528,9 +528,9 @@ export default function Index() {
             </div>
 
             <div className="pt-4 border-t border-slate-100 mt-2">
-              <div className="p-3 bg-teal-50/60 rounded-xl border border-teal-100 flex items-center gap-2.5">
-                <FileCheck2 className="h-4 w-4 text-teal-600 shrink-0" />
-                <span className="text-[11px] text-teal-900 leading-tight">
+              <div className="p-3 bg-[#E6F5F2] rounded-xl border border-[#0D8272]/20 flex items-center gap-2.5">
+                <FileCheck2 className="h-4 w-4 text-[#0D8272] shrink-0" />
+                <span className="text-[11px] text-[#0C4336] leading-tight font-medium">
                   Lista oficial Spincare – Controle da Farmácia Help Vida.
                 </span>
               </div>

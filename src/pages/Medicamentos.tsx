@@ -358,21 +358,21 @@ export default function Medicamentos() {
     switch (status) {
       case 'Padronizado':
         return (
-          <Badge className="bg-[#DCFCE7] text-[#15803D] hover:bg-[#DCFCE7] border-0 text-[11px] font-semibold flex items-center gap-1">
-            <CheckCircle2 size={12} />
+          <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 hover:bg-[#E6F5F2] text-[11px] font-bold flex items-center gap-1 shrink-0">
+            <CheckCircle2 size={12} className="text-[#0D8272]" />
             Padronizado
           </Badge>
         )
       case 'Não Padronizado':
         return (
-          <Badge className="bg-[#FEF3C7] text-[#B45309] hover:bg-[#FEF3C7] border-0 text-[11px] font-semibold flex items-center gap-1">
-            <AlertTriangle size={12} />
+          <Badge className="bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40 hover:bg-[#FEF8EC] text-[11px] font-bold flex items-center gap-1 shrink-0">
+            <AlertTriangle size={12} className="text-[#F5B31C]" />
             Não Padronizado
           </Badge>
         )
       case 'Inativo':
         return (
-          <Badge className="bg-[#E2E8F0] text-[#475569] hover:bg-[#E2E8F0] border-0 text-[11px] font-semibold flex items-center gap-1">
+          <Badge className="bg-[#F1F5F9] text-[#475569] border border-slate-200 hover:bg-[#F1F5F9] text-[11px] font-semibold flex items-center gap-1 shrink-0">
             <Archive size={12} />
             Inativo
           </Badge>
@@ -383,26 +383,26 @@ export default function Medicamentos() {
   const getStatusIconColor = (status: MedicamentoRecord['status']) => {
     switch (status) {
       case 'Padronizado':
-        return 'text-emerald-600 bg-emerald-50 border-emerald-200'
+        return 'text-[#0F5342] bg-[#E6F5F2] border-[#0D8272]/30'
       case 'Não Padronizado':
-        return 'text-amber-600 bg-amber-50 border-amber-200'
+        return 'text-[#B45309] bg-[#FEF8EC] border-[#F5B31C]/40'
       case 'Inativo':
         return 'text-slate-500 bg-slate-100 border-slate-200'
     }
   }
 
   return (
-    <div className="space-y-6">
-      {/* 1. CABEÇALHO DA PÁGINA */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="space-y-4 sm:space-y-6">
+      {/* 1. CABEÇALHO DA PÁGINA (MOBILE OPTIMIZED) */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-bold text-[#0C4336] tracking-tight">
             Catálogo de Medicamentos
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             {filteredMedicamentos.length} medicamento
             {filteredMedicamentos.length === 1 ? '' : 's'} encontrado
-            {filteredMedicamentos.length === 1 ? '' : 's'} de {todosMedicamentos.length} avaliados
+            {filteredMedicamentos.length === 1 ? '' : 's'} de {todosMedicamentos.length} catalogados
           </p>
         </div>
 
@@ -411,9 +411,9 @@ export default function Medicamentos() {
             onClick={exportToCsv}
             variant="outline"
             size="sm"
-            className="border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold"
+            className="flex-1 sm:flex-initial h-9 min-h-[38px] border-emerald-950/15 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
           >
-            <Download className="mr-1.5 h-3.5 w-3.5 text-slate-500" />
+            <Download className="mr-1.5 h-3.5 w-3.5 text-[#0D8272]" />
             Exportar CSV
           </Button>
 
@@ -421,31 +421,32 @@ export default function Medicamentos() {
             <Button
               onClick={handleOpenCreateModal}
               size="sm"
-              className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-sm"
+              className="flex-1 sm:flex-initial h-9 min-h-[38px] bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shadow-xs"
             >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Novo Medicamento
+              <Plus className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
+              Novo Item
             </Button>
           )}
         </div>
       </div>
 
-      {/* 2. BARRA DE BUSCA E FILTROS */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-        {/* Campo de Busca */}
+      {/* 2. BARRA DE BUSCA E FILTROS (MOBILE-FRIENDLY: CHIPS COM ROLAGEM HORIZONTAL SUAVE) */}
+      <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-emerald-950/10 shadow-xs space-y-3 sm:space-y-4">
+        {/* Campo de Busca Otimizado para Toque */}
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-800/60" />
           <Input
             type="search"
-            placeholder="Pesquisar por nome de medicamento ou princípio ativo…"
+            placeholder="Pesquisar por nome ou princípio ativo…"
             value={queryParam}
             onChange={(e) => updateFilter({ q: e.target.value })}
-            className="pl-10 pr-9 h-11 text-sm bg-slate-50 border-slate-200 rounded-xl focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-teal-500"
+            className="pl-10 pr-9 h-11 text-sm bg-[#F4FAF8] border-emerald-900/15 rounded-xl focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-[#0D8272]"
           />
           {queryParam && (
             <button
               onClick={() => updateFilter({ q: '' })}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1.5"
+              aria-label="Limpar busca"
             >
               <X size={16} />
             </button>
@@ -453,11 +454,11 @@ export default function Medicamentos() {
         </div>
 
         {/* Linha de Chips de Status e Dropdown de Classe */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
-          {/* Status Chips */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mr-1 flex items-center gap-1">
-              <Filter size={12} />
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 pt-0.5">
+          {/* Status Chips - Scroll horizontal seguro no celular sem quebrar layout */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none -mx-1 px-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1 hidden sm:flex items-center gap-1 shrink-0">
+              <Filter size={11} />
               Status:
             </span>
 
@@ -477,17 +478,19 @@ export default function Medicamentos() {
                   key={chip.id}
                   onClick={() => updateFilter({ status: chip.id })}
                   className={cn(
-                    'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5',
+                    'px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shrink-0 min-h-[34px] select-none',
                     isSelected
-                      ? 'bg-teal-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80 border border-transparent',
+                      ? 'bg-[#0F5342] text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80 active:bg-[#E6F5F2]',
                   )}
                 >
                   <span>{chip.label}</span>
                   <span
                     className={cn(
                       'text-[10px] px-1.5 py-0.2 rounded-full font-mono',
-                      isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700',
+                      isSelected
+                        ? 'bg-[#F5B31C] text-[#0C4336] font-bold'
+                        : 'bg-slate-200 text-slate-700',
                     )}
                   >
                     {chip.count}
@@ -497,16 +500,16 @@ export default function Medicamentos() {
             })}
           </div>
 
-          {/* Filtro de Classe Terapêutica */}
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">
+          {/* Filtro de Classe Terapêutica no mobile */}
+          <div className="flex items-center gap-2 w-full lg:w-auto">
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider shrink-0 hidden sm:inline">
               Classe:
             </span>
             <Select
               value={classeParam || 'Todas'}
               onValueChange={(val) => updateFilter({ classe: val })}
             >
-              <SelectTrigger className="w-[230px] h-9 text-xs bg-slate-50 border-slate-200">
+              <SelectTrigger className="w-full lg:w-[230px] h-9 min-h-[38px] text-xs bg-[#F4FAF8] border-emerald-900/15">
                 <SelectValue placeholder="Todas as classes" />
               </SelectTrigger>
               <SelectContent className="max-h-64 text-xs">
@@ -524,9 +527,9 @@ export default function Medicamentos() {
                 variant="ghost"
                 size="sm"
                 onClick={clearAllFilters}
-                className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 h-9 px-2"
+                className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 h-9 min-h-[38px] px-2.5 shrink-0 font-medium"
               >
-                Limpar filtros
+                Limpar
               </Button>
             )}
           </div>
@@ -574,33 +577,33 @@ export default function Medicamentos() {
                   key={med.id}
                   onClick={() => setSelectedMed(med)}
                   className={cn(
-                    'bg-white p-4 rounded-xl border border-slate-200 shadow-sm transition hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 group',
+                    'bg-white p-3.5 sm:p-4 rounded-xl border border-emerald-950/10 shadow-xs transition hover:shadow-md hover:-translate-y-0.5 active:scale-[0.99] cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 group',
                     borderAccent,
                   )}
                 >
                   <div className="flex items-start gap-3 min-w-0">
                     <div
                       className={cn(
-                        'h-9 w-9 rounded-xl flex items-center justify-center shrink-0 border mt-0.5',
+                        'h-9 w-9 rounded-xl flex items-center justify-center shrink-0 border mt-0.5 shadow-2xs',
                         getStatusIconColor(med.status),
                       )}
                     >
                       <Pill size={18} />
                     </div>
-                    <div className="min-w-0">
-                      <h4 className="text-sm font-bold text-slate-900 group-hover:text-teal-700 transition truncate">
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-sm font-bold text-[#0C4336] group-hover:text-[#0D8272] transition truncate leading-snug">
                         {med.nome}
                       </h4>
                       <p className="text-xs text-slate-500 font-medium truncate mt-0.5">
-                        Classe: <span className="text-slate-700">{med.classe}</span>
+                        Classe: <span className="text-slate-700 font-semibold">{med.classe}</span>
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-0 border-slate-100">
                     {getStatusBadge(med.status)}
-                    <span className="text-xs font-semibold text-teal-600 group-hover:translate-x-0.5 transition hidden sm:inline-block">
-                      Detalhes &rarr;
+                    <span className="text-xs font-semibold text-[#0D8272] group-hover:translate-x-0.5 transition hidden sm:inline-block">
+                      Ver Ficha &rarr;
                     </span>
                   </div>
                 </div>
@@ -649,26 +652,25 @@ export default function Medicamentos() {
 
               {/* Caixa Destacada Conforme o Status */}
               {selectedMed.status === 'Padronizado' && (
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs flex items-start gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="p-3.5 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/30 text-[#0C4336] text-xs flex items-start gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-[#0D8272] shrink-0 mt-0.5" />
                   <div>
-                    <strong className="block font-bold">Medicamento padronizado Help Vida</strong>
-                    <span>
-                      Medicamento disponível na padronização da Help Vida para atendimento
-                      assistencial regular.
+                    <strong className="block font-bold">Medicamento Padronizado Help Vida</strong>
+                    <span className="text-slate-700">
+                      Disponível na rotina de atendimento assistencial e home care da Help Vida.
                     </span>
                   </div>
                 </div>
               )}
 
               {selectedMed.status === 'Não Padronizado' && (
-                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="p-3.5 rounded-xl bg-[#FEF8EC] border border-[#F5B31C]/40 text-[#92400E] text-xs flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-[#F5B31C] shrink-0 mt-0.5" />
                   <div className="space-y-1">
-                    <strong className="block font-bold">Medicamento NÃO padronizado</strong>
-                    <span>
-                      Este medicamento é NÃO padronizado. A solicitação requer justificativa médica
-                      fundamentada submetida à comissão ou responsável técnico.
+                    <strong className="block font-bold">Medicamento NÃO Padronizado</strong>
+                    <span className="text-slate-700">
+                      A solicitação médica requer justificativa fundamentada submetida à avaliação
+                      da comissão técnica ou responsável técnico.
                     </span>
                   </div>
                 </div>
@@ -689,10 +691,10 @@ export default function Medicamentos() {
               {/* Descrição / Indicação */}
               {selectedMed.descricao && (
                 <div className="space-y-1">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                     Descrição clínica / Farmacológica
                   </span>
-                  <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="text-xs text-slate-700 leading-relaxed bg-[#F4FAF8] p-3 rounded-xl border border-emerald-950/10">
                     {selectedMed.descricao}
                   </p>
                 </div>
@@ -701,10 +703,10 @@ export default function Medicamentos() {
               {/* Observação institucional */}
               {selectedMed.observacao && (
                 <div className="space-y-1">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">
                     Observação da Comissão
                   </span>
-                  <p className="text-xs text-amber-900 leading-relaxed bg-amber-50/60 p-3 rounded-lg border border-amber-200/60">
+                  <p className="text-xs text-amber-950 leading-relaxed bg-[#FEF8EC] p-3 rounded-xl border border-[#F5B31C]/30">
                     {selectedMed.observacao}
                   </p>
                 </div>
@@ -743,12 +745,12 @@ export default function Medicamentos() {
                 )}
 
                 <Button
-                  variant="secondary"
+                  variant="default"
                   size="sm"
                   onClick={() => setSelectedMed(null)}
-                  className="text-xs"
+                  className="w-full sm:w-auto h-10 min-h-[42px] text-xs bg-[#0F5342] hover:bg-[#0C4336] text-white font-semibold rounded-xl"
                 >
-                  Fechar
+                  Voltar ao Catálogo
                 </Button>
               </div>
             </div>
@@ -862,7 +864,7 @@ export default function Medicamentos() {
                 type="submit"
                 size="sm"
                 disabled={saving}
-                className="bg-teal-600 hover:bg-teal-700 text-white text-xs"
+                className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs h-9 min-h-[38px] font-semibold"
               >
                 {saving ? (
                   <>

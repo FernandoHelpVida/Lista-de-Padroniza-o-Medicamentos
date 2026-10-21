@@ -4,7 +4,7 @@ import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, CheckCircle2, KeyRound, Loader2, ArrowLeft } from 'lucide-react'
+import { AlertCircle, CheckCircle2, KeyRound, Loader2, ArrowLeft, Send } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import pb from '@/lib/pocketbase/client'
 
@@ -81,7 +81,7 @@ export default function EsqueciSenha() {
           <Button
             type="submit"
             disabled={loading}
-            className="w-full h-10 bg-teal-600 hover:bg-teal-700 text-white font-medium mt-2 shadow-sm"
+            className="w-full h-12 min-h-[48px] bg-[#0F5342] hover:bg-[#0C4336] text-white font-bold shadow-xs rounded-xl"
           >
             {loading ? (
               <>
@@ -90,20 +90,19 @@ export default function EsqueciSenha() {
               </>
             ) : (
               <>
-                <KeyRound className="mr-2 h-4 w-4" />
-                Enviar link de redefinição
+                <Send className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                Enviar Instruções
               </>
             )}
           </Button>
-
           <div className="pt-3 text-center border-t border-slate-100">
             <Link
               to="/login"
-              className="inline-flex items-center text-xs font-medium text-slate-600 hover:text-teal-600"
+              className="inline-flex items-center text-xs font-bold text-[#0D8272] hover:text-[#0C4336] hover:underline"
             >
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-              Lembrou sua senha? Faça login
-            </Link>
+              <ArrowLeft className="mr-1 h-3.5 w-3.5" />
+              Voltar para o Login
+            </Link>{' '}
           </div>
         </form>
       )}

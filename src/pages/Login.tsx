@@ -76,7 +76,7 @@ export default function Login() {
             </Label>
             <Link
               to="/esqueci-senha"
-              className="text-xs font-medium text-teal-600 hover:text-teal-700 hover:underline"
+              className="text-xs font-semibold text-[#0D8272] hover:text-[#0C4336] hover:underline"
             >
               Esqueci a senha?
             </Link>
@@ -89,41 +89,41 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            className="h-10 text-sm focus-visible:ring-teal-500"
+            className="h-11 text-sm bg-[#F4FAF8] border-emerald-950/15 focus-visible:ring-[#0D8272] rounded-xl"
           />
         </div>
 
         <Button
           type="submit"
           disabled={loading}
-          className="w-full h-10 bg-teal-600 hover:bg-teal-700 text-white font-medium mt-2 shadow-sm"
+          className="w-full h-12 min-h-[48px] bg-[#0F5342] hover:bg-[#0C4336] text-white font-bold rounded-xl shadow-xs transition text-sm mt-2"
         >
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Entrando...
+              Entrando no sistema...
             </>
           ) : (
             <>
-              <LogIn className="mr-2 h-4 w-4" />
-              Entrar
+              <LogIn className="mr-2 h-4 w-4 text-[#F5B31C]" />
+              Entrar no Catálogo
             </>
           )}
         </Button>
 
         <div className="pt-3 text-center border-t border-slate-100">
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-600">
             Novo na equipe Help Vida?{' '}
             <Link
               to="/cadastro"
-              className="font-semibold text-teal-600 hover:text-teal-700 hover:underline"
+              className="font-bold text-[#0D8272] hover:text-[#0C4336] hover:underline"
             >
               Criar conta
             </Link>
           </p>
         </div>
 
-        <div className="mt-4 p-3 rounded-lg bg-teal-50 border border-teal-100 text-[11px] text-teal-900 leading-relaxed">
+        <div className="mt-4 p-3 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/20 text-[11px] text-[#0C4336] leading-relaxed">
           <strong>Acesso inicial administrativo de demonstração:</strong>
           <br />
           E-mail:{' '}
