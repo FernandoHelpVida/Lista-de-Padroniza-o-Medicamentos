@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import pb from '@/lib/pocketbase/client'
 import {
   Users,
+  User,
   UserPlus,
   ShieldCheck,
   Mail,

@@ -21,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from 'recharts'
 import { InstallPwaPrompt } from '@/components/InstallPwaPrompt'
+import { cn } from '@/lib/utils'
 
 import type { RecordModel } from 'pocketbase'
 
