@@ -90,6 +90,11 @@ export default function Equipe() {
   // Estado para ação de Aprovar / Negar
   const [reviewingUserId, setReviewingUserId] = useState<string | null>(null)
   const [confirmNegarUser, setConfirmNegarUser] = useState<UserTeamRecord | null>(null)
+  const [modalRevisarUser, setModalRevisarUser] = useState<UserTeamRecord | null>(null)
+  const [selectedRoleForApproval, setSelectedRoleForApproval] = useState<
+    'comum' | 'medico_visitador' | 'admin'
+  >('comum')
+  const [approvalRoleError, setApprovalRoleError] = useState<string | null>(null)
 
   const loadMembros = async () => {
     setLoading(true)
@@ -133,39 +138,100 @@ export default function Equipe() {
     }
   }, [])
 
+  // Abre o modal de revisão do cadastro para definir o perfil antes de aprovar
+  const handleOpenReviewModal = (targetUser: UserTeamRecord) => {
+    setModalRevisarUser(targetUser)
+    setApprovalRoleError(null)
+    // Se o usuário já tiver perfil pré-definido como médico_visitador ou admin, inicializar com ele; senão default 'comum'
+    const currentRole = targetUser?.role?.toLowerCase()
+    if (currentRole === 'medico_visitador') {
+      setSelectedRoleForApproval('medico_visitador')
+    } else if (currentRole === 'admin') {
+      setSelectedRoleForApproval('admin')
+    } else {
+      setSelectedRoleForApproval('comum')
+    }
+  }
+
   // Função para aprovar ou negar cadastro
-  const handleReviewUser = async (targetUser: UserTeamRecord, decision: 'aprovar' | 'negar') => {
+  const handleReviewUser = async (
+    targetUser: UserTeamRecord,
+    decision: 'aprovar' | 'negar',
+    roleToAssign?: 'comum' | 'medico_visitador' | 'admin',
+  ) => {
     if (!targetUser?.id) return
+
+    if (decision === 'aprovar') {
+      const roleFinal = roleToAssign || selectedRoleForApproval
+      if (!roleFinal) {
+        setApprovalRoleError('Selecione obrigatoriamente um perfil de acesso antes de aprovar.')
+        toast({
+          title: 'Perfil obrigatório',
+          description:
+            'Por favor, defina o nível de acesso do usuário antes de liberar o cadastro.',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
     setReviewingUserId(targetUser.id)
 
     try {
+      const payload: {
+        userId: string
+        decision: 'aprovar' | 'negar'
+        role?: 'comum' | 'medico_visitador' | 'admin'
+      } = {
+        userId: targetUser.id,
+        decision,
+      }
+      if (decision === 'aprovar') {
+        payload.role = roleToAssign || selectedRoleForApproval
+      }
+
       await pb.send('/backend/v1/admin/review-user', {
         method: 'POST',
-        body: {
-          userId: targetUser.id,
-          decision,
-        },
+        body: payload,
       })
 
+      const roleNomeAmigavel =
+        payload.role === 'admin'
+          ? 'Administrador'
+          : payload.role === 'medico_visitador'
+            ? 'Médico Visitador (Apenas Padronizados)'
+            : 'Corpo Clínico'
+
       toast({
-        title: decision === 'aprovar' ? 'Cadastro aprovado!' : 'Cadastro negado',
+        title: decision === 'aprovar' ? 'Cadastro aprovado com sucesso!' : 'Cadastro negado',
         description:
           decision === 'aprovar'
-            ? `O acesso de ${targetUser.name || targetUser.email} foi liberado com sucesso.`
+            ? `O acesso de ${targetUser.name || targetUser.email} foi liberado com perfil "${roleNomeAmigavel}".`
             : `O cadastro de ${targetUser.name || targetUser.email} foi negado.`,
       })
 
       setConfirmNegarUser(null)
+      setModalRevisarUser(null)
       await loadMembros()
     } catch (err: unknown) {
       console.error('Erro ao avaliar usuário:', err)
       // Fallback: se a rota custom falhar, tentar atualização direta via SDK pelo admin
       try {
         const novoStatus = decision === 'aprovar' ? 'aprovado' : 'negado'
+        const roleFinal =
+          decision === 'aprovar' ? roleToAssign || selectedRoleForApproval : targetUser.role
         await pb.collection('users').update(targetUser.id, {
           approval_status: novoStatus,
+          role: roleFinal,
           verified: decision === 'aprovar' ? true : targetUser.verified,
         })
+
+        const roleNomeAmigavel =
+          roleFinal === 'admin'
+            ? 'Administrador'
+            : roleFinal === 'medico_visitador'
+              ? 'Médico Visitador (Apenas Padronizados)'
+              : 'Corpo Clínico'
 
         // Tentar salvar log de auditoria
         try {
@@ -177,27 +243,33 @@ export default function Equipe() {
             usuario_nome: user?.name || '',
             usuario_email: user?.email || '',
             usuario_role: user?.role || 'admin',
-            status_anterior: targetUser.approval_status || 'pendente',
-            status_novo: novoStatus,
+            status_anterior: `${targetUser.approval_status || 'pendente'} (perfil: ${targetUser.role || 'comum'})`,
+            status_novo: `${novoStatus} (perfil: ${roleFinal})`,
             detalhes:
-              (decision === 'aprovar' ? 'Cadastro aprovado para: ' : 'Cadastro negado para: ') +
-              (targetUser.name || targetUser.email),
+              (decision === 'aprovar'
+                ? `Cadastro aprovado com perfil [${roleNomeAmigavel}] para: `
+                : 'Cadastro negado para: ') + (targetUser.name || targetUser.email),
           })
         } catch {
           /* intentionally ignored */
         }
 
         toast({
-          title: decision === 'aprovar' ? 'Cadastro aprovado!' : 'Cadastro negado',
-          description: `Status de ${targetUser.name || targetUser.email} atualizado.`,
+          title: decision === 'aprovar' ? 'Cadastro aprovado com sucesso!' : 'Cadastro negado',
+          description:
+            decision === 'aprovar'
+              ? `Acesso de ${targetUser.name || targetUser.email} liberado com perfil "${roleNomeAmigavel}".`
+              : `Status de ${targetUser.name || targetUser.email} atualizado.`,
         })
         setConfirmNegarUser(null)
+        setModalRevisarUser(null)
         await loadMembros()
       } catch (errFallback: unknown) {
         const friendly = getErrorMessage(
           errFallback,
           'Falha ao atualizar status de aprovação do usuário.',
         )
+        setApprovalRoleError(friendly)
         toast({
           title: 'Erro ao avaliar',
           description: friendly,
@@ -652,7 +724,17 @@ export default function Equipe() {
                     return (
                       <div
                         key={m.id}
-                        className="p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 transition"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleOpenReviewModal(m)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            handleOpenReviewModal(m)
+                          }
+                        }}
+                        className="p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/60 cursor-pointer transition focus:outline-none focus:bg-amber-50/70"
+                        title="Clique para abrir e definir o nível de acesso antes da aprovação"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <Avatar className="h-10 w-10 rounded-xl bg-amber-500 text-white text-xs font-bold shrink-0 border border-amber-600/30">
@@ -678,7 +760,10 @@ export default function Equipe() {
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between md:justify-end gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-0 border-slate-100">
+                        <div
+                          className="flex items-center justify-between md:justify-end gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-0 border-slate-100"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <span className="text-[11px] text-slate-400 font-mono hidden md:inline-flex items-center gap-1 mr-2">
                             <Calendar size={12} />
                             {dataCriacao}
@@ -688,30 +773,28 @@ export default function Equipe() {
                             variant="outline"
                             size="sm"
                             disabled={isBusy}
-                            onClick={() => setConfirmNegarUser(m)}
-                            className="h-9 min-h-[36px] text-xs text-rose-700 hover:text-rose-800 hover:bg-rose-50 border-rose-200"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setConfirmNegarUser(m)
+                            }}
+                            className="h-11 min-h-[44px] px-3 text-xs text-rose-700 hover:text-rose-800 hover:bg-rose-50 border-rose-200 rounded-xl"
                           >
-                            <UserX size={13} className="mr-1 text-rose-500" />
+                            <UserX size={14} className="mr-1 text-rose-500" />
                             Negar
                           </Button>
 
                           <Button
                             size="sm"
                             disabled={isBusy}
-                            onClick={() => handleReviewUser(m, 'aprovar')}
-                            className="h-9 min-h-[36px] text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] text-white shadow-xs rounded-xl px-3.5"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleOpenReviewModal(m)
+                            }}
+                            className="h-11 min-h-[44px] text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] active:scale-[0.98] text-white shadow-xs rounded-xl px-4"
+                            title="Abrir cadastro para definir o perfil de acesso e aprovar"
                           >
-                            {isBusy ? (
-                              <>
-                                <Loader2 size={13} className="mr-1.5 animate-spin" />
-                                Liberando...
-                              </>
-                            ) : (
-                              <>
-                                <UserCheck size={14} className="mr-1.5 text-[#F5B31C]" />
-                                Aprovar e Liberar
-                              </>
-                            )}
+                            <UserCheck size={14} className="mr-1.5 text-[#F5B31C]" />
+                            Revisar e Aprovar
                           </Button>
                         </div>
                       </div>
@@ -1170,6 +1253,233 @@ export default function Equipe() {
         </DialogContent>
       </Dialog>
 
+      {/* Modal: Detalhes do Cadastro e Definição de Nível de Acesso (Perfil) Antes da Aprovação */}
+      <Dialog
+        open={Boolean(modalRevisarUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setModalRevisarUser(null)
+            setApprovalRoleError(null)
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-lg w-[95vw] sm:w-full p-4 sm:p-6 rounded-2xl bg-white max-h-[92vh] overflow-y-auto"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          {modalRevisarUser && (
+            <div className="space-y-4">
+              <DialogHeader className="text-left">
+                <div className="flex items-center gap-2">
+                  <div className="h-9 w-9 rounded-xl bg-amber-500/10 text-amber-700 flex items-center justify-center shrink-0 border border-amber-300/40">
+                    <ShieldCheck className="h-5 w-5 text-[#0D8272]" />
+                  </div>
+                  <div>
+                    <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336]">
+                      Aprovar Cadastro de Colega
+                    </DialogTitle>
+                    <DialogDescription className="text-xs text-slate-500 mt-0.5">
+                      Defina o nível de acesso antes de liberar a circulação deste usuário no Help
+                      Vida.
+                    </DialogDescription>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              {/* Card com dados do solicitante */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-11 w-11 rounded-xl bg-amber-500 text-white text-xs font-bold shrink-0 border border-amber-600/30">
+                    <AvatarFallback>
+                      {textoSeguro(modalRevisarUser.name)
+                        ? textoSeguro(modalRevisarUser.name)
+                            .split(/\s+/)
+                            .filter(Boolean)
+                            .map((n) => n[0])
+                            .slice(0, 2)
+                            .join('')
+                            .toUpperCase()
+                        : textoSeguro(modalRevisarUser.email).slice(0, 2).toUpperCase() || 'HV'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-slate-900 truncate">
+                        {textoSeguro(modalRevisarUser.name) || 'Nome não informado'}
+                      </p>
+                      <Badge className="bg-amber-100 text-amber-800 text-[10px] font-semibold border-amber-200 shrink-0">
+                        Pendente
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-slate-600 truncate flex items-center gap-1.5 mt-0.5">
+                      <Mail size={12} className="text-slate-400 shrink-0" />
+                      {textoSeguro(modalRevisarUser.email) || 'E-mail não informado'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-emerald-950/10 flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
+                  <span className="flex items-center gap-1">
+                    <Calendar size={12} className="text-slate-400" />
+                    Data de cadastro:{' '}
+                    <strong className="text-slate-700 font-medium">
+                      {formatarDataSegura(modalRevisarUser.created, {
+                        fallback: 'Data indisponível',
+                      })}
+                    </strong>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock size={12} className="text-slate-400" />
+                    Origem:{' '}
+                    <strong className="text-slate-700 font-medium">Auto-cadastro público</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Mensagem de erro caso a seleção falhe */}
+              {approvalRoleError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2.5 animate-in fade-in">
+                  <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-semibold">Não foi possível aprovar:</p>
+                    <p className="text-[11px] mt-0.5 text-rose-700 leading-relaxed">
+                      {approvalRoleError}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Seleção do Nível de Acesso (Perfil) */}
+              <div className="space-y-2">
+                <Label
+                  htmlFor="approvalRoleSelect"
+                  className="text-xs font-bold text-slate-800 flex items-center gap-1.5"
+                >
+                  <ShieldCheck size={14} className="text-[#0D8272]" />
+                  Defina o Nível de Acesso (Perfil) *
+                </Label>
+
+                <Select
+                  value={selectedRoleForApproval}
+                  onValueChange={(val: 'comum' | 'medico_visitador' | 'admin') => {
+                    setSelectedRoleForApproval(val)
+                    if (approvalRoleError) setApprovalRoleError(null)
+                  }}
+                >
+                  <SelectTrigger
+                    id="approvalRoleSelect"
+                    className="h-11 min-h-[44px] text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-medium focus-visible:ring-[#0D8272]"
+                  >
+                    <SelectValue placeholder="Selecione o nível de acesso do colega" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="comum">Corpo Clínico (Médico / Farmacêutico)</SelectItem>
+                    <SelectItem value="medico_visitador">
+                      Médico Visitador (Apenas Padronizados)
+                    </SelectItem>
+                    <SelectItem value="admin">Administrador (Gestão / Farmácia)</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Explicação detalhada de cada perfil selecionado */}
+                <div className="space-y-1.5 pt-1">
+                  {selectedRoleForApproval === 'medico_visitador' && (
+                    <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-950 space-y-1 animate-in fade-in">
+                      <div className="font-bold flex items-center gap-1.5 text-sky-900">
+                        <User size={13} className="text-sky-600" />
+                        Médico Visitador (Apenas Padronizados)
+                      </div>
+                      <p className="text-[11px] text-sky-800 leading-relaxed">
+                        Acesso com <strong>restrição automática no servidor</strong>: este usuário
+                        só visualiza medicamentos com status{' '}
+                        <span className="font-semibold text-emerald-800">Padronizado</span>.
+                        Medicamentos não padronizados e inativos ficam ocultos.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedRoleForApproval === 'comum' && (
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-950 space-y-1 animate-in fade-in">
+                      <div className="font-bold flex items-center gap-1.5 text-emerald-900">
+                        <Users size={13} className="text-emerald-700" />
+                        Corpo Clínico (Médico / Farmacêutico)
+                      </div>
+                      <p className="text-[11px] text-emerald-800 leading-relaxed">
+                        Acesso padrão completo de consulta: visualiza todo o catálogo Help Vida
+                        (padronizados, não padronizados e inativos), pode enviar solicitações de
+                        inclusão e interagir com o Assistente Virtual.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedRoleForApproval === 'admin' && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 space-y-1 animate-in fade-in">
+                      <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                        <ShieldCheck size={13} className="text-amber-700" />
+                        Administrador (Gestão / Farmácia)
+                      </div>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        Acesso irrestrito de gestão: edição de medicamentos, aprovação de
+                        solicitações da comissão, importação de PDF institucional e aprovação de
+                        novos membros da equipe.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Aviso sobre gravação em log de auditoria */}
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 flex items-center gap-2">
+                <Lock size={12} className="text-slate-400 shrink-0" />
+                <span>
+                  A aprovação e o perfil atribuído serão registrados no log de auditoria da
+                  comissão.
+                </span>
+              </div>
+
+              {/* Rodapé com botões de Ação */}
+              <DialogFooter className="pt-2 flex flex-col-reverse sm:flex-row gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const usuarioParaNegar = modalRevisarUser
+                    setModalRevisarUser(null)
+                    setConfirmNegarUser(usuarioParaNegar)
+                  }}
+                  disabled={Boolean(reviewingUserId)}
+                  className="h-11 min-h-[44px] text-xs text-rose-700 hover:text-rose-800 hover:bg-rose-50 border-rose-200 w-full sm:w-auto"
+                >
+                  <UserX size={14} className="mr-1 text-rose-500" />
+                  Negar Cadastro
+                </Button>
+
+                <Button
+                  type="button"
+                  onClick={() =>
+                    handleReviewUser(modalRevisarUser, 'aprovar', selectedRoleForApproval)
+                  }
+                  disabled={Boolean(reviewingUserId) || !selectedRoleForApproval}
+                  className="h-11 min-h-[44px] px-5 rounded-xl text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] active:scale-[0.98] text-white shadow-xs touch-manipulation transition-all w-full sm:w-auto"
+                >
+                  {reviewingUserId ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Liberando Acesso...
+                    </>
+                  ) : (
+                    <>
+                      <UserCheck className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                      Aprovar e Liberar Acesso
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Modal: Confirmar Negação de Cadastro */}
       <Dialog
         open={Boolean(confirmNegarUser)}
@@ -1196,22 +1506,20 @@ export default function Equipe() {
           <DialogFooter className="pt-3 flex flex-col sm:flex-row gap-2">
             <Button
               variant="outline"
-              size="sm"
               onClick={() => setConfirmNegarUser(null)}
               disabled={Boolean(reviewingUserId)}
-              className="text-xs"
+              className="h-11 min-h-[44px] text-xs text-slate-700"
             >
               Cancelar
             </Button>
             <Button
-              size="sm"
               disabled={Boolean(reviewingUserId)}
               onClick={() => {
                 if (confirmNegarUser) {
                   handleReviewUser(confirmNegarUser, 'negar')
                 }
               }}
-              className="bg-rose-600 hover:bg-rose-700 text-white text-xs h-9 font-bold rounded-xl"
+              className="bg-rose-600 hover:bg-rose-700 text-white text-xs h-11 min-h-[44px] font-bold rounded-xl px-4"
             >
               {reviewingUserId ? (
                 <>

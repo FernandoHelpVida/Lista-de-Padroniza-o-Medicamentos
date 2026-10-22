@@ -195,6 +195,7 @@ routerAdd(
       const body = e.requestInfo().body || {}
       const targetUserId = (body.userId || '').trim()
       const decision = (body.decision || '').trim().toLowerCase() // 'aprovar' | 'negar'
+      const requestedRole = (body.role || '').trim().toLowerCase()
 
       if (!targetUserId) {
         return e.badRequestError('ID do usuário a ser avaliado é obrigatório.')
@@ -202,6 +203,26 @@ routerAdd(
 
       if (decision !== 'aprovar' && decision !== 'negar') {
         return e.badRequestError("Decisão inválida. Utilize 'aprovar' ou 'negar'.")
+      }
+
+      // Se a decisão for 'aprovar', o perfil de acesso é obrigatório e deve ser válido
+      let assignedRole = null
+      if (decision === 'aprovar') {
+        if (!requestedRole) {
+          return e.badRequestError(
+            'É obrigatório definir o nível de acesso (perfil) do usuário antes da aprovação.',
+          )
+        }
+        if (
+          requestedRole !== 'comum' &&
+          requestedRole !== 'medico_visitador' &&
+          requestedRole !== 'admin'
+        ) {
+          return e.badRequestError(
+            'Perfil de acesso inválido. Escolha entre Corpo Clínico, Médico Visitador ou Administrador.',
+          )
+        }
+        assignedRole = requestedRole
       }
 
       let targetUser
@@ -219,17 +240,28 @@ routerAdd(
       }
 
       const statusAnterior = targetUser.getString('approval_status') || 'pendente'
+      const roleAnterior = targetUser.getString('role') || 'comum'
       const novoStatus = decision === 'aprovar' ? 'aprovado' : 'negado'
 
       targetUser.set('approval_status', novoStatus)
       if (decision === 'aprovar') {
+        // Atribuir efetivamente o papel escolhido pelo administrador
+        targetUser.set('role', assignedRole)
         // Ao aprovar, marcar também como verified para garantir acesso sem bloqueios
         targetUser.setVerified(true)
       }
 
       e.app.save(targetUser)
 
-      // Registrar log de auditoria institucional
+      // Nome amigável do perfil para os detalhes de auditoria
+      const roleLabels = {
+        admin: 'Administrador (Gestão / Farmácia)',
+        medico_visitador: 'Médico Visitador (Apenas Padronizados)',
+        comum: 'Corpo Clínico (Médico / Farmacêutico)',
+      }
+      const roleLabel = assignedRole ? roleLabels[assignedRole] || assignedRole : roleAnterior
+
+      // Registrar log de auditoria institucional com o perfil atribuído
       try {
         const auditCol = e.app.findCollectionByNameOrId('audit_logs')
         const auditRecord = new Record(auditCol)
@@ -240,12 +272,15 @@ routerAdd(
         auditRecord.set('usuario_nome', authUser.getString('name') || '')
         auditRecord.set('usuario_email', authUser.getString('email') || '')
         auditRecord.set('usuario_role', authUser.getString('role') || 'admin')
-        auditRecord.set('status_anterior', statusAnterior)
-        auditRecord.set('status_novo', novoStatus)
+        auditRecord.set('status_anterior', statusAnterior + ' (perfil: ' + roleAnterior + ')')
+        auditRecord.set(
+          'status_novo',
+          novoStatus + (decision === 'aprovar' ? ' (perfil: ' + assignedRole + ')' : ''),
+        )
         auditRecord.set(
           'detalhes',
           (decision === 'aprovar'
-            ? 'Cadastro aprovado pelo administrador para: '
+            ? 'Cadastro aprovado com perfil [' + roleLabel + '] pelo administrador para: '
             : 'Cadastro negado pelo administrador para: ') +
             targetUser.getString('name') +
             ' (' +
@@ -261,9 +296,10 @@ routerAdd(
         success: true,
         userId: targetUser.id,
         approval_status: novoStatus,
+        role: targetUser.getString('role'),
         message:
           decision === 'aprovar'
-            ? 'Acesso liberado com sucesso para o usuário.'
+            ? 'Acesso liberado com sucesso com perfil ' + roleLabel + '.'
             : 'Cadastro negado e acesso bloqueado.',
       })
     } catch (err) {
