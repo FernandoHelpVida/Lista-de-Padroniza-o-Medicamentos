@@ -19,7 +19,9 @@ export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/'
+  const locationState = location.state as { from?: { pathname: string }; message?: string } | null
+  const from = locationState?.from?.pathname || '/'
+  const infoMessage = locationState?.message
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -30,13 +32,39 @@ export default function Login() {
       await login(email.trim(), password)
       navigate(from, { replace: true })
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : 'Credenciais inválidas. Verifique seu e-mail e senha.'
-      setError(
-        msg.includes('Failed to authenticate') || msg.includes('400')
-          ? 'E-mail ou senha incorretos. Tente novamente.'
-          : msg,
-      )
+      // Extrair mensagem de erro detalhada da resposta do PocketBase se disponível
+      let msg = ''
+      if (err && typeof err === 'object') {
+        const anyErr = err as Record<string, unknown>
+        const resp = anyErr.response as Record<string, unknown> | undefined
+        if (resp && typeof resp.message === 'string' && resp.message) {
+          msg = resp.message
+        }
+      }
+      if (!msg && err instanceof Error) {
+        msg = err.message
+      }
+      if (!msg) {
+        msg = 'Credenciais inválidas. Verifique seu e-mail e senha.'
+      }
+
+      // Tratar mensagens institucionais sem jargão técnico em inglês
+      const lower = msg.toLowerCase()
+      if (lower.includes('aguardando aprovação') || lower.includes('administrador da help vida')) {
+        setError(
+          'Sua conta foi criada e está aguardando aprovação do administrador da Help Vida. Você será avisado por e-mail quando o acesso for liberado.',
+        )
+      } else if (lower.includes('não foi autorizado') || lower.includes('negado')) {
+        setError('Seu cadastro não foi autorizado. Contate o administrador da Help Vida.')
+      } else if (
+        lower.includes('failed to authenticate') ||
+        lower.includes('400') ||
+        lower.includes('invalid')
+      ) {
+        setError('E-mail ou senha incorretos. Tente novamente.')
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -48,6 +76,13 @@ export default function Login() {
       subtitle="Insira suas credenciais institucionais para continuar"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {infoMessage && !error && (
+          <Alert className="py-2.5 bg-[#E6F5F2] border-[#0D8272]/30 text-[#0C4336]">
+            <ShieldCheck className="h-4 w-4 text-[#0D8272]" />
+            <AlertDescription className="text-xs font-medium">{infoMessage}</AlertDescription>
+          </Alert>
+        )}
+
         {error && (
           <Alert variant="destructive" className="py-2.5">
             <AlertCircle className="h-4 w-4" />

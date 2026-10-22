@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T18:11:39.530Z",
+  "generatedAt": "2026-10-22T18:24:33.267Z",
   "collections": [
     {
       "name": "users",
@@ -8,7 +8,7 @@
         "list": "@request.auth.id != ''",
         "view": "@request.auth.id != ''",
         "create": "",
-        "update": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
+        "update": "@request.auth.id != '' && (@request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin' || (id = @request.auth.id && @request.body.role:changed = false && @request.body.approval_status:changed = false))",
         "delete": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')"
       },
       "fields": [
@@ -44,6 +44,13 @@
           "required": false,
           "system": false,
           "selectValues": ["admin", "comum"]
+        },
+        {
+          "name": "approval_status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["pendente", "aprovado", "negado"]
         }
       ],
       "indexes": [

@@ -7,6 +7,7 @@ export interface UserProfile extends RecordModel {
   name?: string
   avatar?: string
   role?: 'admin' | 'comum'
+  approval_status?: 'pendente' | 'aprovado' | 'negado'
 }
 
 interface AuthContextType {

@@ -15,11 +15,14 @@ import {
   Search,
   RefreshCw,
   UserCheck,
+  UserX,
+  Clock,
   Calendar,
   Lock,
   Eye,
   EyeOff,
 } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,6 +54,7 @@ export interface UserTeamRecord {
   name?: string | null
   email?: string | null
   role?: 'admin' | 'comum' | string | null
+  approval_status?: 'pendente' | 'aprovado' | 'negado' | string | null
   verified?: boolean | null
   created?: string | null
 }
@@ -62,6 +66,7 @@ export default function Equipe() {
   const [membros, setMembros] = useState<UserTeamRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [activeTab, setActiveTab] = useState<'aprovados' | 'pendentes' | 'negados'>('aprovados')
 
   const navigate = useNavigate()
 
@@ -81,11 +86,15 @@ export default function Equipe() {
   const [membroParaReset, setMembroParaReset] = useState<UserTeamRecord | null>(null)
   const [enviandoReset, setEnviandoReset] = useState(false)
 
+  // Estado para ação de Aprovar / Negar
+  const [reviewingUserId, setReviewingUserId] = useState<string | null>(null)
+  const [confirmNegarUser, setConfirmNegarUser] = useState<UserTeamRecord | null>(null)
+
   const loadMembros = async () => {
     setLoading(true)
     try {
       const records = await pb.collection('users').getFullList<UserTeamRecord>({
-        sort: 'name,email',
+        sort: '-created',
       })
       setMembros(records)
     } catch (err) {
@@ -102,7 +111,102 @@ export default function Equipe() {
 
   useEffect(() => {
     loadMembros()
+
+    // Subscrição em tempo real para refletir novos cadastros e mudanças instantaneamente
+    const unsubscribePromise = pb.collection('users').subscribe('*', () => {
+      loadMembros()
+    })
+
+    return () => {
+      unsubscribePromise
+        .then((unsub) => {
+          if (typeof unsub === 'function') {
+            unsub()
+          }
+        })
+        .catch(() => {
+          pb.collection('users')
+            .unsubscribe('*')
+            .catch(() => {})
+        })
+    }
   }, [])
+
+  // Função para aprovar ou negar cadastro
+  const handleReviewUser = async (targetUser: UserTeamRecord, decision: 'aprovar' | 'negar') => {
+    if (!targetUser?.id) return
+    setReviewingUserId(targetUser.id)
+
+    try {
+      await pb.send('/backend/v1/admin/review-user', {
+        method: 'POST',
+        body: {
+          userId: targetUser.id,
+          decision,
+        },
+      })
+
+      toast({
+        title: decision === 'aprovar' ? 'Cadastro aprovado!' : 'Cadastro negado',
+        description:
+          decision === 'aprovar'
+            ? `O acesso de ${targetUser.name || targetUser.email} foi liberado com sucesso.`
+            : `O cadastro de ${targetUser.name || targetUser.email} foi negado.`,
+      })
+
+      setConfirmNegarUser(null)
+      await loadMembros()
+    } catch (err: unknown) {
+      console.error('Erro ao avaliar usuário:', err)
+      // Fallback: se a rota custom falhar, tentar atualização direta via SDK pelo admin
+      try {
+        const novoStatus = decision === 'aprovar' ? 'aprovado' : 'negado'
+        await pb.collection('users').update(targetUser.id, {
+          approval_status: novoStatus,
+          verified: decision === 'aprovar' ? true : targetUser.verified,
+        })
+
+        // Tentar salvar log de auditoria
+        try {
+          await pb.collection('audit_logs').create({
+            colecao: 'users',
+            registro_id: targetUser.id,
+            acao: decision === 'aprovar' ? 'CADASTRO_APROVADO' : 'CADASTRO_NEGADO',
+            usuario: user?.id,
+            usuario_nome: user?.name || '',
+            usuario_email: user?.email || '',
+            usuario_role: user?.role || 'admin',
+            status_anterior: targetUser.approval_status || 'pendente',
+            status_novo: novoStatus,
+            detalhes:
+              (decision === 'aprovar' ? 'Cadastro aprovado para: ' : 'Cadastro negado para: ') +
+              (targetUser.name || targetUser.email),
+          })
+        } catch {
+          /* intentionally ignored */
+        }
+
+        toast({
+          title: decision === 'aprovar' ? 'Cadastro aprovado!' : 'Cadastro negado',
+          description: `Status de ${targetUser.name || targetUser.email} atualizado.`,
+        })
+        setConfirmNegarUser(null)
+        await loadMembros()
+      } catch (errFallback: unknown) {
+        const friendly = getErrorMessage(
+          errFallback,
+          'Falha ao atualizar status de aprovação do usuário.',
+        )
+        toast({
+          title: 'Erro ao avaliar',
+          description: friendly,
+          variant: 'destructive',
+        })
+      }
+    } finally {
+      setReviewingUserId(null)
+    }
+  }
 
   // Validações em tempo real para o formulário do modal
   const nomeLimpo = textoSeguro(novoNome).trim()
@@ -308,14 +412,44 @@ export default function Equipe() {
     }
   }
 
-  const filteredMembros = membros.filter((m) => {
-    const q = textoMinusculoSeguro(search)
-    if (!q) return true
-    const nome = textoMinusculoSeguro(m?.name)
-    const email = textoMinusculoSeguro(m?.email)
-    const role = textoMinusculoSeguro(m?.role)
-    return nome.includes(q) || email.includes(q) || role.includes(q)
+  // Separação por status de aprovação
+  // Observação: contas sem status definido são consideradas 'aprovado' (compatibilidade legado)
+  const pendentesList = membros.filter((m) => {
+    const s = m?.approval_status?.toLowerCase()
+    return s === 'pendente'
   })
+
+  const negadosList = membros.filter((m) => {
+    const s = m?.approval_status?.toLowerCase()
+    return s === 'negado'
+  })
+
+  const aprovadosList = membros.filter((m) => {
+    const s = m?.approval_status?.toLowerCase()
+    return s === 'aprovado' || !s
+  })
+
+  const filterBySearch = (list: UserTeamRecord[]) => {
+    const q = textoMinusculoSeguro(search)
+    if (!q) return list
+    return list.filter((m) => {
+      const nome = textoMinusculoSeguro(m?.name)
+      const email = textoMinusculoSeguro(m?.email)
+      const role = textoMinusculoSeguro(m?.role)
+      return nome.includes(q) || email.includes(q) || role.includes(q)
+    })
+  }
+
+  const filteredAprovados = filterBySearch(aprovadosList)
+  const filteredPendentes = filterBySearch(pendentesList)
+  const filteredNegados = filterBySearch(negadosList)
+
+  // Se houver pendentes e a URL tiver hash ou query indicando aprovações, abrir a aba
+  useEffect(() => {
+    if (pendentesList.length > 0 && window.location.hash === '#aprovacoes') {
+      setActiveTab('pendentes')
+    }
+  }, [pendentesList.length])
 
   if (!isAdmin) {
     return (
@@ -359,146 +493,418 @@ export default function Equipe() {
         )}
       </div>
 
-      {/* Barra de Busca e Atualização */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input
-            type="search"
-            placeholder="Buscar por nome ou e-mail institucional..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-10 pl-9 text-xs sm:text-sm bg-white border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
-          />
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={loadMembros}
-          disabled={loading}
-          className="h-10 text-xs border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] shrink-0"
-        >
-          <RefreshCw size={13} className={cn('mr-1.5', loading && 'animate-spin')} />
-          Atualizar Lista ({membros.length})
-        </Button>
-      </div>
-
-      {/* Lista de Membros */}
-      <Card className="border-emerald-950/10 bg-white shadow-xs">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="py-20 flex flex-col items-center justify-center text-slate-400">
-              <Loader2 className="h-8 w-8 animate-spin text-[#0D8272] mb-2" />
-              <p className="text-xs">Carregando usuários da Help Vida...</p>
+      {/* Alerta de banner se houver cadastros pendentes de aprovação */}
+      {pendentesList.length > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+              <Clock className="h-5 w-5" />
             </div>
-          ) : filteredMembros.length === 0 ? (
-            <div className="py-12 text-center text-slate-400">
-              <Users className="h-10 w-10 mx-auto text-slate-300 mb-2" />
-              <p className="text-xs font-semibold text-slate-700">Nenhum membro encontrado</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Utilize o botão acima para cadastrar os médicos e farmacêuticos da equipe.
+            <div>
+              <p className="text-xs sm:text-sm font-bold text-amber-950">
+                {pendentesList.length === 1
+                  ? 'Existe 1 cadastro aguardando sua aprovação'
+                  : `Existem ${pendentesList.length} novos cadastros aguardando sua aprovação`}
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                Novos usuários que se cadastraram não têm acesso até que você valide e libere.
               </p>
             </div>
-          ) : (
-            <div className="divide-y divide-emerald-950/5">
-              {filteredMembros.map((m) => {
-                const nomeTexto = textoSeguro(m?.name).trim()
-                const emailTexto = textoSeguro(m?.email).trim()
-                const emailMinusculo = emailTexto.toLowerCase()
+          </div>
+          <Button
+            size="sm"
+            onClick={() => setActiveTab('pendentes')}
+            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl h-9 px-4 shrink-0 shadow-xs"
+          >
+            Revisar Pendentes ({pendentesList.length})
+          </Button>
+        </div>
+      )}
 
-                const initials = nomeTexto
-                  ? nomeTexto
-                      .split(/\s+/)
-                      .filter(Boolean)
-                      .map((n) => n[0])
-                      .slice(0, 2)
-                      .join('')
-                      .toUpperCase()
-                  : emailTexto
-                    ? emailTexto.slice(0, 2).toUpperCase()
-                    : 'HV'
+      {/* Navegação por Abas: Membros Ativos, Pendentes e Negados */}
+      <Tabs
+        value={activeTab}
+        onValueChange={(val) => setActiveTab(val as 'aprovados' | 'pendentes' | 'negados')}
+        className="w-full space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <TabsList className="bg-[#E6F5F2] p-1 rounded-xl h-auto flex flex-wrap self-start">
+            <TabsTrigger
+              value="aprovados"
+              className="rounded-lg text-xs font-semibold py-2 px-3.5 data-[state=active]:bg-[#0F5342] data-[state=active]:text-white transition-all flex items-center gap-1.5"
+            >
+              <Users size={14} />
+              Equipe Ativa
+              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-black/10">
+                {aprovadosList.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="pendentes"
+              className="rounded-lg text-xs font-semibold py-2 px-3.5 data-[state=active]:bg-[#0F5342] data-[state=active]:text-white transition-all flex items-center gap-1.5 relative"
+            >
+              <Clock size={14} className={pendentesList.length > 0 ? 'text-amber-500' : ''} />
+              Aprovações Pendentes
+              {pendentesList.length > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-bold animate-pulse">
+                  {pendentesList.length}
+                </span>
+              )}
+            </TabsTrigger>
+            {negadosList.length > 0 && (
+              <TabsTrigger
+                value="negados"
+                className="rounded-lg text-xs font-semibold py-2 px-3.5 data-[state=active]:bg-[#0F5342] data-[state=active]:text-white transition-all flex items-center gap-1.5"
+              >
+                <UserX size={14} />
+                Negados
+                <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-black/10">
+                  {negadosList.length}
+                </span>
+              </TabsTrigger>
+            )}
+          </TabsList>
 
-                const dataCriacao = formatarDataSegura(m?.created, {
-                  fallback: 'Data indisponível',
-                })
+          {/* Barra de Busca e Atualização */}
+          <div className="flex items-center gap-2 flex-1 sm:max-w-md justify-end">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                type="search"
+                placeholder="Buscar por nome ou e-mail..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-10 pl-9 text-xs sm:text-sm bg-white border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadMembros}
+              disabled={loading}
+              className="h-10 text-xs border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] shrink-0"
+              title="Atualizar lista"
+            >
+              <RefreshCw size={13} className={cn(loading && 'animate-spin')} />
+            </Button>
+          </div>
+        </div>
 
-                const isCurrentUser = Boolean(user?.id && m?.id && user.id === m.id)
-                const isMemberAdmin =
-                  m?.role === 'admin' || emailMinusculo === 'fernandofernandes@helpvida.com.br'
+        {/* ABA: PENDENTES DE APROVAÇÃO */}
+        <TabsContent value="pendentes" className="space-y-3 mt-0">
+          <Card className="border-emerald-950/10 bg-white shadow-xs">
+            <CardHeader className="p-4 sm:p-5 border-b border-emerald-950/5 bg-[#F4FAF8]/50">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-sm sm:text-base font-bold text-[#0C4336] flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-amber-500" />
+                    Novos Cadastros Aguardando Validação
+                  </CardTitle>
+                  <CardDescription className="text-xs text-slate-500 mt-0.5">
+                    Usuários cadastrados pela página pública. Valide a identidade institucional para
+                    liberar o acesso.
+                  </CardDescription>
+                </div>
+                <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs font-semibold self-start sm:self-auto">
+                  {pendentesList.length} {pendentesList.length === 1 ? 'pendência' : 'pendências'}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="py-16 flex flex-col items-center justify-center text-slate-400">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#0D8272] mb-2" />
+                  <p className="text-xs">Carregando cadastros pendentes...</p>
+                </div>
+              ) : filteredPendentes.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500 mb-2" />
+                  <p className="text-xs font-semibold text-slate-700">
+                    Nenhum cadastro pendente no momento
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Todos os auto-cadastros foram avaliados ou não há novas solicitações de acesso.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-emerald-950/5">
+                  {filteredPendentes.map((m) => {
+                    const nomeTexto = textoSeguro(m?.name).trim()
+                    const emailTexto = textoSeguro(m?.email).trim()
+                    const dataCriacao = formatarDataSegura(m?.created, {
+                      fallback: 'Data indisponível',
+                    })
+                    const isBusy = reviewingUserId === m.id
 
-                return (
-                  <div
-                    key={m?.id || emailTexto || Math.random()}
-                    className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F4FAF8]/60 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="h-10 w-10 rounded-xl bg-[#0F5342] text-white text-xs font-bold shrink-0 border border-emerald-600/30">
-                        <AvatarFallback>{initials || 'HV'}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-bold text-slate-900 truncate">
-                            {nomeTexto || 'Sem nome informado'}
-                          </p>
-                          {isCurrentUser && (
-                            <Badge className="bg-emerald-100 text-[#0C4336] text-[10px] font-bold">
-                              Você
+                    const initials = nomeTexto
+                      ? nomeTexto
+                          .split(/\s+/)
+                          .filter(Boolean)
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join('')
+                          .toUpperCase()
+                      : emailTexto
+                        ? emailTexto.slice(0, 2).toUpperCase()
+                        : 'HV'
+
+                    return (
+                      <div
+                        key={m.id}
+                        className="p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 transition"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Avatar className="h-10 w-10 rounded-xl bg-amber-500 text-white text-xs font-bold shrink-0 border border-amber-600/30">
+                            <AvatarFallback>{initials}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-bold text-slate-900 truncate">
+                                {nomeTexto || 'Nome não informado'}
+                              </p>
+                              <Badge className="bg-amber-100 text-amber-800 text-[10px] font-semibold border-amber-200">
+                                Aguardando Aprovação
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                              <Mail size={12} className="text-slate-400 shrink-0" />
+                              {emailTexto}
+                            </p>
+                            <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 md:hidden">
+                              <Calendar size={11} />
+                              Cadastrado em {dataCriacao}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between md:justify-end gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-0 border-slate-100">
+                          <span className="text-[11px] text-slate-400 font-mono hidden md:inline-flex items-center gap-1 mr-2">
+                            <Calendar size={12} />
+                            {dataCriacao}
+                          </span>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={isBusy}
+                            onClick={() => setConfirmNegarUser(m)}
+                            className="h-9 min-h-[36px] text-xs text-rose-700 hover:text-rose-800 hover:bg-rose-50 border-rose-200"
+                          >
+                            <UserX size={13} className="mr-1 text-rose-500" />
+                            Negar
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            disabled={isBusy}
+                            onClick={() => handleReviewUser(m, 'aprovar')}
+                            className="h-9 min-h-[36px] text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] text-white shadow-xs rounded-xl px-3.5"
+                          >
+                            {isBusy ? (
+                              <>
+                                <Loader2 size={13} className="mr-1.5 animate-spin" />
+                                Liberando...
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck size={14} className="mr-1.5 text-[#F5B31C]" />
+                                Aprovar e Liberar
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ABA: EQUIPE ATIVA (APROVADOS) */}
+        <TabsContent value="aprovados" className="space-y-3 mt-0">
+          <Card className="border-emerald-950/10 bg-white shadow-xs">
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="py-20 flex flex-col items-center justify-center text-slate-400">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#0D8272] mb-2" />
+                  <p className="text-xs">Carregando usuários da Help Vida...</p>
+                </div>
+              ) : filteredAprovados.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <Users className="h-10 w-10 mx-auto text-slate-300 mb-2" />
+                  <p className="text-xs font-semibold text-slate-700">
+                    Nenhum membro ativo encontrado
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Utilize o botão acima para cadastrar os médicos e farmacêuticos da equipe.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-emerald-950/5">
+                  {filteredAprovados.map((m) => {
+                    const nomeTexto = textoSeguro(m?.name).trim()
+                    const emailTexto = textoSeguro(m?.email).trim()
+                    const emailMinusculo = emailTexto.toLowerCase()
+
+                    const initials = nomeTexto
+                      ? nomeTexto
+                          .split(/\s+/)
+                          .filter(Boolean)
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join('')
+                          .toUpperCase()
+                      : emailTexto
+                        ? emailTexto.slice(0, 2).toUpperCase()
+                        : 'HV'
+
+                    const dataCriacao = formatarDataSegura(m?.created, {
+                      fallback: 'Data indisponível',
+                    })
+
+                    const isCurrentUser = Boolean(user?.id && m?.id && user.id === m.id)
+                    const isMemberAdmin =
+                      m?.role === 'admin' || emailMinusculo === 'fernandofernandes@helpvida.com.br'
+
+                    return (
+                      <div
+                        key={m?.id || emailTexto || Math.random()}
+                        className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F4FAF8]/60 transition"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Avatar className="h-10 w-10 rounded-xl bg-[#0F5342] text-white text-xs font-bold shrink-0 border border-emerald-600/30">
+                            <AvatarFallback>{initials || 'HV'}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-bold text-slate-900 truncate">
+                                {nomeTexto || 'Sem nome informado'}
+                              </p>
+                              {isCurrentUser && (
+                                <Badge className="bg-emerald-100 text-[#0C4336] text-[10px] font-bold">
+                                  Você
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                              <Mail size={12} className="text-slate-400 shrink-0" />
+                              {emailTexto || 'E-mail não informado'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-0 border-slate-100 text-xs">
+                          {/* Papel */}
+                          {isMemberAdmin ? (
+                            <Badge className="bg-[#0F5342] text-white text-[11px] font-bold flex items-center gap-1">
+                              <ShieldCheck size={12} className="text-[#F5B31C]" />
+                              Administrador
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[11px] font-medium">
+                              Corpo Clínico
                             </Badge>
                           )}
+
+                          {/* Data */}
+                          <span className="text-[11px] text-slate-400 font-mono hidden md:inline-flex items-center gap-1">
+                            <Calendar size={12} />
+                            {dataCriacao}
+                          </span>
+
+                          {/* Ação de reset */}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!emailTexto}
+                            onClick={() => {
+                              setMembroParaReset(m)
+                              setResetModalOpen(true)
+                            }}
+                            className="h-8 text-xs text-slate-700 hover:bg-slate-50 border-slate-200"
+                            title={
+                              emailTexto
+                                ? 'Enviar e-mail para redefinir senha'
+                                : 'E-mail não cadastrado'
+                            }
+                          >
+                            <KeyRound size={12} className="mr-1 text-slate-500" />
+                            Redefinir Senha
+                          </Button>
                         </div>
-                        <p className="text-xs text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
-                          <Mail size={12} className="text-slate-400 shrink-0" />
-                          {emailTexto || 'E-mail não informado'}
-                        </p>
                       </div>
-                    </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-                    <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-0 border-slate-100 text-xs">
-                      {/* Papel */}
-                      {isMemberAdmin ? (
-                        <Badge className="bg-[#0F5342] text-white text-[11px] font-bold flex items-center gap-1">
-                          <ShieldCheck size={12} className="text-[#F5B31C]" />
-                          Administrador
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[11px] font-medium">
-                          Corpo Clínico
-                        </Badge>
-                      )}
+        {/* ABA: CADASTROS NEGADOS */}
+        {negadosList.length > 0 && (
+          <TabsContent value="negados" className="space-y-3 mt-0">
+            <Card className="border-rose-100 bg-white shadow-xs">
+              <CardHeader className="p-4 sm:p-5 border-b border-rose-100 bg-rose-50/30">
+                <CardTitle className="text-sm sm:text-base font-bold text-rose-950 flex items-center gap-2">
+                  <UserX className="h-5 w-5 text-rose-600" />
+                  Cadastros Não Autorizados
+                </CardTitle>
+                <CardDescription className="text-xs text-slate-500 mt-0.5">
+                  Estes usuários tiveram o acesso recusado pela comissão e não conseguem logar no
+                  sistema.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-rose-50">
+                  {filteredNegados.map((m) => {
+                    const nomeTexto = textoSeguro(m?.name).trim()
+                    const emailTexto = textoSeguro(m?.email).trim()
+                    const dataCriacao = formatarDataSegura(m?.created, {
+                      fallback: 'Data indisponível',
+                    })
+                    const isBusy = reviewingUserId === m.id
 
-                      {/* Data */}
-                      <span className="text-[11px] text-slate-400 font-mono hidden md:inline-flex items-center gap-1">
-                        <Calendar size={12} />
-                        {dataCriacao}
-                      </span>
-
-                      {/* Ação de reset */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!emailTexto}
-                        onClick={() => {
-                          setMembroParaReset(m)
-                          setResetModalOpen(true)
-                        }}
-                        className="h-8 text-xs text-slate-700 hover:bg-slate-50 border-slate-200"
-                        title={
-                          emailTexto
-                            ? 'Enviar e-mail para redefinir senha'
-                            : 'E-mail não cadastrado'
-                        }
+                    return (
+                      <div
+                        key={m.id}
+                        className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-rose-50/20"
                       >
-                        <KeyRound size={12} className="mr-1 text-slate-500" />
-                        Redefinir Senha
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-800 line-through">
+                              {nomeTexto || 'Sem nome'}
+                            </p>
+                            <Badge className="bg-rose-100 text-rose-800 border-rose-200 text-[10px]">
+                              Negado
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">{emailTexto}</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                            Cadastrado em {dataCriacao}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isBusy}
+                          onClick={() => handleReviewUser(m, 'aprovar')}
+                          className="h-8 text-xs text-emerald-800 border-emerald-300 hover:bg-emerald-50 self-start sm:self-auto"
+                        >
+                          <UserCheck size={12} className="mr-1 text-emerald-600" />
+                          Reverter e Aprovar
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
 
       {/* Modal: Cadastrar Colega */}
       <Dialog
@@ -746,6 +1152,62 @@ export default function Equipe() {
               </DialogFooter>
             </form>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmar Negação de Cadastro */}
+      <Dialog
+        open={Boolean(confirmNegarUser)}
+        onOpenChange={(open) => {
+          if (!open) setConfirmNegarUser(null)
+        }}
+      >
+        <DialogContent className="max-w-md p-5 sm:p-6 rounded-2xl bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-rose-950 flex items-center gap-2">
+              <UserX className="h-5 w-5 text-rose-600" />
+              Negar Acesso ao Sistema
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600 pt-1 leading-relaxed">
+              Tem certeza de que deseja negar o cadastro de{' '}
+              <strong className="text-slate-900">
+                {confirmNegarUser?.name || confirmNegarUser?.email}
+              </strong>
+              ? O usuário não conseguirá acessar o aplicativo e verá uma mensagem de cadastro não
+              autorizado ao tentar efetuar login.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="pt-3 flex flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmNegarUser(null)}
+              disabled={Boolean(reviewingUserId)}
+              className="text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              disabled={Boolean(reviewingUserId)}
+              onClick={() => {
+                if (confirmNegarUser) {
+                  handleReviewUser(confirmNegarUser, 'negar')
+                }
+              }}
+              className="bg-rose-600 hover:bg-rose-700 text-white text-xs h-9 font-bold rounded-xl"
+            >
+              {reviewingUserId ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Negando...
+                </>
+              ) : (
+                'Confirmar e Negar'
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

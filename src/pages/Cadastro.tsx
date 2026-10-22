@@ -107,6 +107,7 @@ export default function Cadastro() {
         password,
         passwordConfirm,
         role: 'comum',
+        approval_status: 'pendente',
       })
 
       try {
@@ -118,9 +119,11 @@ export default function Cadastro() {
       setSuccess(true)
       setTimeout(() => {
         navigate('/login', {
-          state: { message: 'Conta criada com sucesso! Acesse com suas credenciais.' },
+          state: {
+            message: 'Cadastro enviado! Aguardando aprovação do administrador da Help Vida.',
+          },
         })
-      }, 2500)
+      }, 3500)
     } catch (err: unknown) {
       const friendlyMsg = getErrorMessage(
         err,
@@ -135,20 +138,32 @@ export default function Cadastro() {
   return (
     <AuthLayout
       title="Criar nova conta"
-      subtitle="Cadastre-se para ter acesso ao sistema de padronização"
+      subtitle="Cadastre-se para solicitar acesso ao sistema de padronização"
     >
       {success ? (
         <div className="space-y-4 py-4 text-center">
-          <div className="h-12 w-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+          <div className="h-12 w-12 rounded-full bg-[#E6F5F2] text-[#0D8272] flex items-center justify-center mx-auto border border-[#0D8272]/20">
             <CheckCircle2 className="h-6 w-6" />
           </div>
-          <h3 className="text-base font-bold text-slate-800">Cadastro realizado!</h3>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Sua conta foi criada com sucesso. Verifique seu e-mail para ativar sua conta.
-            Redirecionando para o login...
-          </p>
+          <h3 className="text-base font-bold text-[#0C4336]">Cadastro enviado com sucesso!</h3>
+          <div className="p-3.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/15 text-left text-xs text-slate-700 space-y-2">
+            <p className="font-semibold text-[#0C4336] flex items-center gap-1.5">
+              <ShieldCheck className="h-4 w-4 text-[#0D8272] shrink-0" />
+              Aguardando aprovação do administrador da Help Vida
+            </p>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Por políticas de segurança clínica, todo novo usuário precisa ser validado e liberado
+              por um administrador da comissão. Você será avisado quando seu acesso for autorizado.
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Caso você tenha recebido e-mail de verificação, confirme-o normalmente.
+            </p>
+          </div>
           <Link to="/login">
-            <Button variant="outline" className="mt-2 w-full text-xs">
+            <Button
+              variant="outline"
+              className="mt-2 w-full text-xs h-10 border-emerald-950/20 text-[#0C4336]"
+            >
               Ir para o Login agora
             </Button>
           </Link>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import logoHelpVida from '@/assets/logo-helpvida-e2205.jpeg'
@@ -16,9 +16,21 @@ import {
   ShieldCheck,
   FileQuestion,
   Users,
+  Clock,
+  UserCheck,
+  AlertCircle,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import pb from '@/lib/pocketbase/client'
 import { cn } from '@/lib/utils'
 import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -41,6 +54,67 @@ export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [globalSearch, setGlobalSearch] = useState('')
   const [politicaOpen, setPoliticaOpen] = useState(false)
+
+  // Contagem de usuários pendentes para alerta em tempo real do Administrador
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0)
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false)
+
+  // Carregar contagem de pendentes se o usuário for administrador
+  const fetchPendingApprovals = async () => {
+    if (!isAdmin) return
+    try {
+      const records = await pb.collection('users').getList(1, 1, {
+        filter: "approval_status = 'pendente'",
+      })
+      const count = records.totalItems
+      setPendingApprovalsCount(count)
+
+      // Se houver pendentes, verificar se o modal já foi dispensado nesta sessão do navegador
+      if (count > 0) {
+        const dismissed = sessionStorage.getItem('helpvida_approvals_modal_dismissed')
+        if (!dismissed) {
+          setApprovalModalOpen(true)
+        }
+      }
+    } catch (err) {
+      // Ignorar erros caso não esteja autenticado
+    }
+  }
+
+  useEffect(() => {
+    if (!isAdmin) return
+    fetchPendingApprovals()
+
+    // Subscrição em tempo real aos usuários para atualizar contador ao vivo
+    const unsubscribePromise = pb.collection('users').subscribe('*', () => {
+      fetchPendingApprovals()
+    })
+
+    return () => {
+      unsubscribePromise
+        .then((unsub) => {
+          if (typeof unsub === 'function') {
+            unsub()
+          }
+        })
+        .catch(() => {
+          pb.collection('users')
+            .unsubscribe('*')
+            .catch(() => {})
+        })
+    }
+  }, [isAdmin])
+
+  const handleDismissModal = () => {
+    sessionStorage.setItem('helpvida_approvals_modal_dismissed', 'true')
+    setApprovalModalOpen(false)
+  }
+
+  const handleReviewNow = () => {
+    sessionStorage.setItem('helpvida_approvals_modal_dismissed', 'true')
+    setApprovalModalOpen(false)
+    navigate('/equipe#aprovacoes')
+  }
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -69,7 +143,16 @@ export default function Layout() {
     { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
     { title: 'Solicitações', path: '/solicitacoes', icon: FileQuestion },
     ...(isAdmin ? [{ title: 'Importar PDF', path: '/importar', icon: FileUp }] : []),
-    ...(isAdmin ? [{ title: 'Equipe', path: '/equipe', icon: Users }] : []),
+    ...(isAdmin
+      ? [
+          {
+            title: 'Equipe',
+            path: '/equipe',
+            icon: Users,
+            badgeCount: pendingApprovalsCount,
+          },
+        ]
+      : []),
     { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
     { title: 'Configurações', path: '/configuracoes', icon: Settings },
   ]
@@ -170,14 +253,29 @@ export default function Layout() {
                 {isActive && (
                   <span className="absolute left-0 top-2 bottom-2 w-1.5 bg-[#F5B31C] rounded-r-full" />
                 )}
-                <Icon
-                  size={20}
-                  className={cn(
-                    'shrink-0 transition-colors',
-                    isActive ? 'text-[#F5B31C]' : 'text-emerald-200/60 group-hover:text-white',
+                <div className="relative shrink-0">
+                  <Icon
+                    size={20}
+                    className={cn(
+                      'transition-colors',
+                      isActive ? 'text-[#F5B31C]' : 'text-emerald-200/60 group-hover:text-white',
+                    )}
+                  />
+                  {/* Ponto vermelho na sidebar recolhida se houver pendências */}
+                  {collapsed && Boolean(item.badgeCount && item.badgeCount > 0) && (
+                    <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-[#082921]" />
                   )}
-                />
-                {!collapsed && <span className="truncate">{item.title}</span>}
+                </div>
+                {!collapsed && (
+                  <div className="flex items-center justify-between flex-1 min-w-0">
+                    <span className="truncate">{item.title}</span>
+                    {Boolean(item.badgeCount && item.badgeCount > 0) && (
+                      <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white animate-pulse">
+                        {item.badgeCount}
+                      </span>
+                    )}
+                  </div>
+                )}
               </NavLink>
             )
           })}
@@ -257,17 +355,36 @@ export default function Layout() {
             />
           </form>
 
-          {/* Lado direito: Perfil do usuário com Dropdown */}
+          {/* Lado direito: Botão rápido de aprovações pendentes (se houver) + Perfil do usuário com Dropdown */}
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {isAdmin && pendingApprovalsCount > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate('/equipe#aprovacoes')}
+                className="h-9 px-2.5 sm:px-3 text-xs bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-900 font-bold rounded-xl flex items-center gap-1.5 animate-pulse"
+                title={`${pendingApprovalsCount} novo(s) cadastro(s) aguardando aprovação`}
+              >
+                <Clock className="h-3.5 w-3.5 text-amber-600" />
+                <span className="hidden sm:inline">Aprovações:</span>
+                <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                  {pendingApprovalsCount}
+                </span>
+              </Button>
+            )}
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="flex items-center gap-2 p-1 rounded-full hover:bg-emerald-50 transition focus:outline-none focus:ring-2 focus:ring-[#0D8272]"
+                  className="flex items-center gap-2 p-1 rounded-full hover:bg-emerald-50 transition focus:outline-none focus:ring-2 focus:ring-[#0D8272] relative"
                   aria-label="Menu do usuário"
                 >
                   <Avatar className="h-8 w-8 rounded-full bg-[#0F5342] text-white text-xs font-bold shadow-xs border border-emerald-600/30">
                     <AvatarFallback>{userInitials}</AvatarFallback>
                   </Avatar>
+                  {isAdmin && pendingApprovalsCount > 0 && (
+                    <span className="absolute top-0 right-0 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />
+                  )}
                   <span className="hidden lg:inline-block text-xs font-semibold text-slate-800 max-w-[120px] truncate text-left">
                     {user?.name || user?.email?.split('@')[0]}
                   </span>
@@ -289,18 +406,25 @@ export default function Layout() {
                 {isAdmin && (
                   <>
                     <DropdownMenuItem
+                      onClick={() => navigate('/equipe#aprovacoes')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50 flex items-center justify-between"
+                    >
+                      <div className="flex items-center">
+                        <Users size={14} className="mr-2 text-[#0D8272]" />
+                        <span>Gestão da Equipe</span>
+                      </div>
+                      {pendingApprovalsCount > 0 && (
+                        <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                          {pendingApprovalsCount}
+                        </span>
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => navigate('/importar')}
                       className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
                     >
                       <FileUp size={14} className="mr-2 text-[#0D8272]" />
                       Importar Lista (PDF)
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => navigate('/equipe')}
-                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
-                    >
-                      <Users size={14} className="mr-2 text-[#0D8272]" />
-                      Gestão da Equipe
                     </DropdownMenuItem>
                   </>
                 )}
@@ -402,6 +526,66 @@ export default function Layout() {
           )
         })}
       </nav>
+      {/* Modal Popup de Alerta de Novos Cadastros Pendentes para o Administrador */}
+      <Dialog open={approvalModalOpen} onOpenChange={setApprovalModalOpen}>
+        <DialogContent className="max-w-md w-[92vw] sm:w-full p-5 sm:p-6 rounded-2xl bg-white border-amber-200">
+          <DialogHeader className="text-left space-y-2">
+            <div className="h-12 w-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center">
+              <Clock className="h-6 w-6" />
+            </div>
+            <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336]">
+              Novos cadastros aguardando aprovação
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600 leading-relaxed pt-1">
+              {pendingApprovalsCount === 1 ? (
+                <span>
+                  Existe <strong className="text-slate-900">1 novo usuário</strong> que se cadastrou
+                  recentemente no sistema da Help Vida e está aguardando a sua validação e liberação
+                  de acesso.
+                </span>
+              ) : (
+                <span>
+                  Existem{' '}
+                  <strong className="text-slate-900">{pendingApprovalsCount} novos usuários</strong>{' '}
+                  que se cadastraram no sistema da Help Vida e estão aguardando sua validação e
+                  liberação de acesso.
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 text-[11px] text-slate-600 space-y-1">
+            <p className="font-semibold text-[#0C4336] flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5 text-[#0D8272]" />
+              Segurança Institucional Help Vida
+            </p>
+            <p>
+              Enquanto você não aprovar o acesso, esses profissionais não conseguem visualizar a
+              lista padronizada nem efetuar login.
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2 flex flex-col-reverse sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleDismissModal}
+              className="h-10 text-xs border-slate-200 text-slate-700 w-full sm:w-auto"
+            >
+              Mais tarde
+            </Button>
+            <Button
+              type="button"
+              onClick={handleReviewNow}
+              className="h-10 px-4 rounded-xl text-xs font-bold text-white bg-[#0F5342] hover:bg-[#0C4336] shadow-xs w-full sm:w-auto flex items-center justify-center gap-1.5"
+            >
+              <UserCheck size={14} className="text-[#F5B31C]" />
+              Revisar agora ({pendingApprovalsCount})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal LGPD acessível globalmente */}
       <PoliticaPrivacidadeModal open={politicaOpen} onOpenChange={setPoliticaOpen} />
     </div>
