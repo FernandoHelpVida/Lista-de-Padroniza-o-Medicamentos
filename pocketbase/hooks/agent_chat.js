@@ -205,9 +205,20 @@ routerAdd(
       ]
 
       // Recuperação exaustiva e completa de todos os registros de medicamentos da base (sem limite de 30 ou 50)
+      // Verificar se o usuário autenticado é médico visitador
+      let isMedicoVisitador = false
+      try {
+        const uRec = e.app.findRecordById('_pb_users_auth_', userId)
+        if (uRec && uRec.getString('role') === 'medico_visitador') {
+          isMedicoVisitador = true
+        }
+      } catch (_) {}
+
+      // Recuperação exaustiva e completa de registros de medicamentos da base
       let allMedRecords = []
       try {
-        allMedRecords = e.app.findRecordsByFilter('medicamentos', "id != ''", 'nome', 1000, 0)
+        const medFilter = isMedicoVisitador ? "status = 'Padronizado'" : "id != ''"
+        allMedRecords = e.app.findRecordsByFilter('medicamentos', medFilter, 'nome', 1000, 0)
       } catch (colErr) {
         // Fallback silencioso caso ocorra algo inesperado
         allMedRecords = []
@@ -293,6 +304,10 @@ routerAdd(
         let catalogContext = `\n\n[DADOS COMPLETOS DA BASE INSTITUCIONAL HELP VIDA - Total encontrado: ${total} medicamentos para ${contextCategoryLabel}]\n`
         catalogContext += `IMPORTANTE: Você DEVE listar TODOS os medicamentos abaixo sem omitir nenhum, declarando expressamente o número total (${total}).\n`
 
+        if (isMedicoVisitador) {
+          catalogContext += `ATENÇÃO: O usuário possui o perfil "Médico Visitador". Ele NUNCA deve ver ou receber informações sobre medicamentos não padronizados ou inativos. Apresente única e exclusivamente os medicamentos padronizados listados abaixo.\n`
+        }
+
         if (padronizados.length > 0) {
           catalogContext += `\n* Padronizados (${padronizados.length} itens):\n`
           padronizados.forEach((m, idx) => {
@@ -300,18 +315,20 @@ routerAdd(
           })
         }
 
-        if (naoPadronizados.length > 0) {
-          catalogContext += `\n* Não Padronizados (${naoPadronizados.length} itens - requerem justificativa médica):\n`
-          naoPadronizados.forEach((m, idx) => {
-            catalogContext += `${idx + 1}. ${m.getString('nome')} | Classe: ${m.getString('classe')} | Status: Não Padronizado\n`
-          })
-        }
+        if (!isMedicoVisitador) {
+          if (naoPadronizados.length > 0) {
+            catalogContext += `\n* Não Padronizados (${naoPadronizados.length} itens - requerem justificativa médica):\n`
+            naoPadronizados.forEach((m, idx) => {
+              catalogContext += `${idx + 1}. ${m.getString('nome')} | Classe: ${m.getString('classe')} | Status: Não Padronizado\n`
+            })
+          }
 
-        if (inativos.length > 0) {
-          catalogContext += `\n* Inativos (${inativos.length} itens):\n`
-          inativos.forEach((m, idx) => {
-            catalogContext += `${idx + 1}. ${m.getString('nome')} | Classe: ${m.getString('classe')} | Status: Inativo\n`
-          })
+          if (inativos.length > 0) {
+            catalogContext += `\n* Inativos (${inativos.length} itens):\n`
+            inativos.forEach((m, idx) => {
+              catalogContext += `${idx + 1}. ${m.getString('nome')} | Classe: ${m.getString('classe')} | Status: Inativo\n`
+            })
+          }
         }
 
         augmentedMessage = `${userMsg}\n${catalogContext}`

@@ -46,7 +46,7 @@ const COLORS = [
 ]
 
 export default function Index() {
-  const { user } = useAuth()
+  const { user, isMedicoVisitador } = useAuth()
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState('')
 
@@ -60,9 +60,13 @@ export default function Index() {
       try {
         const records = await pb.collection<MedicamentoRecord>('medicamentos').getFullList({
           sort: '-updated',
+          filter: isMedicoVisitador ? "status = 'Padronizado'" : undefined,
         })
         if (!cancelled) {
-          setMedicamentos(records)
+          const filtered = isMedicoVisitador
+            ? records.filter((m) => m.status === 'Padronizado')
+            : records
+          setMedicamentos(filtered)
           setLoading(false)
         }
       } catch (err) {
@@ -179,7 +183,7 @@ export default function Index() {
             <span>{currentDate}</span>
             <span className="hidden sm:inline-block w-1 h-1 rounded-full bg-[#F5B31C]" />
             <span className="text-[#0D8272] font-semibold text-[11px] sm:text-xs">
-              Comissão de Padronização Help Vida
+              Padronização de Medicamentos
             </span>
           </p>
         </div>
@@ -229,15 +233,20 @@ export default function Index() {
       </div>
 
       {/* 3. CARDS DE ESTATÍSTICA (GRID 2x2 COMPACTO NO MOBILE < 640px) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
-        {/* Total */}
+      <div
+        className={cn(
+          'grid gap-2.5 sm:gap-4',
+          isMedicoVisitador ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 lg:grid-cols-4',
+        )}
+      >
+        {/* Total Padronizado para Médico Visitador ou Total Geral */}
         <div
           onClick={() => navigate('/medicamentos')}
           className="bg-white p-3.5 sm:p-5 rounded-2xl border border-emerald-950/10 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
         >
           <div className="flex items-center justify-between">
             <span className="text-[10px] sm:text-xs font-bold text-slate-500 tracking-wider uppercase truncate">
-              Total Avaliado
+              {isMedicoVisitador ? 'Medicamentos Padronizados' : 'Total Avaliado'}
             </span>
             <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-[#E6F5F2] text-[#0F5342] flex items-center justify-center group-hover:bg-[#0F5342] group-hover:text-white transition shrink-0">
               <Pill className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -245,13 +254,15 @@ export default function Index() {
           </div>
           <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
             <span className="text-2xl sm:text-3xl font-extrabold text-[#0C4336] font-mono">
-              {loading ? '...' : stats.total}
+              {loading ? '...' : isMedicoVisitador ? stats.padronizados : stats.total}
             </span>
             <span className="text-[11px] sm:text-xs text-[#0D8272] font-medium hidden sm:flex items-center gap-1 group-hover:underline">
               Ver todos <ArrowRight className="h-3 w-3" />
             </span>
           </div>
-          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Itens catalogados</p>
+          <p className="text-[10.5px] text-slate-400 mt-1 truncate">
+            {isMedicoVisitador ? 'Itens disponíveis para consulta' : 'Itens catalogados'}
+          </p>
         </div>
 
         {/* Padronizados */}
@@ -261,7 +272,7 @@ export default function Index() {
         >
           <div className="flex items-center justify-between">
             <span className="text-[10px] sm:text-xs font-bold text-[#0F5342] tracking-wider uppercase truncate">
-              Padronizados
+              {isMedicoVisitador ? 'Rotina Assistencial' : 'Padronizados'}
             </span>
             <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-[#E6F5F2] text-[#0F5342] flex items-center justify-center group-hover:bg-[#0F5342] group-hover:text-white transition shrink-0">
               <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -272,60 +283,64 @@ export default function Index() {
               {loading ? '...' : stats.padronizados}
             </span>
             <span className="text-[11px] sm:text-xs text-[#0F5342]/80 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
-              Filtrar <ArrowRight className="h-3 w-3" />
+              Consultar <ArrowRight className="h-3 w-3" />
             </span>
           </div>
           <p className="text-[10.5px] text-slate-400 mt-1 truncate">Rotina Help Vida</p>
         </div>
 
-        {/* Não Padronizados */}
-        <div
-          onClick={() => navigate('/solicitacoes')}
-          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-amber-200/80 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
-          title="Ver solicitações de medicamentos não padronizados"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] sm:text-xs font-bold text-[#B45309] tracking-wider uppercase truncate">
-              Não Padronizados
-            </span>
-            <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition shrink-0">
-              <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5" />
+        {!isMedicoVisitador && (
+          <>
+            {/* Não Padronizados */}
+            <div
+              onClick={() => navigate('/solicitacoes')}
+              className="bg-white p-3.5 sm:p-5 rounded-2xl border border-amber-200/80 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
+              title="Ver solicitações de medicamentos não padronizados"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] sm:text-xs font-bold text-[#B45309] tracking-wider uppercase truncate">
+                  Não Padronizados
+                </span>
+                <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition shrink-0">
+                  <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5" />
+                </div>
+              </div>
+              <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
+                <span className="text-2xl sm:text-3xl font-extrabold text-amber-600 font-mono">
+                  {loading ? '...' : stats.naoPadronizados}
+                </span>
+                <span className="text-[11px] sm:text-xs text-amber-600/80 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
+                  Solicitações <ArrowRight className="h-3 w-3" />
+                </span>
+              </div>
+              <p className="text-[10.5px] text-slate-400 mt-1 truncate">Aprovação da Farmácia</p>
             </div>
-          </div>
-          <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
-            <span className="text-2xl sm:text-3xl font-extrabold text-amber-600 font-mono">
-              {loading ? '...' : stats.naoPadronizados}
-            </span>
-            <span className="text-[11px] sm:text-xs text-amber-600/80 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
-              Solicitações <ArrowRight className="h-3 w-3" />
-            </span>
-          </div>
-          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Aprovação da Farmácia</p>
-        </div>
 
-        {/* Inativos */}
-        <div
-          onClick={() => navigate('/medicamentos?status=Inativo')}
-          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] sm:text-xs font-bold text-slate-500 tracking-wider uppercase truncate">
-              Inativos
-            </span>
-            <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center group-hover:bg-slate-700 group-hover:text-white transition shrink-0">
-              <Archive className="h-4 w-4 sm:h-5 sm:w-5" />
+            {/* Inativos */}
+            <div
+              onClick={() => navigate('/medicamentos?status=Inativo')}
+              className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 tracking-wider uppercase truncate">
+                  Inativos
+                </span>
+                <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center group-hover:bg-slate-700 group-hover:text-white transition shrink-0">
+                  <Archive className="h-4 w-4 sm:h-5 sm:w-5" />
+                </div>
+              </div>
+              <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
+                <span className="text-2xl sm:text-3xl font-extrabold text-slate-600 font-mono">
+                  {loading ? '...' : stats.inativos}
+                </span>
+                <span className="text-[11px] sm:text-xs text-slate-400 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
+                  Filtrar <ArrowRight className="h-3 w-3" />
+                </span>
+              </div>
+              <p className="text-[10.5px] text-slate-400 mt-1 truncate">Descontinuados</p>
             </div>
-          </div>
-          <div className="mt-2.5 sm:mt-4 flex items-baseline justify-between">
-            <span className="text-2xl sm:text-3xl font-extrabold text-slate-600 font-mono">
-              {loading ? '...' : stats.inativos}
-            </span>
-            <span className="text-[11px] sm:text-xs text-slate-400 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
-              Filtrar <ArrowRight className="h-3 w-3" />
-            </span>
-          </div>
-          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Descontinuados</p>
-        </div>
+          </>
+        )}
       </div>
 
       {/* 4. CARD DE DESTAQUE COM OBSERVAÇÃO VERBATIM DO PDF */}
@@ -399,7 +414,7 @@ export default function Index() {
                   Distribuição por Classe Terapêutica
                 </CardTitle>
                 <CardDescription className="text-xs text-slate-500">
-                  Concentração das classes farmacológicas avaliadas pela Comissão
+                  Concentração das classes farmacológicas no catálogo
                 </CardDescription>
               </div>
             </div>

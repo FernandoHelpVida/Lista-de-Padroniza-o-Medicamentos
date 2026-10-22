@@ -91,7 +91,7 @@ export interface AuditLogRecord extends RecordModel {
 }
 
 export default function Solicitacoes() {
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, isMedicoVisitador } = useAuth()
   const { toast } = useToast()
 
   const [activeTab, setActiveTab] = useState<'solicitacoes' | 'auditoria'>('solicitacoes')
@@ -617,7 +617,7 @@ export default function Solicitacoes() {
                 id="parecerTexto"
                 placeholder={
                   acaoAvaliacao === 'Negada'
-                    ? 'Descreva a justificativa técnica da negativa (ex: existência de alternativa terapêutica padronizada no ANEXO I com mesmo desfecho clínico, dosagem incompatível...)'
+                    ? 'Descreva a justificativa técnica da negativa (ex: existência de alternativa terapêutica padronizada com mesmo desfecho clínico, dosagem incompatível...)'
                     : 'Ex: Aprovada para o ciclo de 7 dias conforme protocolo clínico ou orientações de dispensação...'
                 }
                 value={parecerTexto}

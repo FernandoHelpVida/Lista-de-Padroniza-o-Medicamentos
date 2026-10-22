@@ -44,7 +44,7 @@ export function PoliticaPrivacidadeModal({ open, onOpenChange }: PoliticaPrivaci
               <p className="text-[11px] mt-1 text-[#0C4336]/90">
                 A Help Vida (Atenção Domiciliar & Cuidados Especiais, Cuiabá/MT) zela pelo sigilo,
                 segurança e estrito cumprimento da LGPD no uso do Catálogo e Padronização de
-                Medicamentos (ANEXO I).
+                Medicamentos.
               </p>
             </div>
 
@@ -75,9 +75,7 @@ export function PoliticaPrivacidadeModal({ open, onOpenChange }: PoliticaPrivaci
               </h4>
               <p>Os dados são tratados exclusivamente para viabilizar:</p>
               <ul className="list-disc pl-5 space-y-0.5 text-slate-600">
-                <li>
-                  Gestão e governança da padronização de medicamentos institucionais (ANEXO I);
-                </li>
+                <li>Gestão e governança da padronização de medicamentos institucionais;</li>
                 <li>
                   Avaliação clínica fundamentada de solicitações de medicamentos não padronizados
                   pela Comissão Técnica;

@@ -59,6 +59,11 @@ export default function Layout() {
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0)
   const [approvalModalOpen, setApprovalModalOpen] = useState(false)
 
+  // Contagem de novas solicitações pendentes de não padronizados para alerta em tempo real do Administrador
+  const [pendingSolicitacoesCount, setPendingSolicitacoesCount] = useState(0)
+  const [solicitacaoModalOpen, setSolicitacaoModalOpen] = useState(false)
+  const [latestPendingSolicitacaoName, setLatestPendingSolicitacaoName] = useState('')
+
   // Carregar contagem de pendentes se o usuário for administrador
   const fetchPendingApprovals = async () => {
     if (!isAdmin) return
@@ -81,29 +86,90 @@ export default function Layout() {
     }
   }
 
+  // Carregar contagem de solicitações pendentes de medicamentos não padronizados
+  const fetchPendingSolicitacoes = async (isRealtimeEvent = false) => {
+    if (!isAdmin) return
+    try {
+      const records = await pb.collection('solicitacoes').getList(1, 10, {
+        filter: "status = 'Pendente'",
+        sort: '-created',
+        expand: 'medicamento,solicitante',
+      })
+      const count = records.totalItems
+      setPendingSolicitacoesCount(count)
+
+      if (count > 0) {
+        const firstItem = records.items[0]
+        const medName =
+          firstItem.nome_medicamento_novo ||
+          (firstItem.expand?.medicamento as { nome?: string } | undefined)?.nome ||
+          'Medicamento Não Padronizado'
+        setLatestPendingSolicitacaoName(medName)
+
+        // Obter timestamp da última solicitação vista pelo admin neste dispositivo
+        const lastSeenTime = localStorage.getItem(`helpvida_solic_seen_${user?.id}`) || '0'
+        const hasUnseen = records.items.some(
+          (item) => new Date(item.created).getTime() > Number(lastSeenTime),
+        )
+
+        const dismissed = sessionStorage.getItem('helpvida_solic_modal_dismissed')
+        if ((hasUnseen && !dismissed) || isRealtimeEvent) {
+          setSolicitacaoModalOpen(true)
+        }
+      } else {
+        setSolicitacaoModalOpen(false)
+      }
+    } catch (err) {
+      // Ignorar erros se desconectado
+    }
+  }
+
   useEffect(() => {
     if (!isAdmin) return
     fetchPendingApprovals()
+    fetchPendingSolicitacoes()
 
     // Subscrição em tempo real aos usuários para atualizar contador ao vivo
-    const unsubscribePromise = pb.collection('users').subscribe('*', () => {
+    const unsubUsersPromise = pb.collection('users').subscribe('*', () => {
       fetchPendingApprovals()
     })
 
+    // Subscrição em tempo real às solicitações para alertar admins na hora
+    const unsubSolicPromise = pb.collection('solicitacoes').subscribe('*', (e) => {
+      if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+        fetchPendingSolicitacoes(e.action === 'create')
+      }
+    })
+
     return () => {
-      unsubscribePromise
+      unsubUsersPromise
         .then((unsub) => {
-          if (typeof unsub === 'function') {
-            unsub()
-          }
+          if (typeof unsub === 'function') unsub()
         })
         .catch(() => {
           pb.collection('users')
             .unsubscribe('*')
             .catch(() => {})
         })
+
+      unsubSolicPromise
+        .then((unsub) => {
+          if (typeof unsub === 'function') unsub()
+        })
+        .catch(() => {
+          pb.collection('solicitacoes')
+            .unsubscribe('*')
+            .catch(() => {})
+        })
     }
-  }, [isAdmin])
+  }, [isAdmin, user?.id])
+
+  // Se o admin entrar na tela de solicitações, marcar todas as atuais como visualizadas
+  useEffect(() => {
+    if (isAdmin && location.pathname.startsWith('/solicitacoes') && user?.id) {
+      localStorage.setItem(`helpvida_solic_seen_${user.id}`, String(Date.now()))
+    }
+  }, [location.pathname, isAdmin, user?.id])
 
   const handleDismissModal = () => {
     sessionStorage.setItem('helpvida_approvals_modal_dismissed', 'true')
@@ -114,6 +180,20 @@ export default function Layout() {
     sessionStorage.setItem('helpvida_approvals_modal_dismissed', 'true')
     setApprovalModalOpen(false)
     navigate('/equipe#aprovacoes')
+  }
+
+  const handleDismissSolicModal = () => {
+    sessionStorage.setItem('helpvida_solic_modal_dismissed', 'true')
+    setSolicitacaoModalOpen(false)
+  }
+
+  const handleReviewSolicNow = () => {
+    sessionStorage.setItem('helpvida_solic_modal_dismissed', 'true')
+    if (user?.id) {
+      localStorage.setItem(`helpvida_solic_seen_${user.id}`, String(Date.now()))
+    }
+    setSolicitacaoModalOpen(false)
+    navigate('/solicitacoes?status=Pendente')
   }
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -141,7 +221,12 @@ export default function Layout() {
   const navItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
     { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
-    { title: 'Solicitações', path: '/solicitacoes', icon: FileQuestion },
+    {
+      title: 'Solicitações',
+      path: '/solicitacoes',
+      icon: FileQuestion,
+      badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
+    },
     ...(isAdmin ? [{ title: 'Importar PDF', path: '/importar', icon: FileUp }] : []),
     ...(isAdmin
       ? [
@@ -162,7 +247,12 @@ export default function Layout() {
   const mobileNavItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
     { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
-    { title: 'Solicitações', path: '/solicitacoes', icon: FileQuestion },
+    {
+      title: 'Solicitações',
+      path: '/solicitacoes',
+      icon: FileQuestion,
+      badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
+    },
     { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
     { title: 'Configurações', path: '/configuracoes', icon: Settings },
   ]
@@ -335,7 +425,7 @@ export default function Layout() {
                 {getPageTitle()}
               </h1>
               <span className="hidden sm:inline-block text-[11px] font-medium text-emerald-800/70">
-                ANEXO I — Relação dos Medicamentos Avaliados
+                Catálogo Oficial de Medicamentos & Padronização
               </span>
             </div>
           </div>
@@ -355,8 +445,25 @@ export default function Layout() {
             />
           </form>
 
-          {/* Lado direito: Botão rápido de aprovações pendentes (se houver) + Perfil do usuário com Dropdown */}
+          {/* Lado direito: Botão rápido de aprovações pendentes e solicitações pendentes (se houver) + Perfil do usuário com Dropdown */}
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* Alerta de Novas Solicitações de Medicamentos Não Padronizados para Admins */}
+            {isAdmin && pendingSolicitacoesCount > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate('/solicitacoes?status=Pendente')}
+                className="h-9 px-2 sm:px-3 text-xs bg-red-50 hover:bg-red-100 border-red-200 text-red-700 font-bold rounded-xl flex items-center gap-1.5 animate-pulse shadow-xs"
+                title={`${pendingSolicitacoesCount} nova(s) solicitação(ões) de medicamento pendente(s)`}
+              >
+                <FileQuestion className="h-3.5 w-3.5 text-red-600" />
+                <span className="hidden sm:inline">Solicitações:</span>
+                <span className="bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                  {pendingSolicitacoesCount}
+                </span>
+              </Button>
+            )}
+
             {isAdmin && pendingApprovalsCount > 0 && (
               <Button
                 size="sm"
@@ -382,7 +489,7 @@ export default function Layout() {
                   <Avatar className="h-8 w-8 rounded-full bg-[#0F5342] text-white text-xs font-bold shadow-xs border border-emerald-600/30">
                     <AvatarFallback>{userInitials}</AvatarFallback>
                   </Avatar>
-                  {isAdmin && pendingApprovalsCount > 0 && (
+                  {isAdmin && (pendingApprovalsCount > 0 || pendingSolicitacoesCount > 0) && (
                     <span className="absolute top-0 right-0 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />
                   )}
                   <span className="hidden lg:inline-block text-xs font-semibold text-slate-800 max-w-[120px] truncate text-left">
@@ -430,10 +537,17 @@ export default function Layout() {
                 )}
                 <DropdownMenuItem
                   onClick={() => navigate('/solicitacoes')}
-                  className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
+                  className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50 flex items-center justify-between"
                 >
-                  <FileQuestion size={14} className="mr-2 text-[#0D8272]" />
-                  Solicitações
+                  <div className="flex items-center">
+                    <FileQuestion size={14} className="mr-2 text-[#0D8272]" />
+                    <span>Solicitações</span>
+                  </div>
+                  {isAdmin && pendingSolicitacoesCount > 0 && (
+                    <span className="bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                      {pendingSolicitacoesCount}
+                    </span>
+                  )}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => navigate('/configuracoes')}
@@ -507,7 +621,7 @@ export default function Layout() {
               )}
               <div
                 className={cn(
-                  'p-1 rounded-xl transition',
+                  'p-1 rounded-xl transition relative',
                   isActive && 'bg-[#0D8272]/10 text-[#0F5342]',
                 )}
               >
@@ -518,6 +632,11 @@ export default function Layout() {
                     isActive ? 'text-[#0F5342] scale-105' : 'text-slate-500',
                   )}
                 />
+                {Boolean(item.badgeCount && item.badgeCount > 0) && (
+                  <span className="absolute -top-1 -right-1 h-3.5 min-w-[14px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
+                    {item.badgeCount}
+                  </span>
+                )}
               </div>
               <span className="text-[10px] mt-0.5 tracking-tight truncate max-w-[56px] text-center">
                 {item.title}
@@ -526,6 +645,80 @@ export default function Layout() {
           )
         })}
       </nav>
+      {/* Modal Popup de Alerta de Novas Solicitações de Não Padronizados para o Administrador */}
+      <Dialog open={solicitacaoModalOpen} onOpenChange={setSolicitacaoModalOpen}>
+        <DialogContent className="max-w-md w-[92vw] sm:w-full p-5 sm:p-6 rounded-2xl bg-white border-red-200">
+          <DialogHeader className="text-left space-y-2">
+            <div className="h-12 w-12 rounded-2xl bg-red-100 text-red-700 flex items-center justify-center">
+              <FileQuestion className="h-6 w-6" />
+            </div>
+            <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336]">
+              Nova solicitação de medicamento não padronizado
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600 leading-relaxed pt-1">
+              {pendingSolicitacoesCount === 1 ? (
+                <span>
+                  Existe <strong className="text-slate-900">1 nova solicitação</strong> de
+                  medicamento não padronizado aguardando parecer e análise técnica da Farmácia
+                  Clínica Help Vida.
+                </span>
+              ) : (
+                <span>
+                  Existem{' '}
+                  <strong className="text-slate-900">
+                    {pendingSolicitacoesCount} novas solicitações
+                  </strong>{' '}
+                  de medicamentos não padronizados aguardando parecer e análise técnica da Farmácia
+                  Clínica.
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {latestPendingSolicitacaoName && (
+            <div className="p-3 rounded-xl bg-red-50/70 border border-red-100 text-[11px] text-slate-700 space-y-1">
+              <p className="font-semibold text-red-900 flex items-center gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                Item mais recente solicitado:
+              </p>
+              <p className="font-mono text-xs text-red-950 font-bold break-words">
+                {latestPendingSolicitacaoName}
+              </p>
+            </div>
+          )}
+
+          <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 text-[11px] text-slate-600 space-y-1">
+            <p className="font-semibold text-[#0C4336] flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5 text-[#0D8272]" />
+              Parecer Técnico da Farmácia
+            </p>
+            <p>
+              Avalie a justificativa clínica apresentada pelo prescritor para deferir ou indeferir o
+              fornecimento institucional.
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2 flex flex-col-reverse sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleDismissSolicModal}
+              className="h-10 text-xs border-slate-200 text-slate-700 w-full sm:w-auto"
+            >
+              Mais tarde
+            </Button>
+            <Button
+              type="button"
+              onClick={handleReviewSolicNow}
+              className="h-10 px-4 rounded-xl text-xs font-bold text-white bg-red-700 hover:bg-red-800 shadow-xs w-full sm:w-auto flex items-center justify-center gap-1.5"
+            >
+              <FileQuestion size={14} className="text-white" />
+              Revisar agora ({pendingSolicitacoesCount})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal Popup de Alerta de Novos Cadastros Pendentes para o Administrador */}
       <Dialog open={approvalModalOpen} onOpenChange={setApprovalModalOpen}>
         <DialogContent className="max-w-md w-[92vw] sm:w-full p-5 sm:p-6 rounded-2xl bg-white border-amber-200">

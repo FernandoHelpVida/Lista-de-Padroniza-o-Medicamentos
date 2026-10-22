@@ -267,7 +267,7 @@ export default function Importar() {
   const handleLoadOfficialTestPdf = async () => {
     setExtracting(true)
     setExtractionProgress(10)
-    setExtractionStage('Carregando PDF institucional Help Vida (ANEXO I)...')
+    setExtractionStage('Carregando PDF institucional Help Vida...')
 
     try {
       const response = await fetch(officialPdfUrl)
@@ -519,7 +519,7 @@ export default function Importar() {
             className="h-9 border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
           >
             <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
-            Carregar PDF Modelo (ANEXO I)
+            Carregar PDF Modelo
           </Button>
         </div>
       </div>
@@ -595,7 +595,7 @@ export default function Importar() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
                   <UploadCloud className="h-5 w-5 text-[#0D8272]" />
-                  1. Selecionar Arquivo do Novo ANEXO (PDF)
+                  1. Selecionar Arquivo do Catálogo (PDF)
                 </CardTitle>
                 {documentStats && (
                   <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-xs font-semibold">
@@ -648,8 +648,8 @@ export default function Importar() {
                         Clique aqui para selecionar o arquivo PDF do seu computador ou celular
                       </p>
                       <p className="text-xs text-slate-400">
-                        Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para carregar o ANEXO
-                        I oficial
+                        Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para carregar o
+                        catálogo I oficial
                       </p>
                     </div>
                   )}

@@ -53,7 +53,7 @@ export interface UserTeamRecord {
   id: string
   name?: string | null
   email?: string | null
-  role?: 'admin' | 'comum' | string | null
+  role?: 'admin' | 'comum' | 'medico_visitador' | string | null
   approval_status?: 'pendente' | 'aprovado' | 'negado' | string | null
   verified?: boolean | null
   created?: string | null
@@ -76,7 +76,7 @@ export default function Equipe() {
   const [novoEmail, setNovoEmail] = useState('')
   const [novaSenha, setNovaSenha] = useState('HelpVida@2025')
   const [showNovaSenha, setShowNovaSenha] = useState(false)
-  const [novoRole, setNovoRole] = useState<'comum' | 'admin'>('comum')
+  const [novoRole, setNovoRole] = useState<'comum' | 'admin' | 'medico_visitador'>('comum')
   const [criandoMembro, setCriandoMembro] = useState(false)
   const [modalFormError, setModalFormError] = useState<string | null>(null)
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false)
@@ -802,6 +802,11 @@ export default function Equipe() {
                               <ShieldCheck size={12} className="text-[#F5B31C]" />
                               Administrador
                             </Badge>
+                          ) : m?.role === 'medico_visitador' ? (
+                            <Badge className="bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-semibold flex items-center gap-1">
+                              <User size={12} className="text-sky-600" />
+                              Médico Visitador
+                            </Badge>
                           ) : (
                             <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[11px] font-medium">
                               Corpo Clínico
@@ -1045,19 +1050,28 @@ export default function Equipe() {
                   </Label>
                   <Select
                     value={novoRole}
-                    onValueChange={(val: 'comum' | 'admin') => setNovoRole(val)}
+                    onValueChange={(val: 'comum' | 'admin' | 'medico_visitador') =>
+                      setNovoRole(val)
+                    }
                   >
                     <SelectTrigger
                       id="novoRole"
-                      className="h-11 min-h-[44px] text-xs rounded-xl bg-[#F4FAF8] border-emerald-950/15"
+                      className="h-10 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
                     >
-                      <SelectValue />
+                      <SelectValue placeholder="Selecione o perfil" />
                     </SelectTrigger>
-                    <SelectContent className="text-xs z-50">
-                      <SelectItem value="comum">Corpo Clínico (Padrão)</SelectItem>
-                      <SelectItem value="admin">Administrador (Comissão)</SelectItem>
+                    <SelectContent>
+                      <SelectItem value="comum">Corpo Clínico (Médico / Farmacêutico)</SelectItem>
+                      <SelectItem value="medico_visitador">
+                        Médico Visitador (Apenas Padronizados)
+                      </SelectItem>
+                      <SelectItem value="admin">Administrador (Gestão / Farmácia)</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-[11px] text-slate-500">
+                    O perfil <strong>Médico Visitador</strong> tem acesso restrito exclusivamente a
+                    medicamentos padronizados (não visualiza não padronizados nem inativos).
+                  </p>{' '}
                 </div>
 
                 <div className="space-y-1">

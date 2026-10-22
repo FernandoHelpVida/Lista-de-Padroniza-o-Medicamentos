@@ -22,7 +22,9 @@ routerAdd(
       const name = (body.name || '').trim()
       const email = (body.email || '').trim().toLowerCase()
       const password = body.password || ''
-      const role = body.role === 'admin' ? 'admin' : 'comum'
+      let role = 'comum'
+      if (body.role === 'admin') role = 'admin'
+      else if (body.role === 'medico_visitador') role = 'medico_visitador'
 
       if (!name) {
         return e.badRequestError('O nome completo do profissional é obrigatório.')

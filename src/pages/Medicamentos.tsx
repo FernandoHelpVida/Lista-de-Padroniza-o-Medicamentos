@@ -55,7 +55,7 @@ const ITEMS_PER_PAGE = 25
 export default function Medicamentos() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, isMedicoVisitador } = useAuth()
   const { toast } = useToast()
 
   const [todosMedicamentos, setTodosMedicamentos] = useState<MedicamentoRecord[]>([])
@@ -68,9 +68,13 @@ export default function Medicamentos() {
       try {
         const records = await pb.collection<MedicamentoRecord>('medicamentos').getFullList({
           sort: 'nome',
+          filter: isMedicoVisitador ? "status = 'Padronizado'" : undefined,
         })
         if (!cancelled) {
-          setTodosMedicamentos(records)
+          const filtered = isMedicoVisitador
+            ? records.filter((m) => m.status === 'Padronizado')
+            : records
+          setTodosMedicamentos(filtered)
           setLoading(false)
         }
       } catch (err) {
@@ -506,12 +510,16 @@ export default function Medicamentos() {
             {[
               { id: 'Todos', label: 'Todos', count: statusCounts.Todos },
               { id: 'Padronizado', label: 'Padronizados', count: statusCounts.Padronizado },
-              {
-                id: 'Não Padronizado',
-                label: 'Não Padronizados',
-                count: statusCounts['Não Padronizado'],
-              },
-              { id: 'Inativo', label: 'Inativos', count: statusCounts.Inativo },
+              ...(!isMedicoVisitador
+                ? [
+                    {
+                      id: 'Não Padronizado',
+                      label: 'Não Padronizados',
+                      count: statusCounts['Não Padronizado'],
+                    },
+                    { id: 'Inativo', label: 'Inativos', count: statusCounts.Inativo },
+                  ]
+                : []),
             ].map((chip) => {
               const isSelected = (statusParam || 'Todos') === chip.id
               return (
@@ -845,7 +853,7 @@ export default function Medicamentos() {
                 {editingRecord ? 'Editar Medicamento' : 'Novo Medicamento na Padronização'}
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-500">
-                Preencha as informações conforme os padrões da Comissão de Padronização.
+                Preencha as informações conforme os padrões da Farmácia Clínica.
               </DialogDescription>
             </DialogHeader>
 

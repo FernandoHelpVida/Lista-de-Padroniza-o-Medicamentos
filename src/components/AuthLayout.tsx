@@ -24,7 +24,7 @@ export const AuthLayout: React.FC<{
             Farmácia Clínica & Padronização
           </div>
           <p className="text-[12px] font-medium text-emerald-100/90 tracking-normal mt-1.5">
-            Consulta de Medicamentos — ANEXO I
+            Consulta de Medicamentos
           </p>
         </div>
 
@@ -42,7 +42,7 @@ export const AuthLayout: React.FC<{
         <div className="mt-6 sm:mt-8 text-center text-xs text-white/70 space-y-1">
           <p className="font-semibold text-white/80">Help Vida — Atenção à Saúde e Home Care</p>
           <p className="text-[11px] text-emerald-200/70">
-            ANEXO I — Comissão de Padronização de Medicamentos
+            Catálogo Oficial de Medicamentos & Padronização
           </p>
         </div>
       </div>

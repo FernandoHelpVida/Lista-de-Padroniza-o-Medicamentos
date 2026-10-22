@@ -207,7 +207,7 @@ export default function Assistente() {
               </span>
             </div>
             <p className="text-[10.5px] sm:text-[11px] text-slate-500 truncate">
-              Política de Padronização ANEXO I & Justificativas Médicas
+              Política de Padronização & Justificativas Médicas
             </p>
           </div>
         </div>
@@ -292,7 +292,7 @@ export default function Assistente() {
                         className="bg-[#E6F5F2] text-[#0C4336] px-2 py-0.5 rounded text-[10px] border border-[#0D8272]/20 font-medium"
                         title={cite.excerpt}
                       >
-                        ANEXO I Padronização [{cite.n || i + 1}]
+                        Catálogo Padronizado [{cite.n || i + 1}]
                       </span>
                     ))}
                   </div>

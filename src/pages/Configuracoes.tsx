@@ -124,7 +124,7 @@ export default function Configuracoes() {
         aviso_privacidade: {
           lei: 'Lei Federal nº 13.709/2018 (LGPD)',
           controlador: 'Help Vida — Atenção Domiciliar & Cuidados Especiais',
-          finalidade: 'Gestão da Padronização de Medicamentos (ANEXO I)',
+          finalidade: 'Gestão da Padronização de Medicamentos',
           data_exportacao: new Date().toISOString(),
         },
         solicitacoes: minhasSolicitacoes.map((s) => ({
@@ -325,7 +325,7 @@ export default function Configuracoes() {
                 </span>
               </div>
               <CardDescription className="text-xs text-slate-600">
-                Importe e atualize em lote via ANEXO I oficial com histórico completo de registros.
+                Importe e atualize em lote via PDF oficial com histórico completo de registros.
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
@@ -691,15 +691,15 @@ export default function Configuracoes() {
           <div className="flex items-center justify-between">
             <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
               <Building2 className="h-5 w-5 text-[#0D8272]" />
-              Sobre a Help Vida & Comissão Técnica
+              Sobre a Help Vida & Farmácia Clínica
             </CardTitle>
             <span className="text-[11px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/20">
               Documento Oficial
             </span>
           </div>
           <CardDescription className="text-xs text-slate-600 font-medium">
-            Relação dos Medicamentos Avaliados e Definição de Padronização – ANEXO I
-          </CardDescription>
+            Catálogo Oficial de Medicamentos & Padronização
+          </CardDescription>{' '}
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 pt-1">
