@@ -169,7 +169,16 @@ export function PoliticaPrivacidadeModal({ open, onOpenChange }: PoliticaPrivaci
                 Encarregado pelo Tratamento de Dados Pessoais (DPO Help Vida):
               </p>
               <p className="text-[11px]">
-                E-mail institucional: <strong>contato@helpvida.com.br</strong>
+                Encarregado de dados (DPO): <strong>Senhor Fernando Fernandes</strong>
+              </p>
+              <p className="text-[11px]">
+                E-mail de contato:{' '}
+                <a
+                  href="mailto:dpo@helpvida.com.br"
+                  className="font-semibold text-[#0D8272] underline hover:text-[#0C4336]"
+                >
+                  dpo@helpvida.com.br
+                </a>
               </p>
               <p className="text-[11px]">
                 Endereço: Rua das Camélias, 381 – Jardim Cuiabá, Cuiabá/MT | Telefone: (65)
