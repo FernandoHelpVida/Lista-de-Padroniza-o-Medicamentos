@@ -44,15 +44,15 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
-import { formatarDataSegura } from '@/lib/formatters'
+import { formatarDataSegura, textoSeguro, textoMinusculoSeguro } from '@/lib/formatters'
 
 export interface UserTeamRecord {
   id: string
-  name?: string
-  email: string
-  role?: 'admin' | 'comum'
-  verified?: boolean
-  created: string
+  name?: string | null
+  email?: string | null
+  role?: 'admin' | 'comum' | string | null
+  verified?: boolean | null
+  created?: string | null
 }
 
 export default function Equipe() {
@@ -105,15 +105,16 @@ export default function Equipe() {
   }, [])
 
   // Validações em tempo real para o formulário do modal
-  const nomeLimpo = novoNome.trim()
-  const emailLimpo = novoEmail.trim().toLowerCase()
-  const senhaLimpa = novaSenha.trim()
+  const nomeLimpo = textoSeguro(novoNome).trim()
+  const emailLimpo = textoMinusculoSeguro(novoEmail)
+  const senhaLimpa = textoSeguro(novaSenha).trim()
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  const emailValido = emailRegex.test(emailLimpo)
+  const emailValido = emailLimpo.length > 0 && emailRegex.test(emailLimpo)
   const senhaValida = senhaLimpa.length >= 8
   const nomeValido = nomeLimpo.length >= 2
-  const emailJaExiste = membros.some((m) => m.email.toLowerCase() === emailLimpo)
+  const emailJaExiste =
+    emailLimpo.length > 0 && membros.some((m) => textoMinusculoSeguro(m?.email) === emailLimpo)
 
   // Diagnóstico das pendências para orientar o usuário
   const getValidationErrors = (): string[] => {
@@ -259,10 +260,8 @@ export default function Equipe() {
         variant: 'destructive',
       })
 
-      if (
-        friendlyMsg.toLowerCase().includes('sessão') ||
-        friendlyMsg.toLowerCase().includes('login')
-      ) {
+      const friendlyMsgLower = textoMinusculoSeguro(friendlyMsg)
+      if (friendlyMsgLower.includes('sessão') || friendlyMsgLower.includes('login')) {
         setTimeout(() => {
           navigate('/login', { state: { from: { pathname: '/equipe' } } })
         }, 2000)
@@ -274,12 +273,22 @@ export default function Equipe() {
 
   const handleRequestPasswordReset = async () => {
     if (!membroParaReset) return
+    const emailDestino = textoMinusculoSeguro(membroParaReset.email)
+    if (!emailDestino) {
+      toast({
+        title: 'E-mail indisponível',
+        description: 'Não foi possível identificar o e-mail do usuário para envio das instruções.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     setEnviandoReset(true)
     try {
-      await pb.collection('users').requestPasswordReset(membroParaReset.email)
+      await pb.collection('users').requestPasswordReset(emailDestino)
       toast({
         title: 'Instruções enviadas!',
-        description: `E-mail de redefinição de acesso enviado com sucesso para ${membroParaReset.email}.`,
+        description: `E-mail de redefinição de acesso enviado com sucesso para ${emailDestino}.`,
       })
       setResetModalOpen(false)
       setMembroParaReset(null)
@@ -300,11 +309,12 @@ export default function Equipe() {
   }
 
   const filteredMembros = membros.filter((m) => {
-    const q = search.toLowerCase().trim()
+    const q = textoMinusculoSeguro(search)
     if (!q) return true
-    const nome = m.name?.toLowerCase() || ''
-    const email = m.email.toLowerCase()
-    return nome.includes(q) || email.includes(q)
+    const nome = textoMinusculoSeguro(m?.name)
+    const email = textoMinusculoSeguro(m?.email)
+    const role = textoMinusculoSeguro(m?.role)
+    return nome.includes(q) || email.includes(q) || role.includes(q)
   })
 
   if (!isAdmin) {
@@ -392,10 +402,14 @@ export default function Equipe() {
           ) : (
             <div className="divide-y divide-emerald-950/5">
               {filteredMembros.map((m) => {
-                const emailTexto = m.email || ''
-                const initials = m.name
-                  ? m.name
-                      .split(' ')
+                const nomeTexto = textoSeguro(m?.name).trim()
+                const emailTexto = textoSeguro(m?.email).trim()
+                const emailMinusculo = emailTexto.toLowerCase()
+
+                const initials = nomeTexto
+                  ? nomeTexto
+                      .split(/\s+/)
+                      .filter(Boolean)
                       .map((n) => n[0])
                       .slice(0, 2)
                       .join('')
@@ -404,28 +418,27 @@ export default function Equipe() {
                     ? emailTexto.slice(0, 2).toUpperCase()
                     : 'HV'
 
-                const dataCriacao = formatarDataSegura(m.created, {
+                const dataCriacao = formatarDataSegura(m?.created, {
                   fallback: 'Data indisponível',
                 })
 
-                const isCurrentUser = user?.id === m.id
+                const isCurrentUser = Boolean(user?.id && m?.id && user.id === m.id)
                 const isMemberAdmin =
-                  m.role === 'admin' ||
-                  emailTexto.toLowerCase() === 'fernandofernandes@helpvida.com.br'
+                  m?.role === 'admin' || emailMinusculo === 'fernandofernandes@helpvida.com.br'
 
                 return (
                   <div
-                    key={m.id}
+                    key={m?.id || emailTexto || Math.random()}
                     className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F4FAF8]/60 transition"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <Avatar className="h-10 w-10 rounded-xl bg-[#0F5342] text-white text-xs font-bold shrink-0 border border-emerald-600/30">
-                        <AvatarFallback>{initials}</AvatarFallback>
+                        <AvatarFallback>{initials || 'HV'}</AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-bold text-slate-900 truncate">
-                            {m.name || 'Sem nome informado'}
+                            {nomeTexto || 'Sem nome informado'}
                           </p>
                           {isCurrentUser && (
                             <Badge className="bg-emerald-100 text-[#0C4336] text-[10px] font-bold">
@@ -435,7 +448,7 @@ export default function Equipe() {
                         </div>
                         <p className="text-xs text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
                           <Mail size={12} className="text-slate-400 shrink-0" />
-                          {m.email}
+                          {emailTexto || 'E-mail não informado'}
                         </p>
                       </div>
                     </div>
@@ -463,12 +476,17 @@ export default function Equipe() {
                       <Button
                         variant="outline"
                         size="sm"
+                        disabled={!emailTexto}
                         onClick={() => {
                           setMembroParaReset(m)
                           setResetModalOpen(true)
                         }}
                         className="h-8 text-xs text-slate-700 hover:bg-slate-50 border-slate-200"
-                        title="Enviar e-mail para redefinir senha"
+                        title={
+                          emailTexto
+                            ? 'Enviar e-mail para redefinir senha'
+                            : 'E-mail não cadastrado'
+                        }
                       >
                         <KeyRound size={12} className="mr-1 text-slate-500" />
                         Redefinir Senha
@@ -741,8 +759,10 @@ export default function Equipe() {
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-600 pt-1 leading-relaxed">
               Deseja enviar um link seguro para o e-mail{' '}
-              <strong className="text-slate-900">{membroParaReset?.email}</strong> para que o colega
-              redefina sua senha de acesso ao sistema?
+              <strong className="text-slate-900">
+                {membroParaReset?.email || 'informado'}
+              </strong>{' '}
+              para que o colega redefina sua senha de acesso ao sistema?
             </DialogDescription>
           </DialogHeader>
 

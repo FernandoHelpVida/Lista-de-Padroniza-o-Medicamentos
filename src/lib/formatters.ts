@@ -3,6 +3,24 @@
  * Evita exceções do tipo RangeError ("Invalid time value") ao lidar com datas vazias, nulas ou inválidas do backend.
  */
 
+/**
+ * Converte com segurança qualquer valor para string tratada, evitando
+ * "Cannot read properties of undefined (reading 'toLowerCase')" ou erros de .trim().
+ */
+export function textoSeguro(valor: unknown): string {
+  if (valor === null || valor === undefined) {
+    return ''
+  }
+  return String(valor)
+}
+
+/**
+ * Retorna uma versão em minúsculas e sem espaços extras nas pontas, de forma segura.
+ */
+export function textoMinusculoSeguro(valor: unknown): string {
+  return textoSeguro(valor).trim().toLowerCase()
+}
+
 export interface FormatarDataOptions {
   /** Se deve incluir horário (hh:mm). Padrão: false */
   incluirHora?: boolean
