@@ -5,12 +5,14 @@ import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, Loader2, LogIn } from 'lucide-react'
+import { AlertCircle, Loader2, LogIn, ShieldCheck } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [politicaOpen, setPoliticaOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -123,6 +125,18 @@ export default function Login() {
           </p>
         </div>
 
+        {/* Link LGPD no Login */}
+        <div className="pt-1 text-center">
+          <button
+            type="button"
+            onClick={() => setPoliticaOpen(true)}
+            className="text-[11px] text-slate-400 hover:text-[#0C4336] underline inline-flex items-center gap-1"
+          >
+            <ShieldCheck size={12} className="text-[#0D8272]" />
+            Aviso de Privacidade & LGPD (Lei nº 13.709/2018)
+          </button>
+        </div>
+
         <div className="mt-4 p-3 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/20 text-[11px] text-[#0C4336] leading-relaxed">
           <strong>Acesso inicial administrativo de demonstração:</strong>
           <br />
@@ -132,6 +146,7 @@ export default function Login() {
           Senha: <code className="bg-white/60 px-1 py-0.5 rounded">Skip@Pass</code>
         </div>
       </form>
+      <PoliticaPrivacidadeModal open={politicaOpen} onOpenChange={setPoliticaOpen} />
     </AuthLayout>
   )
 }

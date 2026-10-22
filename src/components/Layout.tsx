@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 
 export default function Layout() {
   const { user, logout, isAdmin } = useAuth()
@@ -38,6 +39,7 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [globalSearch, setGlobalSearch] = useState('')
+  const [politicaOpen, setPoliticaOpen] = useState(false)
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -316,6 +318,13 @@ export default function Layout() {
                   Configurações
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  onClick={() => setPoliticaOpen(true)}
+                  className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
+                >
+                  <ShieldCheck size={14} className="mr-2 text-[#0D8272]" />
+                  Aviso de Privacidade LGPD
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={() => navigate('/assistente')}
                   className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
                 >
@@ -387,6 +396,8 @@ export default function Layout() {
           )
         })}
       </nav>
+      {/* Modal LGPD acessível globalmente */}
+      <PoliticaPrivacidadeModal open={politicaOpen} onOpenChange={setPoliticaOpen} />
     </div>
   )
 }

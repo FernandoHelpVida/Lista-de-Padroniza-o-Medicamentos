@@ -45,6 +45,7 @@ import { Progress } from '@/components/ui/progress'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 export type ItemDiffStatus = 'NOVO' | 'EXISTENTE' | 'SEM_ALTERACAO'
 
@@ -447,10 +448,9 @@ export default function Importar() {
       })
     } catch (err: unknown) {
       console.error('Erro na gravação:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao salvar registros.'
       toast({
         title: 'Erro na importação',
-        description: msg,
+        description: getErrorMessage(err, 'Falha ao sincronizar registros com o banco de dados.'),
         variant: 'destructive',
       })
     } finally {

@@ -47,6 +47,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import pb from '@/lib/pocketbase/client'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 const ITEMS_PER_PAGE = 25
 
@@ -205,17 +206,19 @@ export default function Medicamentos() {
       })
 
       toast({
-        title: 'Solicitação registrada!',
-        description: `Sua solicitação de padronização para ${medParaSolicitar.nome} foi enviada para avaliação técnica.`,
+        title: 'Solicitação registrada com sucesso!',
+        description: `Sua solicitação de padronização para ${medParaSolicitar.nome} foi enviada à Comissão Técnica Help Vida.`,
       })
       setSolicitarModalOpen(false)
       setJustificativaSolicitacao('')
     } catch (err: unknown) {
       console.error('Erro ao enviar solicitação:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao registrar solicitação.'
       toast({
-        title: 'Erro ao enviar',
-        description: msg,
+        title: 'Erro ao enviar solicitação',
+        description: getErrorMessage(
+          err,
+          'Não foi possível registrar a solicitação de medicamento não padronizado.',
+        ),
         variant: 'destructive',
       })
     } finally {
@@ -332,10 +335,13 @@ export default function Medicamentos() {
   // Gravação no PocketBase (Create ou Update)
   const handleSaveMedicamento = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formNome.trim() || !formClasse.trim()) {
+    const nomeLimpo = formNome.trim().toUpperCase()
+    const classeLimpa = formClasse.trim()
+
+    if (!nomeLimpo || !classeLimpa) {
       toast({
         title: 'Campos obrigatórios',
-        description: 'Informe o nome e a classe terapêutica.',
+        description: 'Informe o nome do medicamento e a respectiva classe terapêutica.',
         variant: 'destructive',
       })
       return
@@ -344,8 +350,8 @@ export default function Medicamentos() {
     setSaving(true)
     try {
       const payload = {
-        nome: formNome.trim().toUpperCase(),
-        classe: formClasse.trim(),
+        nome: nomeLimpo,
+        classe: classeLimpa,
         status: formStatus,
         descricao: formDescricao.trim(),
         observacao:
@@ -357,14 +363,14 @@ export default function Medicamentos() {
       if (editingRecord) {
         await pb.collection('medicamentos').update(editingRecord.id, payload)
         toast({
-          title: 'Medicamento atualizado',
-          description: `${payload.nome} foi atualizado com sucesso.`,
+          title: 'Medicamento atualizado com sucesso!',
+          description: `${payload.nome} foi atualizado na padronização.`,
         })
       } else {
         await pb.collection('medicamentos').create(payload)
         toast({
-          title: 'Medicamento cadastrado',
-          description: `${payload.nome} adicionado à padronização.`,
+          title: 'Medicamento cadastrado com sucesso!',
+          description: `${payload.nome} adicionado ao catálogo oficial da Help Vida.`,
         })
       }
 
@@ -373,10 +379,10 @@ export default function Medicamentos() {
         setSelectedMed({ ...selectedMed, ...payload })
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Falha ao salvar medicamento.'
+      console.error('Erro ao salvar medicamento:', err)
       toast({
-        title: 'Erro ao salvar',
-        description: msg,
+        title: 'Erro ao salvar medicamento',
+        description: getErrorMessage(err, 'Falha ao salvar medicamento na base de dados.'),
         variant: 'destructive',
       })
     } finally {
@@ -399,15 +405,14 @@ export default function Medicamentos() {
         setSelectedMed(null)
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Falha ao excluir registro.'
+      console.error('Erro ao excluir medicamento:', err)
       toast({
-        title: 'Erro ao excluir',
-        description: msg,
+        title: 'Erro ao excluir medicamento',
+        description: getErrorMessage(err, 'Não foi possível excluir o medicamento selecionado.'),
         variant: 'destructive',
       })
     } finally {
       setSaving(false)
-      setRecordToDelete(null)
     }
   }
 

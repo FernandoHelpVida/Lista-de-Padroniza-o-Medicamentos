@@ -4,15 +4,21 @@ import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, CheckCircle2, Loader2, UserPlus } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { AlertCircle, CheckCircle2, Loader2, UserPlus, ShieldCheck } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import pb from '@/lib/pocketbase/client'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 
 export default function Cadastro() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordConfirm, setPasswordConfirm] = useState('')
+  const [lgpdConsent, setLgpdConsent] = useState(false)
+  const [lgpdHealthConsent, setLgpdHealthConsent] = useState(false)
+  const [politicaOpen, setPoliticaOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -23,13 +29,41 @@ export default function Cadastro() {
     e.preventDefault()
     setError(null)
 
-    if (password !== passwordConfirm) {
-      setError('As senhas não coincidem.')
+    const nomeLimpo = name.trim()
+    const emailLimpo = email.trim().toLowerCase()
+
+    if (!nomeLimpo) {
+      setError('Por favor, informe seu nome completo institucional.')
+      return
+    }
+
+    if (!emailLimpo || !emailLimpo.includes('@') || !emailLimpo.includes('.')) {
+      setError('Informe um e-mail institucional válido.')
       return
     }
 
     if (password.length < 8) {
-      setError('A senha deve conter no mínimo 8 caracteres.')
+      setError('A senha de acesso deve possuir no mínimo 8 caracteres.')
+      return
+    }
+
+    if (password !== passwordConfirm) {
+      setError('A confirmação de senha não confere com a senha digitada.')
+      return
+    }
+
+    // Validação de Consentimentos Obrigatórios LGPD
+    if (!lgpdConsent) {
+      setError(
+        'É necessário ler e aceitar a Política de Privacidade e Tratamento de Dados (LGPD) para prosseguir.',
+      )
+      return
+    }
+
+    if (!lgpdHealthConsent) {
+      setError(
+        'Por favor, assinale o consentimento para o tratamento de dados de justificativas clínicas necessárias à avaliação da padronização.',
+      )
       return
     }
 
@@ -37,27 +71,31 @@ export default function Cadastro() {
 
     try {
       await pb.collection('users').create({
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
+        name: nomeLimpo,
+        email: emailLimpo,
         password,
         passwordConfirm,
+        role: 'comum',
       })
 
       try {
-        await pb.collection('users').requestVerification(email.trim().toLowerCase())
+        await pb.collection('users').requestVerification(emailLimpo)
       } catch {
-        // Silently continue if email server not configured
+        // Não interrompe se SMTP não configurado
       }
 
       setSuccess(true)
       setTimeout(() => {
         navigate('/login', {
-          state: { message: 'Conta criada! Verifique seu e-mail para ativar sua conta.' },
+          state: { message: 'Conta criada com sucesso! Acesse com suas credenciais.' },
         })
-      }, 3000)
+      }, 2500)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Erro ao cadastrar usuário. Tente novamente.'
-      setError(msg)
+      const friendlyMsg = getErrorMessage(
+        err,
+        'Falha ao realizar cadastro. Verifique se o e-mail já existe.',
+      )
+      setError(friendlyMsg)
     } finally {
       setLoading(false)
     }
@@ -151,9 +189,51 @@ export default function Cadastro() {
               className="h-10 text-sm focus-visible:ring-teal-500"
             />
           </div>
+          {/* Seção LGPD: Consentimentos explícitos e destacados */}
+          <div className="p-3.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/15 space-y-3">
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="lgpdConsent"
+                checked={lgpdConsent}
+                onCheckedChange={(checked) => setLgpdConsent(Boolean(checked))}
+                className="mt-0.5 data-[state=checked]:bg-[#0F5342] data-[state=checked]:border-[#0F5342]"
+              />
+              <label
+                htmlFor="lgpdConsent"
+                className="text-[11px] text-slate-700 leading-tight cursor-pointer select-none"
+              >
+                Declaro que li e concordo com a{' '}
+                <button
+                  type="button"
+                  onClick={() => setPoliticaOpen(true)}
+                  className="font-bold text-[#0D8272] hover:underline inline-flex items-center gap-0.5"
+                >
+                  Política de Privacidade e Termos da LGPD
+                </button>{' '}
+                (Lei nº 13.709/2018) da Help Vida. *
+              </label>
+            </div>
+
+            <div className="flex items-start gap-2 pt-1 border-t border-emerald-950/10">
+              <Checkbox
+                id="lgpdHealthConsent"
+                checked={lgpdHealthConsent}
+                onCheckedChange={(checked) => setLgpdHealthConsent(Boolean(checked))}
+                className="mt-0.5 data-[state=checked]:bg-[#0F5342] data-[state=checked]:border-[#0F5342]"
+              />
+              <label
+                htmlFor="lgpdHealthConsent"
+                className="text-[11px] text-slate-700 leading-tight cursor-pointer select-none"
+              >
+                <strong>Consentimento de Dados Sensíveis:</strong> Autorizo o tratamento de
+                informações clínicas e justificativas terapêuticas que eu submeter nas solicitações
+                de medicamentos para fins exclusivos de avaliação pela comissão técnica. *
+              </label>
+            </div>
+          </div>
           <Button
             type="submit"
-            disabled={loading}
+            disabled={loading || !lgpdConsent || !lgpdHealthConsent}
             className="w-full h-12 min-h-[48px] bg-[#0F5342] hover:bg-[#0C4336] text-white font-bold mt-2 shadow-xs rounded-xl"
           >
             {loading ? (
@@ -181,6 +261,9 @@ export default function Cadastro() {
           </div>{' '}
         </form>
       )}
+
+      {/* Modal da Política de Privacidade */}
+      <PoliticaPrivacidadeModal open={politicaOpen} onOpenChange={setPoliticaOpen} />
     </AuthLayout>
   )
 }

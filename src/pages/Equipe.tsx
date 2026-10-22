@@ -39,6 +39,7 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 export interface UserTeamRecord {
   id: string
@@ -95,12 +96,45 @@ export default function Equipe() {
 
   const handleCreateMember = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!novoEmail.trim() || !novaSenha.trim()) return
+    const nomeLimpo = novoNome.trim()
+    const emailLimpo = novoEmail.trim().toLowerCase()
+    const senhaLimpa = novaSenha.trim()
 
-    if (novaSenha.length < 8) {
+    // 1. Validações client-side rigorosas com feedback em pt-BR antes do envio
+    if (!nomeLimpo) {
       toast({
-        title: 'Senha muito curta',
-        description: 'A senha inicial deve ter pelo menos 8 caracteres.',
+        title: 'Nome obrigatório',
+        description: 'Informe o nome completo do profissional.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!emailLimpo || !emailLimpo.includes('@') || !emailLimpo.includes('.')) {
+      toast({
+        title: 'E-mail inválido',
+        description:
+          'Por favor, insira um e-mail institucional válido (ex: colega@helpvida.com.br).',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (senhaLimpa.length < 8) {
+      toast({
+        title: 'Senha inicial muito curta',
+        description: 'A senha provisória deve conter no mínimo 8 caracteres.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Verificar se o e-mail já existe na lista carregada
+    const jaExiste = membros.some((m) => m.email.toLowerCase() === emailLimpo)
+    if (jaExiste) {
+      toast({
+        title: 'E-mail já cadastrado',
+        description: `O e-mail ${emailLimpo} já pertence a um profissional da equipe Help Vida.`,
         variant: 'destructive',
       })
       return
@@ -108,18 +142,20 @@ export default function Equipe() {
 
     setCriandoMembro(true)
     try {
-      await pb.collection('users').create({
-        name: novoNome.trim(),
-        email: novoEmail.trim().toLowerCase(),
-        password: novaSenha,
-        passwordConfirm: novaSenha,
-        role: novoRole,
-        verified: true, // Já aprovado pelo admin
+      // 1ª Tentativa: Endpoint administrativo seguro (executado com privilégio de admin, garantindo verified e role)
+      const response = await pb.send('/backend/v1/admin/create-user', {
+        method: 'POST',
+        body: {
+          name: nomeLimpo,
+          email: emailLimpo,
+          password: senhaLimpa,
+          role: novoRole,
+        },
       })
 
       toast({
         title: 'Colega cadastrado com sucesso!',
-        description: `A conta para ${novoEmail} foi criada. Ele(a) já pode entrar no app.`,
+        description: `A conta para ${emailLimpo} foi criada. O profissional já pode acessar o sistema com a senha provisória informada.`,
       })
 
       setCreateModalOpen(false)
@@ -128,14 +164,41 @@ export default function Equipe() {
       setNovaSenha('HelpVida@2025')
       setNovoRole('comum')
       loadMembros()
-    } catch (err: unknown) {
-      console.error('Erro ao cadastrar colega:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao cadastrar usuário.'
-      toast({
-        title: 'Erro no cadastro',
-        description: msg,
-        variant: 'destructive',
-      })
+    } catch (errAdmin: unknown) {
+      // Fallback: se o hook administrativo não responder, tentar via SDK nativo users.create
+      try {
+        await pb.collection('users').create({
+          name: nomeLimpo,
+          email: emailLimpo,
+          password: senhaLimpa,
+          passwordConfirm: senhaLimpa,
+          role: novoRole,
+          verified: true,
+        })
+
+        toast({
+          title: 'Colega cadastrado com sucesso!',
+          description: `A conta para ${emailLimpo} foi criada. Ele(a) já pode entrar no app.`,
+        })
+
+        setCreateModalOpen(false)
+        setNovoNome('')
+        setNovoEmail('')
+        setNovaSenha('HelpVida@2025')
+        setNovoRole('comum')
+        loadMembros()
+      } catch (errFallback: unknown) {
+        console.error('Erro ao cadastrar colega:', errAdmin || errFallback)
+        const friendlyMsg = getErrorMessage(
+          errAdmin || errFallback,
+          'Não foi possível concluir o cadastro. Verifique se o e-mail já existe ou se a senha atende aos requisitos.',
+        )
+        toast({
+          title: 'Erro no cadastro',
+          description: friendlyMsg,
+          variant: 'destructive',
+        })
+      }
     } finally {
       setCriandoMembro(false)
     }
@@ -154,10 +217,13 @@ export default function Equipe() {
       setMembroParaReset(null)
     } catch (err: unknown) {
       console.error('Erro ao solicitar reset:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao enviar instruções de redefinição.'
+      const friendlyMsg = getErrorMessage(
+        err,
+        'Falha ao enviar instruções de redefinição para o e-mail informado.',
+      )
       toast({
         title: 'Erro ao enviar instruções',
-        description: msg,
+        description: friendlyMsg,
         variant: 'destructive',
       })
     } finally {
@@ -172,6 +238,22 @@ export default function Equipe() {
     const email = m.email.toLowerCase()
     return nome.includes(q) || email.includes(q)
   })
+
+  if (!isAdmin) {
+    return (
+      <div className="max-w-md mx-auto py-16 text-center space-y-4">
+        <div className="h-12 w-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+          <ShieldCheck className="h-6 w-6" />
+        </div>
+        <h3 className="text-base font-bold text-slate-800">Acesso Restrito à Comissão</h3>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Em conformidade com a LGPD (Princípio da Minimização), a visualização dos dados cadastrais
+          e gestão de contas da equipe é restrita aos administradores e à comissão técnica da Help
+          Vida.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4 sm:space-y-6 max-w-5xl mx-auto">

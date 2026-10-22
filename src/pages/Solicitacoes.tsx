@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 export type SolicitacaoStatus = 'Pendente' | 'Aprovada' | 'Atendida' | 'Negada'
 
@@ -95,7 +96,7 @@ export default function Solicitacoes() {
       console.error('Erro ao carregar solicitações:', err)
       toast({
         title: 'Falha ao buscar solicitações',
-        description: 'Não foi possível sincronizar o histórico de pedidos.',
+        description: getErrorMessage(err, 'Não foi possível sincronizar o histórico de pedidos.'),
         variant: 'destructive',
       })
     } finally {
@@ -210,6 +211,17 @@ export default function Solicitacoes() {
     e.preventDefault()
     if (!selectedSolicitacao) return
 
+    // Validação client-side: se negada, exigir parecer explicativo
+    if (novoStatus === 'Negada' && !respostaComissao.trim()) {
+      toast({
+        title: 'Parecer obrigatório para negativa',
+        description:
+          'Por favor, informe a justificativa técnica da comissão para a negativa do medicamento.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     setSalvandoStatus(true)
     try {
       await pb.collection('solicitacoes').update(selectedSolicitacao.id, {
@@ -218,16 +230,16 @@ export default function Solicitacoes() {
       })
 
       toast({
-        title: 'Status atualizado com sucesso',
-        description: `Solicitação marcada como "${novoStatus}".`,
+        title: 'Parecer salvo com sucesso!',
+        description: `Solicitação atualizada para "${novoStatus}".`,
       })
       setAdminModalOpen(false)
       loadSolicitacoes()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Falha ao atualizar status.'
+      console.error('Erro ao atualizar solicitação:', err)
       toast({
-        title: 'Erro ao salvar',
-        description: msg,
+        title: 'Erro ao salvar parecer',
+        description: getErrorMessage(err, 'Não foi possível salvar a avaliação da comissão.'),
         variant: 'destructive',
       })
     } finally {

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21T21:17:37.749Z",
+  "generatedAt": "2026-10-22T11:42:25.067Z",
   "collections": [
     {
       "name": "users",
@@ -9,7 +9,7 @@
         "view": "@request.auth.id != ''",
         "create": "",
         "update": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
-        "delete": "id = @request.auth.id"
+        "delete": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')"
       },
       "fields": [
         {
@@ -192,11 +192,11 @@
       "name": "solicitacoes",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != ''",
-        "view": "@request.auth.id != ''",
+        "list": "@request.auth.id != '' && (solicitante = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
+        "view": "@request.auth.id != '' && (solicitante = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
         "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != ''",
-        "delete": "@request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin'"
+        "update": "@request.auth.id != '' && (@request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin' || (solicitante = @request.auth.id && status = 'Pendente'))",
+        "delete": "@request.auth.id != '' && (solicitante = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')"
       },
       "fields": [
         {
