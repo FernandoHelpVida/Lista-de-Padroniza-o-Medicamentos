@@ -35,6 +35,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
+import { InstallPwaPrompt } from '@/components/InstallPwaPrompt'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 export default function Configuracoes() {
@@ -680,6 +681,9 @@ export default function Configuracoes() {
           </div>
         </CardContent>
       </Card>
+
+      {/* CARD: INSTALAR O APLICATIVO NO CELULAR (PWA) */}
+      <InstallPwaPrompt variant="card" showAlwaysInSettings />
 
       {/* 4. CARD SOBRE A HELP VIDA */}
       <Card className="border-emerald-950/10 bg-gradient-to-br from-white to-[#E6F5F2]/50 shadow-xs">

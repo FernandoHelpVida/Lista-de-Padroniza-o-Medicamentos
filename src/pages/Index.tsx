@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from 'recharts'
+import { InstallPwaPrompt } from '@/components/InstallPwaPrompt'
 
 import type { RecordModel } from 'pocketbase'
 
@@ -203,6 +204,9 @@ export default function Index() {
           </Button>
         </div>
       </div>
+
+      {/* BANNER DISPENSÁVEL DE INSTALAÇÃO DO APP NO CELULAR (PWA) */}
+      <InstallPwaPrompt variant="banner" />
 
       {/* 2. BARRA DE BUSCA CENTRALIZADA GRANDE (MÉDICOS NO CELULAR) */}
       <div className="w-full max-w-3xl mx-auto">

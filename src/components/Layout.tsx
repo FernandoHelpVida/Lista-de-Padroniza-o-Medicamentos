@@ -216,9 +216,9 @@ export default function Layout() {
       </aside>
 
       {/* 2. CONTEÚDO PRINCIPAL COM TOPBAR MOBILE/DESKTOP */}
-      <div className="flex-1 flex flex-col min-w-0 pb-20 md:pb-0">
+      <div className="flex-1 flex flex-col min-w-0 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-0">
         {/* Topbar Fixa - Otimizada para Celular dos Médicos */}
-        <header className="sticky top-0 z-30 h-15 sm:h-16 bg-white/95 backdrop-blur-md border-b border-emerald-950/10 px-3 sm:px-6 flex items-center justify-between shadow-xs">
+        <header className="sticky top-0 z-30 h-15 sm:h-16 bg-white/95 backdrop-blur-md border-b border-emerald-950/10 px-3 sm:px-6 flex items-center justify-between shadow-xs pt-safe">
           {/* Lado esquerdo: Logo no mobile direto + Título */}
           <div className="flex items-center gap-2.5 min-w-0">
             {/* Logo direta no mobile */}
@@ -354,7 +354,7 @@ export default function Layout() {
       {/* Botões com mínimo de 48px de área de toque, touch seguro, feedback tátil */}
       <nav
         aria-label="Navegação inferior mobile"
-        className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md border-t border-emerald-950/10 z-40 flex items-stretch justify-around px-1 shadow-[0_-4px_16px_rgba(12,67,54,0.08)] pb-safe"
+        className="md:hidden fixed bottom-0 left-0 right-0 h-[calc(4rem+env(safe-area-inset-bottom,0px))] bg-white/95 backdrop-blur-md border-t border-emerald-950/10 z-40 flex items-stretch justify-around px-1 shadow-[0_-4px_16px_rgba(12,67,54,0.08)] pb-[env(safe-area-inset-bottom,0px)]"
       >
         {mobileNavItems.map((item) => {
           const Icon = item.icon
