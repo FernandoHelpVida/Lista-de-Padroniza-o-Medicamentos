@@ -43,6 +43,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { formatarDataSegura } from '@/lib/formatters'
 import { NovaSolicitacaoModal } from '@/components/NovaSolicitacaoModal'
 import type { RecordModel } from 'pocketbase'
 
@@ -706,13 +707,10 @@ export default function Solicitacoes() {
           ) : (
             <div className="space-y-3 pt-2">
               {timelineLogs.map((log, index) => {
-                const dataFormatada = new Date(log.created).toLocaleDateString('pt-BR', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
+                const dataFormatada = formatarDataSegura(log.created, {
+                  incluirHora: true,
+                  incluirSegundos: true,
+                  fallback: 'Data indisponível',
                 })
 
                 return (
@@ -838,13 +836,9 @@ export default function Solicitacoes() {
         ) : (
           <div className="space-y-3">
             {visibleSolicitacoes.map((item) => {
-              const dataObj = new Date(item.created)
-              const dataFormatada = dataObj.toLocaleDateString('pt-BR', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
+              const dataFormatada = formatarDataSegura(item.created, {
+                incluirHora: true,
+                fallback: 'Data indisponível',
               })
 
               const medNome =
@@ -1069,13 +1063,10 @@ export default function Solicitacoes() {
           ) : (
             <div className="space-y-2.5">
               {visibleAuditLogs.map((log) => {
-                const dataFormatada = new Date(log.created).toLocaleDateString('pt-BR', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
+                const dataFormatada = formatarDataSegura(log.created, {
+                  incluirHora: true,
+                  incluirSegundos: true,
+                  fallback: 'Data indisponível',
                 })
 
                 return (

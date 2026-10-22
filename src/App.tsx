@@ -4,6 +4,7 @@ import { Toaster as Sonner } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { RequireAuth } from '@/components/RequireAuth'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import Layout from '@/components/Layout'
 
 // Páginas de Autenticação
@@ -42,9 +43,11 @@ const App = () => (
           {/* Rotas Protegidas no Layout Autenticado */}
           <Route
             element={
-              <RequireAuth>
-                <Layout />
-              </RequireAuth>
+              <ErrorBoundary>
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              </ErrorBoundary>
             }
           >
             <Route path="/" element={<Index />} />

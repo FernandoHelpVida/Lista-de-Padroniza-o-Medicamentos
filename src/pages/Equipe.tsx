@@ -44,6 +44,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { formatarDataSegura } from '@/lib/formatters'
 
 export interface UserTeamRecord {
   id: string
@@ -391,6 +392,7 @@ export default function Equipe() {
           ) : (
             <div className="divide-y divide-emerald-950/5">
               {filteredMembros.map((m) => {
+                const emailTexto = m.email || ''
                 const initials = m.name
                   ? m.name
                       .split(' ')
@@ -398,18 +400,18 @@ export default function Equipe() {
                       .slice(0, 2)
                       .join('')
                       .toUpperCase()
-                  : m.email.slice(0, 2).toUpperCase()
+                  : emailTexto
+                    ? emailTexto.slice(0, 2).toUpperCase()
+                    : 'HV'
 
-                const dataCriacao = new Date(m.created).toLocaleDateString('pt-BR', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
+                const dataCriacao = formatarDataSegura(m.created, {
+                  fallback: 'Data indisponível',
                 })
 
                 const isCurrentUser = user?.id === m.id
                 const isMemberAdmin =
                   m.role === 'admin' ||
-                  m.email.toLowerCase() === 'fernandofernandes@helpvida.com.br'
+                  emailTexto.toLowerCase() === 'fernandofernandes@helpvida.com.br'
 
                 return (
                   <div

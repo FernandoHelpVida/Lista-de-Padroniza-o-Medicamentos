@@ -30,6 +30,7 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export default function Layout() {
   const { user, logout, isAdmin } = useAuth()
@@ -346,7 +347,12 @@ export default function Layout() {
 
         {/* Área de Conteúdo Principal */}
         <main className="flex-1 p-3.5 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto animate-in fade-in duration-300">
-          <Outlet />
+          <ErrorBoundary
+            fallbackTitle="Algo deu errado nesta tela."
+            fallbackMessage="Ocorreu um erro ao carregar o conteúdo desta tela. Tente atualizar a página ou navegar para outra seção."
+          >
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 

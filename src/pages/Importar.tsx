@@ -46,6 +46,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { formatarDataSegura } from '@/lib/formatters'
 
 export type ItemDiffStatus = 'NOVO' | 'EXISTENTE' | 'SEM_ALTERACAO'
 
@@ -1032,13 +1033,9 @@ export default function Importar() {
               ) : (
                 <div className="space-y-3">
                   {historicoList.map((item) => {
-                    const dataObj = new Date(item.created)
-                    const dataFormatada = dataObj.toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
+                    const dataFormatada = formatarDataSegura(item.created, {
+                      incluirHora: true,
+                      fallback: 'Data indisponível',
                     })
                     const autorNome =
                       item.expand?.usuario?.name ||
