@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T17:56:34.490Z",
+  "generatedAt": "2026-10-22T18:11:39.530Z",
   "collections": [
     {
       "name": "users",
@@ -29,29 +29,21 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         },
         {
           "name": "role",
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": [
-            "admin",
-            "comum"
-          ]
+          "selectValues": ["admin", "comum"]
         }
       ],
       "indexes": [
@@ -87,11 +79,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": [
-            "Padronizado",
-            "Não Padronizado",
-            "Inativo"
-          ]
+          "selectValues": ["Padronizado", "Não Padronizado", "Inativo"]
         },
         {
           "name": "descricao",
@@ -110,19 +98,14 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
       "indexes": [
@@ -190,19 +173,14 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
       "indexes": [
@@ -246,12 +224,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": [
-            "Pendente",
-            "Aprovada",
-            "Atendida",
-            "Negada"
-          ]
+          "selectValues": ["Pendente", "Aprovada", "Atendida", "Negada"]
         },
         {
           "name": "resposta_comissao",
@@ -264,19 +237,14 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         },
         {
           "name": "nome_medicamento_novo",
@@ -394,19 +362,14 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
       "indexes": [

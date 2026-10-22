@@ -136,15 +136,6 @@ export default function Login() {
             Aviso de Privacidade & LGPD (Lei nº 13.709/2018)
           </button>
         </div>
-
-        <div className="mt-4 p-3 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/20 text-[11px] text-[#0C4336] leading-relaxed">
-          <strong>Acesso inicial administrativo de demonstração:</strong>
-          <br />
-          E-mail:{' '}
-          <code className="bg-white/60 px-1 py-0.5 rounded">fernandofernandes@helpvida.com.br</code>
-          <br />
-          Senha: <code className="bg-white/60 px-1 py-0.5 rounded">Skip@Pass</code>
-        </div>
       </form>
       <PoliticaPrivacidadeModal open={politicaOpen} onOpenChange={setPoliticaOpen} />
     </AuthLayout>

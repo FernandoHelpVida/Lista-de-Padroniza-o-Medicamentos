@@ -263,7 +263,7 @@ export default function Importar() {
     await processPdfBuffer(buffer, file.name, `${sizeInMb} MB`)
   }
 
-  // Carregar o PDF de teste institucional já disponível no projeto
+  // Carregar o PDF institucional oficial já disponível no projeto
   const handleLoadOfficialTestPdf = async () => {
     setExtracting(true)
     setExtractionProgress(10)
@@ -288,7 +288,7 @@ export default function Importar() {
     } catch (err: unknown) {
       console.error(err)
       toast({
-        title: 'Erro ao carregar PDF de teste',
+        title: 'Erro ao carregar PDF institucional',
         description: 'Não foi possível ler o arquivo modelo.',
         variant: 'destructive',
       })
@@ -648,8 +648,8 @@ export default function Importar() {
                         Clique aqui para selecionar o arquivo PDF do seu computador ou celular
                       </p>
                       <p className="text-xs text-slate-400">
-                        Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para testar com o
-                        ANEXO I oficial
+                        Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para carregar o ANEXO
+                        I oficial
                       </p>
                     </div>
                   )}
