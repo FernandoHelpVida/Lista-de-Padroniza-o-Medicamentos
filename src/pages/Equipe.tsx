@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useNavigate } from 'react-router-dom'
 import pb from '@/lib/pocketbase/client'
 import {
   Users,
@@ -9,12 +10,15 @@ import {
   KeyRound,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   Search,
   RefreshCw,
   UserCheck,
   Calendar,
   Lock,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -58,13 +62,18 @@ export default function Equipe() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
+  const navigate = useNavigate()
+
   // Modal para cadastrar colega
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [novoNome, setNovoNome] = useState('')
   const [novoEmail, setNovoEmail] = useState('')
   const [novaSenha, setNovaSenha] = useState('HelpVida@2025')
+  const [showNovaSenha, setShowNovaSenha] = useState(false)
   const [novoRole, setNovoRole] = useState<'comum' | 'admin'>('comum')
   const [criandoMembro, setCriandoMembro] = useState(false)
+  const [modalFormError, setModalFormError] = useState<string | null>(null)
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false)
 
   // Modal para convite / redefinição de senha
   const [resetModalOpen, setResetModalOpen] = useState(false)
@@ -94,47 +103,90 @@ export default function Equipe() {
     loadMembros()
   }, [])
 
-  const handleCreateMember = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const nomeLimpo = novoNome.trim()
-    const emailLimpo = novoEmail.trim().toLowerCase()
-    const senhaLimpa = novaSenha.trim()
+  // Validações em tempo real para o formulário do modal
+  const nomeLimpo = novoNome.trim()
+  const emailLimpo = novoEmail.trim().toLowerCase()
+  const senhaLimpa = novaSenha.trim()
 
-    // 1. Validações client-side rigorosas com feedback em pt-BR antes do envio
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const emailValido = emailRegex.test(emailLimpo)
+  const senhaValida = senhaLimpa.length >= 8
+  const nomeValido = nomeLimpo.length >= 2
+  const emailJaExiste = membros.some((m) => m.email.toLowerCase() === emailLimpo)
+
+  // Diagnóstico das pendências para orientar o usuário
+  const getValidationErrors = (): string[] => {
+    const errors: string[] = []
     if (!nomeLimpo) {
+      errors.push('Informe o nome completo do profissional.')
+    } else if (nomeLimpo.length < 2) {
+      errors.push('O nome deve ter pelo menos 2 caracteres.')
+    }
+
+    if (!emailLimpo) {
+      errors.push('Informe o e-mail institucional.')
+    } else if (!emailValido) {
+      errors.push('Insira um e-mail válido (ex: colega@helpvida.com.br).')
+    } else if (emailJaExiste) {
+      errors.push(`O e-mail ${emailLimpo} já está cadastrado na equipe Help Vida.`)
+    }
+
+    if (!senhaLimpa) {
+      errors.push('Informe a senha inicial provisória.')
+    } else if (!senhaValida) {
+      errors.push('A senha provisória deve ter no mínimo 8 caracteres.')
+    }
+
+    return errors
+  }
+
+  const isFormValid = nomeValido && emailValido && !emailJaExiste && senhaValida
+
+  const resetCreateForm = () => {
+    setNovoNome('')
+    setNovoEmail('')
+    setNovaSenha('HelpVida@2025')
+    setShowNovaSenha(false)
+    setNovoRole('comum')
+    setModalFormError(null)
+    setHasAttemptedSubmit(false)
+  }
+
+  const handleOpenCreateModal = () => {
+    resetCreateForm()
+    setCreateModalOpen(true)
+  }
+
+  const handleCreateMember = async (e?: React.FormEvent) => {
+    if (e) {
+      e.preventDefault()
+    }
+    setHasAttemptedSubmit(true)
+    setModalFormError(null)
+
+    // Checar validade da sessão antes de qualquer chamada
+    if (!pb.authStore.isValid || !user) {
+      const msg = 'Sua sessão expirou. Por favor, entre novamente no sistema.'
+      setModalFormError(msg)
       toast({
-        title: 'Nome obrigatório',
-        description: 'Informe o nome completo do profissional.',
+        title: 'Sessão expirada',
+        description: msg,
         variant: 'destructive',
       })
+      setTimeout(() => {
+        navigate('/login', { state: { from: { pathname: '/equipe' } } })
+      }, 1500)
       return
     }
 
-    if (!emailLimpo || !emailLimpo.includes('@') || !emailLimpo.includes('.')) {
+    // 1. Validações client-side com mensagens claras em pt-BR
+    const errors = getValidationErrors()
+    if (errors.length > 0) {
+      const firstError = errors[0]
+      setModalFormError(firstError)
       toast({
-        title: 'E-mail inválido',
-        description:
-          'Por favor, insira um e-mail institucional válido (ex: colega@helpvida.com.br).',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    if (senhaLimpa.length < 8) {
-      toast({
-        title: 'Senha inicial muito curta',
-        description: 'A senha provisória deve conter no mínimo 8 caracteres.',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    // Verificar se o e-mail já existe na lista carregada
-    const jaExiste = membros.some((m) => m.email.toLowerCase() === emailLimpo)
-    if (jaExiste) {
-      toast({
-        title: 'E-mail já cadastrado',
-        description: `O e-mail ${emailLimpo} já pertence a um profissional da equipe Help Vida.`,
+        title: 'Preencha os campos obrigatórios',
+        description: firstError,
         variant: 'destructive',
       })
       return
@@ -142,31 +194,39 @@ export default function Equipe() {
 
     setCriandoMembro(true)
     try {
-      // 1ª Tentativa: Endpoint administrativo seguro (executado com privilégio de admin, garantindo verified e role)
-      const response = await pb.send('/backend/v1/admin/create-user', {
-        method: 'POST',
-        body: {
-          name: nomeLimpo,
-          email: emailLimpo,
-          password: senhaLimpa,
-          role: novoRole,
-        },
-      })
-
-      toast({
-        title: 'Colega cadastrado com sucesso!',
-        description: `A conta para ${emailLimpo} foi criada. O profissional já pode acessar o sistema com a senha provisória informada.`,
-      })
-
-      setCreateModalOpen(false)
-      setNovoNome('')
-      setNovoEmail('')
-      setNovaSenha('HelpVida@2025')
-      setNovoRole('comum')
-      loadMembros()
-    } catch (errAdmin: unknown) {
-      // Fallback: se o hook administrativo não responder, tentar via SDK nativo users.create
+      // 1ª Tentativa: Endpoint administrativo seguro
       try {
+        await pb.send('/backend/v1/admin/create-user', {
+          method: 'POST',
+          body: {
+            name: nomeLimpo,
+            email: emailLimpo,
+            password: senhaLimpa,
+            role: novoRole,
+          },
+        })
+
+        toast({
+          title: 'Colega cadastrado com sucesso!',
+          description: `A conta para ${emailLimpo} foi criada. O profissional já pode acessar o sistema com a senha provisória informada.`,
+        })
+
+        setCreateModalOpen(false)
+        resetCreateForm()
+        loadMembros()
+        return
+      } catch (errAdmin: unknown) {
+        // Se foi erro de autenticação (401), avisar explicitamente sobre sessão
+        const adminMsg = String(errAdmin)
+        if (
+          adminMsg.includes('401') ||
+          adminMsg.includes('não autorizado') ||
+          !pb.authStore.isValid
+        ) {
+          throw new Error('Sua sessão expirou ou não está autorizada. Por favor, entre novamente.')
+        }
+
+        // Fallback: tentar via SDK nativo users.create
         await pb.collection('users').create({
           name: nomeLimpo,
           email: emailLimpo,
@@ -182,22 +242,29 @@ export default function Equipe() {
         })
 
         setCreateModalOpen(false)
-        setNovoNome('')
-        setNovoEmail('')
-        setNovaSenha('HelpVida@2025')
-        setNovoRole('comum')
+        resetCreateForm()
         loadMembros()
-      } catch (errFallback: unknown) {
-        console.error('Erro ao cadastrar colega:', errAdmin || errFallback)
-        const friendlyMsg = getErrorMessage(
-          errAdmin || errFallback,
-          'Não foi possível concluir o cadastro. Verifique se o e-mail já existe ou se a senha atende aos requisitos.',
-        )
-        toast({
-          title: 'Erro no cadastro',
-          description: friendlyMsg,
-          variant: 'destructive',
-        })
+      }
+    } catch (err: unknown) {
+      console.error('Erro ao cadastrar colega:', err)
+      const friendlyMsg = getErrorMessage(
+        err,
+        'Não foi possível concluir o cadastro. Verifique se o e-mail já existe ou se a senha atende aos requisitos.',
+      )
+      setModalFormError(friendlyMsg)
+      toast({
+        title: 'Erro no cadastro',
+        description: friendlyMsg,
+        variant: 'destructive',
+      })
+
+      if (
+        friendlyMsg.toLowerCase().includes('sessão') ||
+        friendlyMsg.toLowerCase().includes('login')
+      ) {
+        setTimeout(() => {
+          navigate('/login', { state: { from: { pathname: '/equipe' } } })
+        }, 2000)
       }
     } finally {
       setCriandoMembro(false)
@@ -272,8 +339,8 @@ export default function Equipe() {
 
         {isAdmin && (
           <Button
-            onClick={() => setCreateModalOpen(true)}
-            className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 px-4 rounded-xl shadow-xs"
+            onClick={handleOpenCreateModal}
+            className="bg-[#0F5342] hover:bg-[#0C4336] active:scale-[0.98] text-white text-xs font-bold h-11 min-h-[44px] px-4 rounded-xl shadow-xs touch-manipulation transition-transform"
           >
             <UserPlus className="mr-1.5 h-4 w-4 text-[#F5B31C]" />
             Cadastrar Novo Colega
@@ -414,117 +481,251 @@ export default function Equipe() {
       </Card>
 
       {/* Modal: Cadastrar Colega */}
-      <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>
-        <DialogContent className="max-w-md p-6 rounded-2xl bg-white">
-          <form onSubmit={handleCreateMember} className="space-y-4">
-            <DialogHeader>
-              <DialogTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
-                <UserPlus className="h-5 w-5 text-[#0D8272]" />
+      <Dialog
+        open={createModalOpen}
+        onOpenChange={(open) => {
+          setCreateModalOpen(open)
+          if (!open) {
+            setModalFormError(null)
+            setHasAttemptedSubmit(false)
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-md w-[95vw] sm:w-full p-4 sm:p-6 rounded-2xl bg-white max-h-[90vh] overflow-y-auto"
+          onOpenAutoFocus={(e) => {
+            // Evita scroll jump indesejado em dispositivos móveis
+            e.preventDefault()
+          }}
+        >
+          <div className="space-y-4">
+            <DialogHeader className="text-left">
+              <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2">
+                <UserPlus className="h-5 w-5 text-[#0D8272] shrink-0" />
                 Cadastrar Colega na Help Vida
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-500 pt-1">
-                Crie a conta de acesso para um colega médico ou farmacêutico. Ele(a) poderá alterar
-                a senha nas configurações.
+                Crie a conta de acesso para um médico ou farmacêutico da equipe. Ele(a) poderá
+                alterar a senha depois nas configurações.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="novoNome" className="text-xs font-bold text-slate-700">
-                Nome Completo do Profissional *
-              </Label>
-              <Input
-                id="novoNome"
-                placeholder="Ex: Dra. Mariana Silva"
-                value={novoNome}
-                onChange={(e) => setNovoNome(e.target.value)}
-                required
-                className="h-10 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="novoEmail" className="text-xs font-bold text-slate-700">
-                E-mail Institucional *
-              </Label>
-              <Input
-                id="novoEmail"
-                type="email"
-                placeholder="mariana.silva@helpvida.com.br"
-                value={novoEmail}
-                onChange={(e) => setNovoEmail(e.target.value)}
-                required
-                className="h-10 text-xs sm:text-sm focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="novoRole" className="text-xs font-bold text-slate-700">
-                  Perfil de Acesso *
-                </Label>
-                <Select
-                  value={novoRole}
-                  onValueChange={(val: 'comum' | 'admin') => setNovoRole(val)}
-                >
-                  <SelectTrigger id="novoRole" className="h-10 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="text-xs">
-                    <SelectItem value="comum">Corpo Clínico (Padrão)</SelectItem>
-                    <SelectItem value="admin">Administrador (Comissão)</SelectItem>
-                  </SelectContent>
-                </Select>
+            {/* Alerta de erro com explicação clara se houver falha ou validação */}
+            {modalFormError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2.5 animate-in fade-in">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold">Atenção ao cadastro:</p>
+                  <p className="text-[11px] mt-0.5 text-rose-700 leading-relaxed">
+                    {modalFormError}
+                  </p>
+                </div>
               </div>
+            )}
 
-              <div className="space-y-1.5">
-                <Label htmlFor="novaSenha" className="text-xs font-bold text-slate-700">
-                  Senha Inicial Provisória *
+            {/* Aviso visual em caso de sessão inválida */}
+            {(!pb.authStore.isValid || !user) && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-relaxed">
+                  Sua sessão parece expirada. Clique em Concluir Cadastro para renovar ou entre
+                  novamente.
+                </p>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateMember} noValidate className="space-y-3.5">
+              {/* Campo Nome */}
+              <div className="space-y-1">
+                <Label htmlFor="novoNome" className="text-xs font-bold text-slate-700">
+                  Nome Completo do Profissional *
                 </Label>
                 <Input
-                  id="novaSenha"
-                  type="text"
-                  placeholder="HelpVida@2025"
-                  value={novaSenha}
-                  onChange={(e) => setNovaSenha(e.target.value)}
-                  required
-                  className="h-10 text-xs font-mono focus-visible:ring-[#0D8272] bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
+                  id="novoNome"
+                  name="novoNome"
+                  autoComplete="name"
+                  placeholder="Ex: Dra. Mariana Silva"
+                  value={novoNome}
+                  onChange={(e) => {
+                    setNovoNome(e.target.value)
+                    if (modalFormError) setModalFormError(null)
+                  }}
+                  className={cn(
+                    'h-11 min-h-[44px] text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]',
+                    hasAttemptedSubmit &&
+                      !nomeValido &&
+                      'border-rose-400 bg-rose-50/40 focus-visible:ring-rose-500',
+                  )}
                 />
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/20 text-[11px] text-[#0C4336] leading-relaxed">
-              O colega poderá realizar o login imediatamente com o e-mail e a senha inicial
-              informada, podendo trocá-la a qualquer momento na tela de{' '}
-              <strong>Configurações</strong>.
-            </div>
-
-            <DialogFooter className="pt-2 flex flex-col sm:flex-row gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setCreateModalOpen(false)}
-                className="text-xs"
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={criandoMembro}
-                className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs h-9 min-h-[38px] font-bold rounded-xl"
-              >
-                {criandoMembro ? (
-                  <>
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Criando Conta...
-                  </>
-                ) : (
-                  'Concluir Cadastro'
+                {hasAttemptedSubmit && !nomeValido && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    Informe o nome do colega.
+                  </p>
                 )}
-              </Button>
-            </DialogFooter>
-          </form>
+              </div>
+
+              {/* Campo E-mail */}
+              <div className="space-y-1">
+                <Label htmlFor="novoEmail" className="text-xs font-bold text-slate-700">
+                  E-mail Institucional *
+                </Label>
+                <Input
+                  id="novoEmail"
+                  name="novoEmail"
+                  type="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="email"
+                  placeholder="mariana.silva@helpvida.com.br"
+                  value={novoEmail}
+                  onChange={(e) => {
+                    setNovoEmail(e.target.value)
+                    if (modalFormError) setModalFormError(null)
+                  }}
+                  className={cn(
+                    'h-11 min-h-[44px] text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]',
+                    hasAttemptedSubmit &&
+                      (!emailValido || emailJaExiste) &&
+                      'border-rose-400 bg-rose-50/40 focus-visible:ring-rose-500',
+                  )}
+                />
+                {hasAttemptedSubmit && !emailLimpo && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    Informe o e-mail institucional.
+                  </p>
+                )}
+                {hasAttemptedSubmit && emailLimpo && !emailValido && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    Formato de e-mail inválido. Deve conter @ e domínio (ex: @helpvida.com.br).
+                  </p>
+                )}
+                {emailJaExiste && (
+                  <p className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 font-medium">
+                    <AlertTriangle size={11} />
+                    Este e-mail já pertence a um profissional cadastrado na equipe.
+                  </p>
+                )}
+              </div>
+
+              {/* Perfil e Senha Provisória */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="novoRole" className="text-xs font-bold text-slate-700">
+                    Perfil de Acesso *
+                  </Label>
+                  <Select
+                    value={novoRole}
+                    onValueChange={(val: 'comum' | 'admin') => setNovoRole(val)}
+                  >
+                    <SelectTrigger
+                      id="novoRole"
+                      className="h-11 min-h-[44px] text-xs rounded-xl bg-[#F4FAF8] border-emerald-950/15"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="text-xs z-50">
+                      <SelectItem value="comum">Corpo Clínico (Padrão)</SelectItem>
+                      <SelectItem value="admin">Administrador (Comissão)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="novaSenha" className="text-xs font-bold text-slate-700">
+                    Senha Provisória *
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="novaSenha"
+                      name="novaSenha"
+                      type={showNovaSenha ? 'text' : 'password'}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      placeholder="Mínimo 8 caracteres"
+                      value={novaSenha}
+                      onChange={(e) => {
+                        setNovaSenha(e.target.value)
+                        if (modalFormError) setModalFormError(null)
+                      }}
+                      className={cn(
+                        'h-11 min-h-[44px] pr-10 text-xs font-mono bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]',
+                        hasAttemptedSubmit &&
+                          !senhaValida &&
+                          'border-rose-400 bg-rose-50/40 focus-visible:ring-rose-500',
+                      )}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNovaSenha(!showNovaSenha)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md"
+                      title={showNovaSenha ? 'Ocultar senha' : 'Ver senha'}
+                      tabIndex={-1}
+                    >
+                      {showNovaSenha ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  {hasAttemptedSubmit && !senhaValida && (
+                    <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                      <AlertCircle size={11} />
+                      A senha deve ter no mínimo 8 caracteres.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Resumo da senha informada */}
+              <div className="p-3 rounded-xl bg-[#E6F5F2] border border-[#0D8272]/20 text-[11px] text-[#0C4336] leading-relaxed">
+                O profissional poderá entrar no aplicativo imediatamente utilizando este e-mail e a
+                senha provisória definida acima.
+              </div>
+
+              {/* Botões do Rodapé */}
+              <DialogFooter className="pt-2 flex flex-col-reverse sm:flex-row gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setCreateModalOpen(false)}
+                  disabled={criandoMembro}
+                  className="h-11 min-h-[44px] text-xs border-slate-200 text-slate-700 w-full sm:w-auto"
+                >
+                  Cancelar
+                </Button>
+
+                {/* Botão Concluir Cadastro: sempre clicável para fornecer feedback explícito */}
+                <Button
+                  type="submit"
+                  disabled={criandoMembro}
+                  className={cn(
+                    'h-11 min-h-[44px] px-5 rounded-xl text-xs font-bold text-white shadow-xs touch-manipulation transition-all w-full sm:w-auto',
+                    isFormValid
+                      ? 'bg-[#0F5342] hover:bg-[#0C4336] active:scale-[0.98]'
+                      : 'bg-[#0F5342]/80 hover:bg-[#0F5342]',
+                  )}
+                  title={
+                    !isFormValid
+                      ? 'Clique para ver o que falta preencher'
+                      : 'Cadastrar colega no sistema'
+                  }
+                >
+                  {criandoMembro ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Cadastrando Colega...
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                      Concluir Cadastro
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </div>
         </DialogContent>
       </Dialog>
 
