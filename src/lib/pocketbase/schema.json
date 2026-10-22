@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T13:42:25.144Z",
+  "generatedAt": "2026-10-22T14:09:56.523Z",
   "collections": [
     {
       "name": "users",
@@ -202,7 +202,7 @@
         {
           "name": "medicamento",
           "type": "relation",
-          "required": true,
+          "required": false,
           "system": false,
           "collectionRef": "medicamentos"
         },
@@ -245,6 +245,37 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "nome_medicamento_novo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "classe_terapeutica",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "apresentacao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dados_paciente",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "avaliador",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
         }
       ],
       "indexes": [
@@ -252,6 +283,100 @@
         "CREATE INDEX idx_solic_medicamento ON solicitacoes (medicamento)",
         "CREATE INDEX idx_solic_solicitante ON solicitacoes (solicitante)",
         "CREATE INDEX idx_solic_created ON solicitacoes (created DESC)"
+      ]
+    },
+    {
+      "name": "audit_logs",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "colecao",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "registro_id",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "acao",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "usuario",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "usuario_nome",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "usuario_email",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "usuario_role",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_anterior",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_novo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "detalhes",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_audit_registro ON audit_logs (registro_id)",
+        "CREATE INDEX idx_audit_usuario ON audit_logs (usuario)",
+        "CREATE INDEX idx_audit_acao ON audit_logs (acao)",
+        "CREATE INDEX idx_audit_created ON audit_logs (created DESC)"
       ]
     }
   ]

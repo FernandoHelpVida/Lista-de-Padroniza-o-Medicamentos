@@ -280,8 +280,9 @@ export default function Index() {
 
         {/* Não Padronizados */}
         <div
-          onClick={() => navigate('/medicamentos?status=Não+Padronizado')}
+          onClick={() => navigate('/solicitacoes')}
           className="bg-white p-3.5 sm:p-5 rounded-2xl border border-amber-200/80 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition cursor-pointer group active:scale-[0.98]"
+          title="Ver solicitações de medicamentos não padronizados"
         >
           <div className="flex items-center justify-between">
             <span className="text-[10px] sm:text-xs font-bold text-[#B45309] tracking-wider uppercase truncate">
@@ -296,10 +297,10 @@ export default function Index() {
               {loading ? '...' : stats.naoPadronizados}
             </span>
             <span className="text-[11px] sm:text-xs text-amber-600/80 font-medium hidden sm:flex items-center gap-1 group-hover:underline">
-              Filtrar <ArrowRight className="h-3 w-3" />
+              Solicitações <ArrowRight className="h-3 w-3" />
             </span>
           </div>
-          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Exigem justificativa</p>
+          <p className="text-[10.5px] text-slate-400 mt-1 truncate">Aprovação da Farmácia</p>
         </div>
 
         {/* Inativos */}
