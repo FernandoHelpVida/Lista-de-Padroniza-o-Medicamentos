@@ -113,6 +113,453 @@ routerAdd(
 )
 
 // ----------------------------------------------------------------------------
+// ROTA 7: GET /backend/v1/spincare/prescriptions (Admin + Corpo Clínico, >= 2026)
+// Endpoint SpinCare: GET /integration-engine/get/prescriptions
+// ----------------------------------------------------------------------------
+routerAdd(
+  'GET',
+  '/backend/v1/spincare/prescriptions',
+  (e) => {
+    try {
+      const authUser = e.auth
+      if (!authUser) {
+        return e.unauthorizedError('Acesso não autorizado. Faça login para continuar.')
+      }
+
+      const role = authUser.getString('role') || 'comum'
+      if (role === 'medico_visitador') {
+        return e.forbiddenError(
+          'Acesso restrito: Médicos Visitadores não possuem autorização para consultar prescrições médicas.',
+        )
+      }
+
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) {
+        return e.json(503, {
+          configured: false,
+          message:
+            'A integração com o SpinCare ainda não foi configurada pelo administrador da Help Vida.',
+        })
+      }
+
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      const login = (cfgRec.getString('api_login') || '').trim()
+      const password = (cfgRec.getString('api_password') || '').trim()
+      let apiToken = (cfgRec.getString('api_token') || '').trim()
+      const endpointPrescriptions = '/integration-engine/get/prescriptions'
+
+      if (!apiToken && login && password) {
+        try {
+          const tokenUrl =
+            baseUrl +
+            '/token/v1?login=' +
+            encodeURIComponent(login) +
+            '&password=' +
+            encodeURIComponent(password)
+          const resToken = $http.send({
+            url: tokenUrl,
+            method: 'GET',
+            headers: { Accept: '*/*' },
+            timeout: 15,
+          })
+          if (resToken.statusCode === 200) {
+            let t = ''
+            if (typeof resToken.json === 'string') t = resToken.json
+            else if (resToken.json && typeof resToken.json === 'object') {
+              t = resToken.json.token || resToken.json.access_token || ''
+            }
+            if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+            if (t) {
+              apiToken = t
+              cfgRec.set('api_token', t)
+              e.app.save(cfgRec)
+            }
+          }
+        } catch (_) {}
+      }
+
+      const info = e.requestInfo()
+      const queryParams = info.query || {}
+
+      const startDate = (queryParams.start_date || '2026-01-01').trim()
+      const endDate = (queryParams.end_date || '').trim()
+      const search = (queryParams.search || '').trim()
+      const patientId = (queryParams.patient_id || '').trim()
+      const statusId = queryParams.status_id ? parseInt(queryParams.status_id, 10) : null
+      const fetchAllPages = queryParams.fetchAll !== 'false'
+      const requestedLimit = Math.min(Math.max(parseInt(queryParams.limit, 10) || 100, 1), 200)
+      const requestedPage = Math.max(parseInt(queryParams.page, 10) || 1, 1)
+
+      const normalizedPath = endpointPrescriptions
+
+      // Formatar initial_dt com horário se apenas yyyy-MM-dd for fornecido
+      let initialDtParam = startDate
+      if (initialDtParam && initialDtParam.length === 10) {
+        initialDtParam = initialDtParam + ' 00:00:00'
+      }
+
+      let finalDtParam = endDate
+      if (finalDtParam && finalDtParam.length === 10) {
+        finalDtParam = finalDtParam + ' 23:59:59'
+      }
+
+      const fetchPrescriptionsPage = (pageNumber, pageSize) => {
+        let fullUrl =
+          baseUrl +
+          normalizedPath +
+          '?page_number=' +
+          pageNumber +
+          '&page_size=' +
+          pageSize +
+          '&initial_dt=' +
+          encodeURIComponent(initialDtParam) +
+          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+        if (finalDtParam) {
+          fullUrl += '&final_dt=' + encodeURIComponent(finalDtParam)
+        }
+        if (patientId) {
+          fullUrl += '&patient_id=' + encodeURIComponent(patientId)
+        }
+        if (statusId) {
+          fullUrl += '&status_id=' + encodeURIComponent(statusId)
+        }
+
+        const reqHeaders = {
+          Accept: 'application/json',
+          'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+        }
+        if (apiToken) {
+          reqHeaders['Authorization'] = 'Bearer ' + apiToken
+        }
+
+        let resp
+        try {
+          resp = $http.send({
+            url: fullUrl,
+            method: 'GET',
+            headers: reqHeaders,
+            timeout: 25,
+          })
+        } catch (callErr) {
+          console.error('Erro ao chamar SpinCare (prescriptions page ' + pageNumber + '):', callErr)
+          return { error: 'call_failed', statusCode: 0, items: [] }
+        }
+
+        // Renovação se 401
+        if (resp.statusCode === 401 && login && password) {
+          try {
+            const tokenUrl =
+              baseUrl +
+              '/token/v1?login=' +
+              encodeURIComponent(login) +
+              '&password=' +
+              encodeURIComponent(password)
+            const resToken = $http.send({
+              url: tokenUrl,
+              method: 'GET',
+              headers: { Accept: '*/*' },
+              timeout: 15,
+            })
+            if (resToken.statusCode === 200) {
+              let t = ''
+              if (typeof resToken.json === 'string') t = resToken.json
+              else if (resToken.json && typeof resToken.json === 'object') {
+                t = resToken.json.token || resToken.json.access_token || ''
+              }
+              if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+              if (t) {
+                apiToken = t
+                cfgRec.set('api_token', t)
+                e.app.save(cfgRec)
+
+                let retryUrl =
+                  baseUrl +
+                  normalizedPath +
+                  '?page_number=' +
+                  pageNumber +
+                  '&page_size=' +
+                  pageSize +
+                  '&initial_dt=' +
+                  encodeURIComponent(initialDtParam) +
+                  '&token=' +
+                  encodeURIComponent(apiToken)
+                if (finalDtParam) retryUrl += '&final_dt=' + encodeURIComponent(finalDtParam)
+                if (patientId) retryUrl += '&patient_id=' + encodeURIComponent(patientId)
+                if (statusId) retryUrl += '&status_id=' + encodeURIComponent(statusId)
+
+                resp = $http.send({
+                  url: retryUrl,
+                  method: 'GET',
+                  headers: {
+                    Accept: 'application/json',
+                    Authorization: 'Bearer ' + apiToken,
+                    'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+                  },
+                  timeout: 25,
+                })
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (resp.statusCode < 200 || resp.statusCode >= 300) {
+          console.error(
+            'SpinCare retornou status ' + resp.statusCode + ' em prescriptions page ' + pageNumber,
+          )
+          return { error: 'bad_status', statusCode: resp.statusCode, items: [] }
+        }
+
+        let rawData = []
+        try {
+          rawData = resp.json || JSON.parse(resp.raw || '[]')
+        } catch (_) {
+          rawData = []
+        }
+
+        let list = []
+        if (Array.isArray(rawData)) list = rawData
+        else if (rawData && Array.isArray(rawData.items)) list = rawData.items
+        else if (rawData && typeof rawData === 'object') list = [rawData]
+
+        return { statusCode: resp.statusCode, items: list }
+      }
+
+      let rawList = []
+      if (fetchAllPages) {
+        const pageSize = 100
+        const maxPages = 15
+        for (let p = 1; p <= maxPages; p++) {
+          const pageRes = fetchPrescriptionsPage(p, pageSize)
+          if (pageRes.error) {
+            if (p === 1) {
+              return e.json(502, {
+                message:
+                  'Não foi possível consultar as prescrições no SpinCare agora. Verifique a conexão com a API externa.',
+              })
+            }
+            break
+          }
+          if (!pageRes.items || pageRes.items.length === 0) {
+            break
+          }
+          rawList = rawList.concat(pageRes.items)
+          if (pageRes.items.length < pageSize) {
+            break
+          }
+        }
+      } else {
+        const singlePage = fetchPrescriptionsPage(requestedPage, requestedLimit)
+        if (singlePage.error) {
+          return e.json(502, {
+            message:
+              'Não foi possível consultar as prescrições no SpinCare agora. O sistema externo respondeu com status ' +
+              singlePage.statusCode +
+              '.',
+          })
+        }
+        rawList = singlePage.items
+      }
+
+      // Normalização e extração detalhada dos itens de prescrição médica
+      let normalizedList = rawList
+        .map((raw) => {
+          if (!raw || typeof raw !== 'object') return null
+          const id = String(raw.id || raw.prescription_id || '')
+          const numero = String(
+            raw.prescription_number || raw.numero || raw.attendance_id || id || '—',
+          ).trim()
+          const pid = String(raw.patient_id || '')
+          const pnome = String(raw.patient_name || raw.nm_paciente || 'Paciente Help Vida').trim()
+          const medico = String(
+            raw.professional_name || raw.nm_profissional || raw.prescritor || 'Médico Prescritor',
+          ).trim()
+          const mid = String(raw.professional_id || '')
+
+          let status = 'Liberada'
+          if (raw.status) status = String(raw.status)
+          else if (raw.status_id === 1) status = 'Pendente Liberação'
+          else if (raw.status_id === 2) status = 'Liberada'
+          else if (raw.status_id === 3) status = 'Suspensa'
+
+          // Formatação amigável de datas
+          const formatDtBr = (val) => {
+            if (!val || val === '—') return '—'
+            const s = String(val).trim()
+            const parts = s.split(' ')[0].split('-')
+            if (parts.length === 3 && parts[0].length === 4) {
+              return parts[2] + '/' + parts[1] + '/' + parts[0]
+            }
+            return s
+          }
+
+          const rawDataPresc = String(raw.creation_dt || raw.initial_dt || '—').trim()
+          const dataPrescricao = formatDtBr(rawDataPresc)
+          const dataInicial = formatDtBr(raw.initial_dt)
+          const dataFinal = formatDtBr(raw.final_dt)
+
+          // Processamento e parse de itens / medicamentos prescritos
+          let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
+          if (typeof rawItems === 'string') {
+            try {
+              rawItems = JSON.parse(rawItems)
+            } catch (_) {
+              rawItems = []
+            }
+          }
+
+          let itens = []
+          if (Array.isArray(rawItems)) {
+            itens = rawItems.map((it) => {
+              if (typeof it === 'string') {
+                return {
+                  descricao: it,
+                  posologia: '',
+                  frequencia: '',
+                  viaAdministracao: '',
+                  unidade: '',
+                  quantidade: 1,
+                  observacao: '',
+                }
+              }
+              const desc = String(
+                it.description ||
+                  it.ds_produto ||
+                  it.ds_item ||
+                  it.descricao ||
+                  it.name ||
+                  it.product_name ||
+                  it.item ||
+                  'Medicamento Prescrito',
+              ).trim()
+
+              const poso = String(
+                it.posology ||
+                  it.posologia ||
+                  it.dosage ||
+                  it.dose ||
+                  it.ds_posologia ||
+                  it.frequency ||
+                  it.frequencia ||
+                  '',
+              ).trim()
+
+              const via = String(
+                it.route || it.via || it.via_administracao || it.administration_route || '',
+              ).trim()
+
+              const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
+              const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+              const obs = String(it.observation || it.observacao || it.orientacoes || '').trim()
+
+              return {
+                id: String(it.id || it.item_id || ''),
+                codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+                descricao: desc,
+                posologia: poso,
+                frequencia: String(it.frequency || it.frequencia || '').trim(),
+                viaAdministracao: via,
+                unidade: unit,
+                quantidade: qtd,
+                observacao: obs,
+              }
+            })
+          }
+
+          return {
+            id: id || Math.random().toString(36).substring(2, 9),
+            numero: numero,
+            pacienteId: pid,
+            pacienteNome: pnome,
+            medicoPrescritor: medico,
+            medicoId: mid,
+            dataPrescricao: dataPrescricao,
+            dataInicial: dataInicial,
+            dataFinal: dataFinal,
+            status: status,
+            tipo: String(raw.type || raw.tipo || 'Médica'),
+            itens: itens,
+          }
+        })
+        .filter(Boolean)
+
+      // Deduplicação por id
+      const seenPrescIds = {}
+      normalizedList = normalizedList.filter((p) => {
+        if (!p.id) return true
+        if (seenPrescIds[p.id]) return false
+        seenPrescIds[p.id] = true
+        return true
+      })
+
+      // Filtro de busca local tolerante por paciente ou nº
+      if (search) {
+        let sNorm = search.trim()
+        if (sNorm.normalize) sNorm = sNorm.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        sNorm = sNorm.toUpperCase()
+
+        normalizedList = normalizedList.filter((p) => {
+          let pNome = p.pacienteNome || ''
+          if (pNome.normalize) pNome = pNome.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          pNome = pNome.toUpperCase()
+
+          let med = p.medicoPrescritor || ''
+          if (med.normalize) med = med.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          med = med.toUpperCase()
+
+          return (
+            pNome.includes(sNorm) || p.numero.toUpperCase().includes(sNorm) || med.includes(sNorm)
+          )
+        })
+      }
+
+      // Trilha de auditoria LGPD (sem dados sensíveis no log)
+      try {
+        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+        const auditRecord = new Record(auditCol)
+        auditRecord.set('colecao', 'spincare_middleware')
+        auditRecord.set('registro_id', 'prescriptions_list')
+        auditRecord.set('acao', 'SPINCARE_CONSULTA_PRESCRICOES')
+        auditRecord.set('usuario', authUser.id)
+        auditRecord.set('usuario_nome', authUser.getString('name') || '')
+        auditRecord.set('usuario_email', authUser.getString('email') || '')
+        auditRecord.set('usuario_role', authUser.getString('role') || 'comum')
+        auditRecord.set('status_anterior', '')
+        auditRecord.set('status_novo', 'sucesso')
+        auditRecord.set(
+          'detalhes',
+          'Consulta de prescrições médicas no SpinCare (retornadas: ' +
+            normalizedList.length +
+            ' prescrições)',
+        )
+        e.app.save(auditRecord)
+      } catch (_) {}
+
+      return e.json(200, {
+        total: normalizedList.length,
+        startDate: startDate,
+        endDate: endDate,
+        page: requestedPage,
+        limit: requestedLimit,
+        items: normalizedList,
+      })
+    } catch (err) {
+      console.error('Erro na rota GET /spincare/prescriptions:', err)
+      return e.json(500, {
+        message:
+          'Não foi possível consultar as prescrições no SpinCare agora. Tente novamente em instantes.',
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// ----------------------------------------------------------------------------
 // ROTA 2: POST /backend/v1/spincare/config (Apenas Admin)
 // ----------------------------------------------------------------------------
 routerAdd(
@@ -801,6 +1248,16 @@ routerAdd(
         return true
       })
 
+      // Função auxiliar de normalização tolerante para strings (NFD, sem diacríticos, trim, uppercase)
+      const normCompareServer = (str) => {
+        if (!str) return ''
+        let s = String(str).trim()
+        if (s.normalize) {
+          s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        }
+        return s.toUpperCase()
+      }
+
       // Extração de TODOS os convênios distintos presentes no censo ativo completo
       // antes de aplicar filtros de texto/convênio (para alimentar dropdown com perfeição)
       const allDistinctConvenios = Array.from(
@@ -821,8 +1278,8 @@ routerAdd(
 
       // Filtro local complementar tolerante (nome)
       if (query) {
-        const qUpper = query.toUpperCase()
-        normalizedList = normalizedList.filter((p) => p.nome.toUpperCase().includes(qUpper))
+        const qNorm = normCompareServer(query)
+        normalizedList = normalizedList.filter((p) => normCompareServer(p.nome).includes(qNorm))
       }
 
       // Filtro local complementar tolerante (documento)
@@ -834,12 +1291,12 @@ routerAdd(
         })
       }
 
-      // Filtro de convênio opcional no servidor (tolerante a maiúsculas/minúsculas e trim)
+      // Filtro de convênio no servidor (tolerante a maiúsculas/minúsculas, trim, acentos e correspondência mútua)
       if (convenioFilter && convenioFilter !== 'todos') {
-        const convUpper = convenioFilter.trim().toUpperCase()
+        const convTarget = normCompareServer(convenioFilter)
         normalizedList = normalizedList.filter((p) => {
-          const c = (p.convenio || '').trim().toUpperCase()
-          return c === convUpper || c.includes(convUpper)
+          const c = normCompareServer(p.convenio)
+          return c === convTarget || c.includes(convTarget) || convTarget.includes(c)
         })
       }
 

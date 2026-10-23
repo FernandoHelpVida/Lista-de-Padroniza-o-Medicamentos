@@ -20,6 +20,7 @@ import {
   UserCheck,
   UserSquare2,
   DollarSign,
+  FileSpreadsheet,
   AlertCircle,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -214,6 +215,7 @@ export default function Layout() {
     if (path.startsWith('/solicitacoes')) return 'Solicitações de Padronização'
     if (path.startsWith('/pacientes')) return 'Pacientes (SpinCare)'
     if (path.startsWith('/orcamentos')) return 'Orçamentos Aprovados (SpinCare)'
+    if (path.startsWith('/prescricoes')) return 'Prescrições Médicas (SpinCare)'
     if (path.startsWith('/importar')) return 'Importar Lista Padronizada (PDF)'
     if (path.startsWith('/equipe')) return 'Gestão de Contas da Equipe'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
@@ -237,6 +239,7 @@ export default function Layout() {
     ...(canAccessSpincare
       ? [
           { title: 'Pacientes', path: '/pacientes', icon: UserSquare2 },
+          { title: 'Prescrições', path: '/prescricoes', icon: FileSpreadsheet },
           { title: 'Orçamentos', path: '/orcamentos', icon: DollarSign },
         ]
       : []),
@@ -551,6 +554,18 @@ export default function Layout() {
                       </div>
                       <span className="bg-emerald-50 text-[#0C4336] text-[9px] font-bold px-1.5 py-0.2 rounded border border-emerald-200">
                         Ao Vivo
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => navigate('/prescricoes')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50 flex items-center justify-between"
+                    >
+                      <div className="flex items-center">
+                        <FileSpreadsheet size={14} className="mr-2 text-[#0D8272]" />
+                        <span>Prescrições (2026)</span>
+                      </div>
+                      <span className="bg-[#EBF3FF] text-[#1E40AF] text-[9px] font-bold px-1.5 py-0.2 rounded border border-[#93C5FD]/40">
+                        2026
                       </span>
                     </DropdownMenuItem>
                     <DropdownMenuItem

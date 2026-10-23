@@ -15,6 +15,7 @@ export interface SpincareConfig {
   token_prefix: string
   endpoint_patients: string
   endpoint_budgets: string
+  endpoint_prescriptions?: string
   has_login?: boolean
   login_masked?: string
   has_password?: boolean
@@ -35,6 +36,7 @@ export interface SaveSpincareConfigInput {
   api_token?: string
   endpoint_patients: string
   endpoint_budgets: string
+  endpoint_prescriptions?: string
   is_active?: boolean
 }
 
@@ -105,6 +107,42 @@ export interface SpincareBudgetsResult {
   page: number
   limit: number
   items: SpincareBudget[]
+}
+
+export interface SpincarePrescriptionItem {
+  id?: string
+  codigo?: string
+  descricao: string
+  posologia?: string
+  frequencia?: string
+  viaAdministracao?: string
+  unidade?: string
+  quantidade?: number
+  observacao?: string
+}
+
+export interface SpincarePrescription {
+  id: string
+  numero: string
+  pacienteId: string
+  pacienteNome: string
+  medicoPrescritor: string
+  medicoId?: string
+  dataPrescricao: string
+  dataInicial: string
+  dataFinal: string
+  status: string
+  tipo?: string
+  itens: SpincarePrescriptionItem[]
+}
+
+export interface SpincarePrescriptionsResult {
+  total: number
+  startDate: string
+  endDate: string
+  page: number
+  limit: number
+  items: SpincarePrescription[]
 }
 
 /**
@@ -198,4 +236,37 @@ export async function getSpincareBudgets(params?: {
   return await pb.send<SpincareBudgetsResult>(`/backend/v1/spincare/budgets${queryString}`, {
     method: 'GET',
   })
+}
+
+/**
+ * Busca prescrições médicas no SpinCare (padrão >= 2026-01-01).
+ * Suporta paginação completa server-side, busca por paciente e filtro de datas.
+ */
+export async function getSpincarePrescriptions(params?: {
+  startDate?: string
+  endDate?: string
+  search?: string
+  patientId?: string
+  statusId?: number
+  fetchAll?: boolean
+  limit?: number
+  page?: number
+}): Promise<SpincarePrescriptionsResult> {
+  const query = new URLSearchParams()
+  if (params?.startDate) query.set('start_date', params.startDate)
+  if (params?.endDate) query.set('end_date', params.endDate)
+  if (params?.search) query.set('search', params.search)
+  if (params?.patientId) query.set('patient_id', params.patientId)
+  if (params?.statusId !== undefined) query.set('status_id', String(params.statusId))
+  if (params?.fetchAll !== undefined) query.set('fetchAll', String(params.fetchAll))
+  if (params?.limit) query.set('limit', String(params.limit))
+  if (params?.page) query.set('page', String(params.page))
+
+  const queryString = query.toString() ? `?${query.toString()}` : ''
+  return await pb.send<SpincarePrescriptionsResult>(
+    `/backend/v1/spincare/prescriptions${queryString}`,
+    {
+      method: 'GET',
+    },
+  )
 }

@@ -25,6 +25,7 @@ import Equipe from '@/pages/Equipe'
 import Configuracoes from '@/pages/Configuracoes'
 import Pacientes from '@/pages/Pacientes'
 import Orcamentos from '@/pages/Orcamentos'
+import Prescricoes from '@/pages/Prescricoes'
 import NotFound from '@/pages/NotFound'
 
 const App = () => (
@@ -57,6 +58,7 @@ const App = () => (
             <Route path="/solicitacoes" element={<Solicitacoes />} />
             <Route path="/pacientes" element={<Pacientes />} />
             <Route path="/orcamentos" element={<Orcamentos />} />
+            <Route path="/prescricoes" element={<Prescricoes />} />
             <Route path="/importar" element={<Importar />} />
             <Route path="/equipe" element={<Equipe />} />
             <Route path="/assistente" element={<Assistente />} />

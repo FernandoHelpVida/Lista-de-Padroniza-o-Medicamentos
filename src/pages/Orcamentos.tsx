@@ -50,9 +50,11 @@ export default function Orcamentos() {
   const [startDate, setStartDate] = useState('2026-01-01')
   const [endDate, setEndDate] = useState('')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('Aprovado')
 
   const [loading, setLoading] = useState(false)
+  const [allLoadedBudgets, setAllLoadedBudgets] = useState<SpincareBudget[]>([])
   const [budgets, setBudgets] = useState<SpincareBudget[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [unconfigured, setUnconfigured] = useState(false)
@@ -64,21 +66,31 @@ export default function Orcamentos() {
   const [selectedBudget, setSelectedBudget] = useState<SpincareBudget | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
 
+  // Debounce para digitação na busca (evita travamento e re-fetch a cada tecla)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [search])
+
   const handleFetchBudgets = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     setLoading(true)
     setUnconfigured(false)
     setDisplayLimit(50)
     try {
+      // Busca todo o censo de orçamentos do período (sem passar search na API para armazenar o mapa completo)
       const res = await getSpincareBudgets({
         startDate: startDate.trim(),
         endDate: endDate.trim(),
-        search: search.trim(),
         status: statusFilter,
         fetchAll: true,
       })
-      setBudgets(res.items || [])
-      setTotalCount(res.total || (res.items ? res.items.length : 0))
+      const items = res.items || []
+      setAllLoadedBudgets(items)
+      setBudgets(items)
+      setTotalCount(res.total || items.length)
     } catch (err: unknown) {
       console.error('Erro ao consultar orçamentos no SpinCare:', err)
       const msg = getErrorMessage(err, 'Não foi possível consultar os orçamentos no SpinCare.')
@@ -102,6 +114,32 @@ export default function Orcamentos() {
       handleFetchBudgets()
     }
   }, [isMedicoVisitador])
+
+  // Busca instantânea indexada sobre os orçamentos já carregados
+  useEffect(() => {
+    if (!allLoadedBudgets.length) return
+    if (!debouncedSearch.trim()) {
+      setBudgets(allLoadedBudgets)
+      return
+    }
+
+    const norm = (s: string) =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toUpperCase()
+
+    const q = norm(debouncedSearch)
+    const filtered = allLoadedBudgets.filter((b) => {
+      const pNome = norm(b.pacienteNome)
+      const num = norm(b.numero)
+      const obs = norm(b.observacao)
+      return pNome.includes(q) || num.includes(q) || obs.includes(q)
+    })
+    setBudgets(filtered)
+    setDisplayLimit(50)
+  }, [debouncedSearch, allLoadedBudgets])
 
   // Totalizador de valores
   const valorTotalAprovado = budgets.reduce((acc, b) => acc + (b.valor || 0), 0)

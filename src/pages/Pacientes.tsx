@@ -33,6 +33,9 @@ import {
   Building2,
   FileText,
   DollarSign,
+  FileSpreadsheet,
+  CheckCircle2,
+  HelpCircle,
   ShieldCheck,
   AlertCircle,
   Loader2,
@@ -40,14 +43,17 @@ import {
   Filter,
   Sparkles,
   Settings,
+  Pill,
   Layers,
   X,
 } from 'lucide-react'
 import {
   searchSpincarePatients,
   getSpincarePatientById,
+  getSpincarePrescriptions,
   type SpincarePatient,
   type SpincareBudget,
+  type SpincarePrescription,
 } from '@/services/spincare'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { SpincareTabsNav } from '@/components/SpincareTabsNav'
@@ -80,6 +86,11 @@ export default function Pacientes() {
   const [patientBudgets, setPatientBudgets] = useState<SpincareBudget[]>([])
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
+
+  // Verificação de prescrições no modal do paciente
+  const [patientPrescriptions, setPatientPrescriptions] = useState<SpincarePrescription[]>([])
+  const [loadingPrescriptions, setLoadingPrescriptions] = useState(false)
+  const [medCheckQuery, setMedCheckQuery] = useState('')
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -125,18 +136,32 @@ export default function Pacientes() {
     setPatientDetail(p)
     setDetailModalOpen(true)
     setLoadingDetail(true)
+    setLoadingPrescriptions(true)
+    setPatientPrescriptions([])
+    setMedCheckQuery('')
     try {
-      const res = await getSpincarePatientById(p.id)
-      if (res.patient) setPatientDetail(res.patient)
-      setPatientBudgets(res.budgets || [])
+      const [res, prescRes] = await Promise.allSettled([
+        getSpincarePatientById(p.id),
+        getSpincarePrescriptions({ patientId: p.id, startDate: '2026-01-01', fetchAll: true }),
+      ])
+
+      if (res.status === 'fulfilled') {
+        if (res.value.patient) setPatientDetail(res.value.patient)
+        setPatientBudgets(res.value.budgets || [])
+      } else {
+        console.warn('Erro ao carregar ficha completa do paciente:', res.reason)
+      }
+
+      if (prescRes.status === 'fulfilled') {
+        setPatientPrescriptions(prescRes.value.items || [])
+      } else {
+        console.warn('Erro ao carregar prescrições do paciente:', prescRes.reason)
+      }
     } catch (err: unknown) {
-      console.warn('Erro ao carregar ficha completa do paciente:', err)
-      toast({
-        title: 'Aviso',
-        description: 'Não foi possível carregar os orçamentos vinculados ao paciente.',
-      })
+      console.warn('Erro ao carregar dados do paciente:', err)
     } finally {
       setLoadingDetail(false)
+      setLoadingPrescriptions(false)
     }
   }
 
@@ -197,7 +222,7 @@ export default function Pacientes() {
     return patients.filter((p) => {
       if (targetConv) {
         const pConv = normalizeCompare(p.convenio)
-        // Comparação exata ou por inclusão mútua caso haja sufixos
+        // Comparação exata (dropdown alimenta com a string exata) ou inclusão segura caso seja substring
         if (pConv !== targetConv && !pConv.includes(targetConv) && !targetConv.includes(pConv)) {
           return false
         }
@@ -413,7 +438,7 @@ export default function Pacientes() {
                       const count = patients.filter((p) => {
                         const c = normalizeCompare(p.convenio)
                         const t = normalizeCompare(conv)
-                        return c === t || c.includes(t) || t.includes(c)
+                        return c === t
                       }).length
                       return (
                         <SelectItem key={conv} value={conv} className="text-xs">
@@ -773,6 +798,168 @@ export default function Pacientes() {
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* VERIFICAR SE MEDICAMENTO CONSTA NA PRESCRIÇÃO MÉDICA DE 2026 (Item 2 do pedido) */}
+            <div className="p-3.5 rounded-xl bg-blue-50/80 border border-blue-200/70 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-blue-950 uppercase tracking-wider flex items-center gap-1.5">
+                  <Pill size={15} className="text-blue-700" />
+                  Verificar Medicamento na Prescrição (2026)
+                </span>
+                <Badge className="bg-blue-100 text-blue-800 border-blue-300 text-[10px] font-semibold">
+                  {loadingPrescriptions
+                    ? 'Buscando...'
+                    : `${patientPrescriptions.length} prescriç${patientPrescriptions.length === 1 ? 'ão' : 'ões'}`}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-blue-800/80">
+                Digite ou selecione o nome de um medicamento para checar se ele já consta nas
+                prescrições médicas deste paciente em 2026.
+              </p>
+
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-blue-500 pointer-events-none" />
+                <Input
+                  type="text"
+                  placeholder="Nome do medicamento (ex: Dipirona, Enoxaparina, Omeprazol)..."
+                  value={medCheckQuery}
+                  onChange={(e) => setMedCheckQuery(e.target.value)}
+                  className="h-9 pl-8 text-xs bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600"
+                />
+              </div>
+
+              {medCheckQuery.trim() && (
+                <div className="space-y-2 pt-1">
+                  {(() => {
+                    const normQ = normalizeCompare(medCheckQuery)
+                    const matches: {
+                      prescId: string
+                      numero: string
+                      data: string
+                      medico: string
+                      status: string
+                      item: import('@/services/spincare').SpincarePrescriptionItem
+                    }[] = []
+
+                    patientPrescriptions.forEach((pr) => {
+                      pr.itens.forEach((it) => {
+                        const itNorm = normalizeCompare(it.descricao)
+                        if (itNorm === normQ || itNorm.includes(normQ) || normQ.includes(itNorm)) {
+                          matches.push({
+                            prescId: pr.id,
+                            numero: pr.numero,
+                            data: pr.dataPrescricao,
+                            medico: pr.medicoPrescritor,
+                            status: pr.status,
+                            item: it,
+                          })
+                        }
+                      })
+                    })
+
+                    if (matches.length > 0) {
+                      return (
+                        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 space-y-2 text-xs">
+                          <div className="flex items-center gap-1.5 text-emerald-900 font-bold">
+                            <CheckCircle2 size={16} className="text-emerald-700 shrink-0" />
+                            <span>
+                              Medicamento ENCONTRADO na prescrição do paciente ({matches.length}{' '}
+                              ocorrência{matches.length === 1 ? '' : 's'})
+                            </span>
+                          </div>
+                          <div className="space-y-2 pt-1">
+                            {matches.map((m, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2.5 rounded-lg bg-white border border-emerald-200 shadow-2xs space-y-1"
+                              >
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="font-bold text-slate-800">
+                                    {m.item.descricao}
+                                  </span>
+                                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[9px] font-bold">
+                                    {m.status}
+                                  </Badge>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] text-slate-600">
+                                  <span>
+                                    Prescrição: <strong>#{m.numero}</strong> em{' '}
+                                    <strong>{m.data}</strong>
+                                  </span>
+                                  <span>
+                                    Médico: <strong className="text-[#0C4336]">{m.medico}</strong>
+                                  </span>
+                                  {m.item.posologia && (
+                                    <span className="sm:col-span-2 text-slate-500">
+                                      Posologia: <em>{m.item.posologia}</em>
+                                    </span>
+                                  )}
+                                  {m.item.viaAdministracao && (
+                                    <span className="text-slate-500">
+                                      Via: {m.item.viaAdministracao}
+                                    </span>
+                                  )}
+                                  {m.item.quantidade && (
+                                    <span className="text-slate-500">
+                                      Qtd: {m.item.quantidade} {m.item.unidade || ''}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                        <AlertCircle size={16} className="text-amber-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold">
+                            Medicamento NÃO encontrado nas prescrições médicas de 2026.
+                          </p>
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            O termo &quot;{medCheckQuery}&quot; não consta em nenhuma das{' '}
+                            {patientPrescriptions.length} prescrições cadastradas neste ano para
+                            este paciente.
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+
+              {patientPrescriptions.length > 0 && !medCheckQuery.trim() && (
+                <div className="pt-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                    Itens prescritos recentemente (clique para checar):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                    {Array.from(
+                      new Set(
+                        patientPrescriptions
+                          .flatMap((p) => p.itens.map((i) => i.descricao))
+                          .filter(Boolean),
+                      ),
+                    )
+                      .slice(0, 10)
+                      .map((desc, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setMedCheckQuery(desc)}
+                          className="px-2 py-1 rounded-lg bg-white border border-blue-200 text-[10px] text-blue-900 font-medium hover:bg-blue-100 transition truncate max-w-[200px]"
+                          title={desc}
+                        >
+                          {desc}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Orçamentos Vinculados */}
