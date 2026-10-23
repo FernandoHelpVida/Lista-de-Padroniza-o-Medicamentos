@@ -405,11 +405,46 @@ routerAdd(
       // Fase 1: se temos patient_id, busca específica deste paciente
       if (resolvedPatientId) {
         console.log('Fase 1: buscando prescrições para patient_id:', resolvedPatientId)
+        // Tentativa A: com initial_dt estrito
         for (let p = 1; p <= 10; p++) {
           const resP = fetchPrescriptionsPage(p, 100, true)
+          console.log(
+            'Fase 1 page ' +
+              p +
+              ' status: ' +
+              resP.statusCode +
+              ' count: ' +
+              (resP.items ? resP.items.length : 0),
+          )
+          if (resP.items && resP.items.length > 0) {
+            console.log('Fase 1 sample item: ' + JSON.stringify(resP.items[0]).slice(0, 300))
+          }
           if (resP.error || !resP.items || resP.items.length === 0) break
           allRawPrescriptions = allRawPrescriptions.concat(resP.items)
           if (resP.items.length < 100) break
+        }
+        // Tentativa B: sem filtro de data estrito se nada veio na tentativa A
+        if (allRawPrescriptions.length === 0) {
+          console.log(
+            'Fase 1B: buscando prescrições para patient_id sem filtro de data ou com 2026-01-01',
+          )
+          for (let p = 1; p <= 10; p++) {
+            const resP = fetchPrescriptionsPage(p, 100, true, '2026-01-01 00:00:00', '')
+            console.log(
+              'Fase 1B page ' +
+                p +
+                ' status: ' +
+                resP.statusCode +
+                ' count: ' +
+                (resP.items ? resP.items.length : 0),
+            )
+            if (resP.items && resP.items.length > 0) {
+              console.log('Fase 1B sample item: ' + JSON.stringify(resP.items[0]).slice(0, 300))
+            }
+            if (resP.error || !resP.items || resP.items.length === 0) break
+            allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+            if (resP.items.length < 100) break
+          }
         }
       }
 
