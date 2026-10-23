@@ -16,78 +16,11 @@
 // ROTA 1: GET /backend/v1/spincare/config
 // ----------------------------------------------------------------------------
 
-// Rota pública de diagnóstico interno (remover antes de commit final)
+// Endpoint direto para validação e testes
 routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
   try {
-    const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
-    const cfgRec = records[0]
-    const baseUrl = (
-      cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
-    )
-      .trim()
-      .replace(/\/+$/, '')
-    let token = (cfgRec.getString('api_token') || '').trim()
-    if (token.startsWith('Bearer ')) token = token.substring(7).trim()
-
-    const diagData = {}
-
-    // 1. Testa busca de paciente por name=ademir
-    try {
-      const resPatName = $http.send({
-        url:
-          baseUrl +
-          '/integration-engine/get/patients?name=ademir&page_number=1&page_size=5&token=' +
-          encodeURIComponent(token),
-        method: 'GET',
-        headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
-        timeout: 15,
-      })
-      const pj = resPatName.json || JSON.parse(resPatName.raw || '[]')
-      diagData.byName = {
-        status: resPatName.statusCode,
-        count: pj.length,
-        sample: pj.slice(0, 3).map((p) => ({ id: p.id, name: p.name })),
-      }
-    } catch (ep1) {
-      diagData.byNameErr = String(ep1)
-    }
-
-    // 2. Testa busca de prescrições no período 01/09/2026 a 30/09/2026
-    try {
-      const resPresc = $http.send({
-        url:
-          baseUrl +
-          '/integration-engine/get/prescriptions?initial_dt=2026-09-01%2000%3A00%3A00&final_dt=2026-09-30%2023%3A59%3A59&page_number=1&page_size=100&token=' +
-          encodeURIComponent(token),
-        method: 'GET',
-        headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
-        timeout: 25,
-      })
-      const prj = resPresc.json || JSON.parse(resPresc.raw || '[]')
-      const pItems = Array.isArray(prj) ? prj : prj.items || []
-      const found75147 = pItems.filter(
-        (p) =>
-          String(p.prescription_number || p.id) === '75147' ||
-          (p.patient_name || '').toLowerCase().includes('ademir'),
-      )
-      diagData.prescSept = {
-        status: resPresc.statusCode,
-        totalInPage1: pItems.length,
-        found: found75147.map((p) => ({
-          id: p.id,
-          prescription_number: p.prescription_number,
-          patient_id: p.patient_id,
-          patient_name: p.patient_name,
-          initial_dt: p.initial_dt,
-          final_dt: p.final_dt,
-          items: p.items || p.itens,
-        })),
-      }
-    } catch (ep2) {
-      diagData.prescSeptErr = String(ep2)
-    }
-
-    return e.json(200, { success: true, diagData })
+    const cfg = e.app.findFirstRecordByFilter('spincare_config', 'id != ""')
+    return e.json(200, { msg: cfg ? cfg.getString('last_test_message') : null })
   } catch (err) {
     return e.json(500, { error: String(err) })
   }
