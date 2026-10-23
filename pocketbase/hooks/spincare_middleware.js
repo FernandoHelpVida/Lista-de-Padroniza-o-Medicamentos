@@ -1203,14 +1203,19 @@ routerAdd(
 
           const endereco = enderecoParts.length > 0 ? enderecoParts.join(', ') : '—'
 
+          // Nome do convênio na resposta da API SpinCare: health_insurance_name
           const rawConvenio =
+            raw.health_insurance_name ||
+            raw.health_insurance ||
             raw.insurance_name ||
             raw.insurance ||
             raw.convenio ||
             raw.operadora ||
             raw.insurance_plan_name ||
+            raw.plano_saude ||
+            raw.healthInsuranceName ||
             '—'
-          const convenio = String(rawConvenio).trim()
+          const convenio = String(rawConvenio || '—').trim()
 
           const modalidade = String(
             raw.modality ||
@@ -1258,15 +1263,28 @@ routerAdd(
         return s.toUpperCase()
       }
 
-      // Extração de TODOS os convênios distintos presentes no censo ativo completo
-      // antes de aplicar filtros de texto/convênio (para alimentar dropdown com perfeição)
-      const allDistinctConvenios = Array.from(
-        new Set(
-          normalizedList
-            .map((p) => (p.convenio || '').trim())
-            .filter((c) => Boolean(c) && c !== '—'),
-        ),
-      ).sort((a, b) => a.localeCompare(b))
+      // 1. Compilar dropdown de convênios a partir do censo completo de pacientes ativos
+      // com contagem por convênio e formato canônico
+      const conveniosCountsMap = {}
+      normalizedList.forEach((p) => {
+        const rawC = (p.convenio || '').trim()
+        if (rawC && rawC !== '—') {
+          const normKey = normCompareServer(rawC)
+          if (!conveniosCountsMap[normKey]) {
+            conveniosCountsMap[normKey] = {
+              name: rawC,
+              count: 0,
+            }
+          }
+          conveniosCountsMap[normKey].count++
+        }
+      })
+
+      const conveniosComContagem = Object.keys(conveniosCountsMap)
+        .map((k) => conveniosCountsMap[k])
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+
+      const allDistinctConvenios = conveniosComContagem.map((c) => c.name)
 
       const allDistinctModalidades = Array.from(
         new Set(
@@ -1274,7 +1292,18 @@ routerAdd(
             .map((p) => (p.modalidade || '').trim())
             .filter((m) => Boolean(m) && m !== '—'),
         ),
-      ).sort((a, b) => a.localeCompare(b))
+      ).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+
+      // 2. APLICAÇÃO DOS FILTROS NO SERVIDOR SOBRE O CENSO COMPLETO ANTES DE PAGINAR
+
+      // Filtro de convênio no servidor (NFD sem diacríticos, trim, uppercase, tolerante a correspondência mútua)
+      if (convenioFilter && convenioFilter !== 'todos') {
+        const convTarget = normCompareServer(convenioFilter)
+        normalizedList = normalizedList.filter((p) => {
+          const c = normCompareServer(p.convenio)
+          return c === convTarget || c.includes(convTarget) || convTarget.includes(c)
+        })
+      }
 
       // Filtro local complementar tolerante (nome)
       if (query) {
@@ -1288,15 +1317,6 @@ routerAdd(
         normalizedList = normalizedList.filter((p) => {
           const pClean = p.documento.replace(/[^\d]/g, '')
           return (pClean && pClean.includes(docClean)) || p.documento.includes(documento)
-        })
-      }
-
-      // Filtro de convênio no servidor (tolerante a maiúsculas/minúsculas, trim, acentos e correspondência mútua)
-      if (convenioFilter && convenioFilter !== 'todos') {
-        const convTarget = normCompareServer(convenioFilter)
-        normalizedList = normalizedList.filter((p) => {
-          const c = normCompareServer(p.convenio)
-          return c === convTarget || c.includes(convTarget) || convTarget.includes(c)
         })
       }
 
@@ -1328,6 +1348,7 @@ routerAdd(
         limit: requestedLimit,
         items: normalizedList,
         convenios: allDistinctConvenios,
+        conveniosComContagem: conveniosComContagem,
         modalidades: allDistinctModalidades,
       })
     } catch (err) {
@@ -1506,7 +1527,14 @@ routerAdd(
         email: String(rawPatient.email || rawPatient.mail || '—').trim(),
         endereco: enderecoParts.length > 0 ? enderecoParts.join(', ') : '—',
         convenio: String(
-          rawPatient.insurance_name || rawPatient.convenio || rawPatient.insurance || '—',
+          rawPatient.health_insurance_name ||
+            rawPatient.health_insurance ||
+            rawPatient.insurance_name ||
+            rawPatient.convenio ||
+            rawPatient.insurance ||
+            rawPatient.plano_saude ||
+            rawPatient.healthInsuranceName ||
+            '—',
         ).trim(),
         modalidade: String(
           rawPatient.modality ||
@@ -1641,7 +1669,10 @@ routerAdd(
                 dataAprovacao: bdata,
                 anoAprovacao: ano,
                 valor: valor,
-                observacao: raw.insurance_name ? 'Convênio: ' + raw.insurance_name : '—',
+                observacao:
+                  raw.health_insurance_name || raw.insurance_name
+                    ? 'Convênio: ' + (raw.health_insurance_name || raw.insurance_name)
+                    : '—',
                 itens: itens,
               }
             })
@@ -1968,9 +1999,14 @@ routerAdd(
             valor = parseFloat(cl) || 0
           }
 
-          const observacao = raw.insurance_name
-            ? 'Convênio: ' + raw.insurance_name
-            : raw.observacao || '—'
+          const rawConvBudget =
+            raw.health_insurance_name ||
+            raw.insurance_name ||
+            raw.insurance ||
+            raw.convenio ||
+            raw.observacao ||
+            '—'
+          const observacao = rawConvBudget !== '—' ? 'Convênio: ' + rawConvBudget : '—'
 
           let itens = []
           const rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []

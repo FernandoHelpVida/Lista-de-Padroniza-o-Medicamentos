@@ -69,6 +69,9 @@ export default function Pacientes() {
   const [selectedModalidade, setSelectedModalidade] = useState<string>('todas')
 
   const [serverConvenios, setServerConvenios] = useState<string[]>([])
+  const [serverConveniosComContagem, setServerConveniosComContagem] = useState<
+    { name: string; count: number }[]
+  >([])
   const [serverModalidades, setServerModalidades] = useState<string[]>([])
 
   const [loading, setLoading] = useState(false)
@@ -102,6 +105,7 @@ export default function Pacientes() {
       const res = await searchSpincarePatients({
         query: searchNome.trim(),
         documento: searchDoc.trim(),
+        convenio: selectedConvenio !== 'todos' ? selectedConvenio : undefined,
         fetchAll: true,
       })
       const items = res.items || []
@@ -109,6 +113,9 @@ export default function Pacientes() {
       setTotalCount(res.total || items.length)
       if (res.convenios && res.convenios.length > 0) {
         setServerConvenios(res.convenios)
+      }
+      if (res.conveniosComContagem && res.conveniosComContagem.length > 0) {
+        setServerConveniosComContagem(res.conveniosComContagem)
       }
       if (res.modalidades && res.modalidades.length > 0) {
         setServerModalidades(res.modalidades)
@@ -175,6 +182,12 @@ export default function Pacientes() {
   // Lista unificada e normalizada de convênios distintos encontrados nos resultados ou no servidor
   const conveniosOptions = useMemo(() => {
     const set = new Set<string>()
+    // Prioriza lista de convênios com contagem do backend
+    if (serverConveniosComContagem.length > 0) {
+      serverConveniosComContagem.forEach((c) => {
+        if (c.name && c.name !== '—') set.add(c.name)
+      })
+    }
     // Prioriza lista completa enviada pelo backend
     serverConvenios.forEach((c) => {
       const clean = (c || '').trim()
@@ -188,7 +201,7 @@ export default function Pacientes() {
       }
     })
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
-  }, [serverConvenios, patients])
+  }, [serverConveniosComContagem, serverConvenios, patients])
 
   // Lista unificada de modalidades distintas
   const modalidadesOptions = useMemo(() => {
@@ -435,11 +448,17 @@ export default function Pacientes() {
                       {conveniosOptions.length > 0 ? conveniosOptions.length : 'todos'})
                     </SelectItem>
                     {conveniosOptions.map((conv) => {
-                      const count = patients.filter((p) => {
-                        const c = normalizeCompare(p.convenio)
-                        const t = normalizeCompare(conv)
-                        return c === t
-                      }).length
+                      // Procura contagem no mapa do servidor se disponível
+                      const serverItem = serverConveniosComContagem.find(
+                        (sc) => normalizeCompare(sc.name) === normalizeCompare(conv),
+                      )
+                      const count =
+                        serverItem?.count ??
+                        patients.filter((p) => {
+                          const c = normalizeCompare(p.convenio)
+                          const t = normalizeCompare(conv)
+                          return c === t
+                        }).length
                       return (
                         <SelectItem key={conv} value={conv} className="text-xs">
                           {conv} {count > 0 ? `(${count})` : ''}

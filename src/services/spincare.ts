@@ -85,12 +85,18 @@ export interface SpincareBudget {
   itens: SpincareBudgetItem[]
 }
 
+export interface SpincareConvenioComContagem {
+  name: string
+  count: number
+}
+
 export interface SpincarePatientsSearchResult {
   total: number
   page: number
   limit: number
   items: SpincarePatient[]
   convenios?: string[]
+  conveniosComContagem?: SpincareConvenioComContagem[]
   modalidades?: string[]
 }
 
