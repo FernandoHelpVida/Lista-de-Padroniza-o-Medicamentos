@@ -17,10 +17,71 @@
 // ----------------------------------------------------------------------------
 
 // Endpoint direto para validação e testes
+// Endpoint direto para validação e testes
 routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
   try {
-    const cfg = e.app.findFirstRecordByFilter('spincare_config', 'id != ""')
-    return e.json(200, { msg: cfg ? cfg.getString('last_test_message') : null })
+    const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+    if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+    const cfg = records[0]
+    const baseUrl = (
+      cfg.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    let token = (cfg.getString('api_token') || '').trim()
+    if (token.startsWith('Bearer ')) token = token.substring(7).trim()
+
+    // Testa busca global por período:
+    // O SpinCare aceita initial_dt=2026-09-01T00:00:00Z ou initial_dt=2026-09-01 00:00:00?
+    // E o que retorna get/prescriptions sem patient_id?
+    const q1 = $http.send({
+      url:
+        baseUrl +
+        '/integration-engine/get/prescriptions?initial_dt=2026-09-01T00%3A00%3A00Z&final_dt=2026-09-30T23%3A59%3A59Z&page_number=1&page_size=10&token=' +
+        encodeURIComponent(token),
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+      timeout: 25,
+    })
+    const d1 = q1.json || JSON.parse(q1.raw || '[]')
+
+    // Testa também se aceita patient_name ou name na query string de get/prescriptions:
+    const q2 = $http.send({
+      url:
+        baseUrl +
+        '/integration-engine/get/prescriptions?patient_name=ADEMIR&page_number=1&page_size=10&token=' +
+        encodeURIComponent(token),
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+      timeout: 25,
+    })
+    const d2 = q2.json || JSON.parse(q2.raw || '[]')
+
+    const q3 = $http.send({
+      url:
+        baseUrl +
+        '/integration-engine/get/prescriptions?name=ADEMIR&page_number=1&page_size=10&token=' +
+        encodeURIComponent(token),
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+      timeout: 25,
+    })
+    const d3 = q3.json || JSON.parse(q3.raw || '[]')
+
+    return e.json(200, {
+      d1Count: (d1 && (d1.items || d1)).length,
+      d1SampleDates: ((d1 && (d1.items || d1)) || []).slice(0, 3).map((x) => ({
+        num: x.prescription_number,
+        pat: x.patient_name,
+        init: x.initial_dt,
+        final: x.final_dt,
+        created: x.creation_dt,
+      })),
+      d2FilteredByName: Boolean(d2 && (d2.items || d2).length > 0),
+      d2Sample: ((d2 && (d2.items || d2)) || []).slice(0, 2).map((x) => x.patient_name),
+      d3FilteredByName: Boolean(d3 && (d3.items || d3).length > 0),
+      d3Sample: ((d3 && (d3.items || d3)) || []).slice(0, 2).map((x) => x.patient_name),
+    })
   } catch (err) {
     return e.json(500, { error: String(err) })
   }
