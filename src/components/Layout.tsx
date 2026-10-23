@@ -255,20 +255,36 @@ export default function Layout() {
     { title: 'Configurações', path: '/configuracoes', icon: Settings },
   ]
 
-  // Barra de navegação inferior mobile: estritamente 5 itens para caber com folga em telas de 360px
-  // Início, Medicamentos, Solicitações, Assistente, Configurações (com acesso a Equipe e Importar no menu/topo)
-  const mobileNavItems = [
-    { title: 'Início', path: '/', icon: LayoutDashboard },
-    { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
-    {
-      title: 'Solicitações',
-      path: '/solicitacoes',
-      icon: FileQuestion,
-      badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
-    },
-    { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
-    { title: 'Configurações', path: '/configuracoes', icon: Settings },
-  ]
+  // Barra de navegação inferior mobile:
+  // Para corpo clínico/admin que tem acesso ao SpinCare:
+  // Início, Medicamentos, Solicitações, Pacientes, Orçamentos, Mais
+  // Para médico visitador: Início, Medicamentos, Solicitações, Assistente, Configurações
+  const mobileNavItems = canAccessSpincare
+    ? [
+        { title: 'Início', path: '/', icon: LayoutDashboard },
+        { title: 'Remédios', path: '/medicamentos', icon: Pill },
+        {
+          title: 'Solicitações',
+          path: '/solicitacoes',
+          icon: FileQuestion,
+          badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
+        },
+        { title: 'Pacientes', path: '/pacientes', icon: UserSquare2 },
+        { title: 'Orçamentos', path: '/orcamentos', icon: DollarSign },
+        { title: 'Ajustes', path: '/configuracoes', icon: Settings },
+      ]
+    : [
+        { title: 'Início', path: '/', icon: LayoutDashboard },
+        { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
+        {
+          title: 'Solicitações',
+          path: '/solicitacoes',
+          icon: FileQuestion,
+          badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
+        },
+        { title: 'Assistente', path: '/assistente', icon: BotMessageSquare },
+        { title: 'Configurações', path: '/configuracoes', icon: Settings },
+      ]
 
   const userInitials = user?.name
     ? user.name

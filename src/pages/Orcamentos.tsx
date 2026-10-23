@@ -40,6 +40,7 @@ import {
 } from 'lucide-react'
 import { getSpincareBudgets, type SpincareBudget } from '@/services/spincare'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { SpincareTabsNav } from '@/components/SpincareTabsNav'
 
 export default function Orcamentos() {
   const { user, isAdmin, isMedicoVisitador } = useAuth()
@@ -126,7 +127,10 @@ export default function Orcamentos() {
 
   return (
     <div className="space-y-4 sm:space-y-6 max-w-6xl mx-auto">
-      {/* 1. CABEÇALHO */}
+      {/* 1. NAVEGAÇÃO DE ABAS SPINCARE */}
+      <SpincareTabsNav />
+
+      {/* 2. CABEÇALHO */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">

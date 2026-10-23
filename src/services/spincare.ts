@@ -55,6 +55,7 @@ export interface SpincarePatient {
   email: string
   endereco: string
   convenio: string
+  modalidade: string
   statusAtendimento: string
 }
 

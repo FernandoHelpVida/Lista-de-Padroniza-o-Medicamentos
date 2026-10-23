@@ -707,11 +707,18 @@ routerAdd(
           const endereco = enderecoParts.length > 0 ? enderecoParts.join(', ') : '—'
 
           const convenio = String(
-            raw.insurance_name ||
-              raw.insurance ||
-              raw.convenio ||
-              raw.operadora ||
-              raw.modality ||
+            raw.insurance_name || raw.insurance || raw.convenio || raw.operadora || '—',
+          ).trim()
+
+          const modalidade = String(
+            raw.modality ||
+              raw.modalidade ||
+              raw.attendance_type ||
+              raw.attendance_regime ||
+              raw.regime ||
+              raw.tipo_atendimento ||
+              raw.plano ||
+              raw.insurance_plan_name ||
               '—',
           ).trim()
 
@@ -731,6 +738,7 @@ routerAdd(
             email: emailP,
             endereco: endereco,
             convenio: convenio,
+            modalidade: modalidade,
             statusAtendimento: statusAtendimento,
           }
         })
@@ -953,10 +961,17 @@ routerAdd(
         email: String(rawPatient.email || rawPatient.mail || '—').trim(),
         endereco: enderecoParts.length > 0 ? enderecoParts.join(', ') : '—',
         convenio: String(
-          rawPatient.insurance_name ||
-            rawPatient.convenio ||
-            rawPatient.insurance ||
-            rawPatient.modality ||
+          rawPatient.insurance_name || rawPatient.convenio || rawPatient.insurance || '—',
+        ).trim(),
+        modalidade: String(
+          rawPatient.modality ||
+            rawPatient.modalidade ||
+            rawPatient.attendance_type ||
+            rawPatient.attendance_regime ||
+            rawPatient.regime ||
+            rawPatient.tipo_atendimento ||
+            rawPatient.plano ||
+            rawPatient.insurance_plan_name ||
             '—',
         ).trim(),
         statusAtendimento: rawPatient.active === false ? 'Inativo' : 'Ativo',

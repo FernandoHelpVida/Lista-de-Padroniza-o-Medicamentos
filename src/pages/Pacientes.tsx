@@ -1,10 +1,17 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -29,12 +36,12 @@ import {
   ShieldCheck,
   AlertCircle,
   Loader2,
-  ExternalLink,
   ChevronRight,
-  RefreshCw,
-  Clock,
+  Filter,
   Sparkles,
   Settings,
+  Layers,
+  X,
 } from 'lucide-react'
 import {
   searchSpincarePatients,
@@ -43,6 +50,7 @@ import {
   type SpincareBudget,
 } from '@/services/spincare'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { SpincareTabsNav } from '@/components/SpincareTabsNav'
 
 export default function Pacientes() {
   const { user, isAdmin, isMedicoVisitador } = useAuth()
@@ -51,6 +59,9 @@ export default function Pacientes() {
 
   const [searchNome, setSearchNome] = useState('')
   const [searchDoc, setSearchDoc] = useState('')
+  const [selectedConvenio, setSelectedConvenio] = useState<string>('todos')
+  const [selectedModalidade, setSelectedModalidade] = useState<string>('todas')
+
   const [loading, setLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [patients, setPatients] = useState<SpincarePatient[]>([])
@@ -73,7 +84,7 @@ export default function Pacientes() {
       const res = await searchSpincarePatients({
         query: searchNome.trim(),
         documento: searchDoc.trim(),
-        limit: 50,
+        limit: 100,
       })
       setPatients(res.items || [])
       setTotalCount(res.total || 0)
@@ -122,6 +133,58 @@ export default function Pacientes() {
     }
   }, [isMedicoVisitador])
 
+  // Lista dinâmica de convênios distintos encontrados nos resultados
+  const conveniosOptions = useMemo(() => {
+    const set = new Set<string>()
+    patients.forEach((p) => {
+      const conv = (p.convenio || '').trim()
+      if (conv && conv !== '—') {
+        set.add(conv)
+      }
+    })
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  }, [patients])
+
+  // Lista dinâmica de modalidades distintas encontradas nos resultados
+  const modalidadesOptions = useMemo(() => {
+    const set = new Set<string>()
+    patients.forEach((p) => {
+      const mod = (p.modalidade || '').trim()
+      if (mod && mod !== '—') {
+        set.add(mod)
+      }
+    })
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  }, [patients])
+
+  // Pacientes filtrados pelos filtros ativos de convênio e modalidade
+  const filteredPatients = useMemo(() => {
+    return patients.filter((p) => {
+      if (selectedConvenio !== 'todos') {
+        const conv = (p.convenio || '').trim()
+        if (conv !== selectedConvenio) return false
+      }
+      if (selectedModalidade !== 'todas') {
+        const mod = (p.modalidade || '').trim()
+        if (mod !== selectedModalidade) return false
+      }
+      return true
+    })
+  }, [patients, selectedConvenio, selectedModalidade])
+
+  const hasActiveFilters =
+    Boolean(searchNome) ||
+    Boolean(searchDoc) ||
+    selectedConvenio !== 'todos' ||
+    selectedModalidade !== 'todas'
+
+  const handleResetFilters = () => {
+    setSearchNome('')
+    setSearchDoc('')
+    setSelectedConvenio('todos')
+    setSelectedModalidade('todas')
+  }
+
   // Redirecionar / bloquear médico visitador (abaixo dos hooks para cumprir rules-of-hooks)
   if (isMedicoVisitador) {
     return (
@@ -148,7 +211,10 @@ export default function Pacientes() {
 
   return (
     <div className="space-y-4 sm:space-y-6 max-w-6xl mx-auto">
-      {/* 1. CABEÇALHO */}
+      {/* 1. NAVEGAÇÃO DE ABAS SPINCARE */}
+      <SpincareTabsNav />
+
+      {/* 2. CABEÇALHO */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -161,8 +227,8 @@ export default function Pacientes() {
             </Badge>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Consulta em tempo real ao cadastro do sistema SpinCare. Dados cadastrais e orçamentos
-            vinculados.
+            Consulta em tempo real ao cadastro do sistema SpinCare com exibição de convênio,
+            modalidade e orçamentos vinculados.
           </p>
         </div>
 
@@ -179,7 +245,7 @@ export default function Pacientes() {
         )}
       </div>
 
-      {/* 2. AVISO LGPD DISCRETO */}
+      {/* 3. AVISO LGPD DISCRETO */}
       <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600">
         <div className="flex items-center gap-2 text-[11px]">
           <ShieldCheck className="h-4 w-4 text-[#0D8272] shrink-0" />
@@ -194,10 +260,11 @@ export default function Pacientes() {
         </span>
       </div>
 
-      {/* 3. CARD DE BUSCA */}
+      {/* 4. CARD DE BUSCA & FILTROS (NOME, DOCUMENTO, CONVÊNIO, MODALIDADE) */}
       <Card className="border-emerald-950/10 bg-white shadow-xs">
         <CardContent className="p-3.5 sm:p-5">
-          <form onSubmit={handleSearch} className="space-y-3">
+          <form onSubmit={handleSearch} className="space-y-3.5">
+            {/* Linha 1: Busca por Texto (Nome + Documento) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-700">Nome do Paciente</label>
@@ -245,26 +312,89 @@ export default function Pacientes() {
                   )}
                 </Button>
 
-                {(searchNome || searchDoc) && (
+                {hasActiveFilters && (
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      setSearchNome('')
-                      setSearchDoc('')
-                    }}
-                    className="h-10 text-xs border-slate-200 rounded-xl"
+                    onClick={handleResetFilters}
+                    className="h-10 text-xs border-slate-200 rounded-xl px-3 shrink-0"
+                    title="Limpar todos os filtros"
                   >
-                    Limpar
+                    <X size={14} className="sm:mr-1" />
+                    <span className="hidden sm:inline">Limpar</span>
                   </Button>
                 )}
+              </div>
+            </div>
+
+            {/* Linha 2: Filtros de Convênio e Modalidade */}
+            <div className="pt-2 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 items-center">
+              {/* Filtro por Convênio */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Building2 size={13} className="text-[#0D8272]" />
+                  <span>Filtro por Convênio</span>
+                  {selectedConvenio !== 'todos' && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#0D8272]" />
+                  )}
+                </label>
+                <Select value={selectedConvenio} onValueChange={setSelectedConvenio}>
+                  <SelectTrigger className="h-9 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl">
+                    <SelectValue placeholder="Todos os convênios" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-64">
+                    <SelectItem value="todos" className="text-xs font-semibold">
+                      Todos os Convênios ({patients.length})
+                    </SelectItem>
+                    {conveniosOptions.map((conv) => (
+                      <SelectItem key={conv} value={conv} className="text-xs">
+                        {conv}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Filtro por Modalidade */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Layers size={13} className="text-[#0D8272]" />
+                  <span>Filtro por Modalidade</span>
+                  {selectedModalidade !== 'todas' && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#0D8272]" />
+                  )}
+                </label>
+                <Select value={selectedModalidade} onValueChange={setSelectedModalidade}>
+                  <SelectTrigger className="h-9 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl">
+                    <SelectValue placeholder="Todas as modalidades" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-64">
+                    <SelectItem value="todas" className="text-xs font-semibold">
+                      Todas as Modalidades
+                    </SelectItem>
+                    {modalidadesOptions.map((mod) => (
+                      <SelectItem key={mod} value={mod} className="text-xs">
+                        {mod}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Indicador de Filtros Aplicados */}
+              <div className="flex items-center gap-2 pt-1 sm:pt-4 text-xs text-slate-500">
+                <Filter size={14} className="text-[#0D8272] shrink-0" />
+                <span>
+                  Exibindo <strong>{filteredPatients.length}</strong> de{' '}
+                  <strong>{patients.length}</strong> pacientes carregados
+                </span>
               </div>
             </div>
           </form>
         </CardContent>
       </Card>
 
-      {/* 4. RESULTADOS */}
+      {/* 5. RESULTADOS */}
       {unconfigured ? (
         <Card className="border-amber-200 bg-amber-50/40 shadow-xs">
           <CardContent className="p-8 text-center space-y-3">
@@ -299,24 +429,38 @@ export default function Pacientes() {
             <p className="text-[11px] text-slate-400 mt-0.5">Nenhum dado é replicado localmente.</p>
           </CardContent>
         </Card>
-      ) : patients.length === 0 ? (
+      ) : filteredPatients.length === 0 ? (
         <Card className="border-emerald-950/10 bg-white shadow-xs">
           <CardContent className="py-12 text-center text-slate-400 space-y-2">
             <Users className="h-10 w-10 mx-auto text-slate-300" />
             <p className="text-xs font-semibold text-slate-700">Nenhum paciente localizado</p>
             <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-              {hasSearched
-                ? 'Tente buscar por outro termo, nome abreviado ou verifique se o paciente está cadastrado no SpinCare.'
-                : 'Utilize o formulário acima para pesquisar pacientes cadastrados no sistema SpinCare.'}
+              {hasActiveFilters
+                ? 'Tente ajustar os termos de busca, convênio ou modalidade selecionados.'
+                : hasSearched
+                  ? 'Verifique se o paciente está cadastrado e ativo no sistema SpinCare.'
+                  : 'Utilize o formulário acima para pesquisar pacientes cadastrados no sistema SpinCare.'}
             </p>
+            {hasActiveFilters && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetFilters}
+                className="mt-2 text-xs rounded-xl border-slate-200"
+              >
+                Limpar Filtros
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2.5">
           <div className="flex items-center justify-between px-1">
             <span className="text-xs font-bold text-slate-700">
-              {totalCount} paciente{totalCount === 1 ? '' : 's'} encontrado
-              {totalCount === 1 ? '' : 's'}
+              {filteredPatients.length} paciente{filteredPatients.length === 1 ? '' : 's'}{' '}
+              {selectedConvenio !== 'todos' || selectedModalidade !== 'todas'
+                ? 'filtrado' + (filteredPatients.length === 1 ? '' : 's')
+                : 'encontrado' + (filteredPatients.length === 1 ? '' : 's')}
             </span>
             <span className="text-[10px] text-slate-400">
               Toque no card para abrir a ficha completa
@@ -324,13 +468,14 @@ export default function Pacientes() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {patients.map((p) => (
+            {filteredPatients.map((p) => (
               <Card
                 key={p.id}
                 onClick={() => handleOpenPatient(p)}
                 className="border-emerald-950/10 bg-white hover:border-[#0D8272]/50 hover:shadow-md transition-all cursor-pointer group rounded-2xl"
               >
                 <CardContent className="p-4 space-y-2.5">
+                  {/* Cabeçalho do Card: Avatar, Nome, Documento e Status */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="h-10 w-10 rounded-xl bg-[#E6F5F2] text-[#0D8272] flex items-center justify-center font-bold text-xs shrink-0 group-hover:bg-[#0D8272] group-hover:text-white transition-colors">
@@ -355,33 +500,61 @@ export default function Pacientes() {
                     <Badge
                       className={
                         p.statusAtendimento === 'Ativo'
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px]'
-                          : 'bg-slate-100 text-slate-700 text-[10px]'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] shrink-0'
+                          : 'bg-slate-100 text-slate-700 text-[10px] shrink-0'
                       }
                     >
                       {p.statusAtendimento}
                     </Badge>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-[11px] text-slate-600">
+                  {/* DESTAQUE DO CONVÊNIO & MODALIDADE (Pedido do usuário) */}
+                  <div className="p-2.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Building2 size={13} className="text-[#0D8272] shrink-0" />
+                        <span className="text-[10px] uppercase font-bold text-slate-500 shrink-0">
+                          Convênio:
+                        </span>
+                        <span className="font-bold text-[#0C4336] truncate" title={p.convenio}>
+                          {p.convenio || '—'}
+                        </span>
+                      </div>
+                      {p.convenio && p.convenio !== '—' && (
+                        <Badge className="bg-[#E6F5F2] text-[#0C4336] border-[#0D8272]/30 text-[9px] font-bold shrink-0">
+                          Ativo
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Modalidade */}
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                      <Layers size={12} className="text-[#0D8272] shrink-0" />
+                      <span className="text-[10px] uppercase font-bold text-slate-400 shrink-0">
+                        Modalidade:
+                      </span>
+                      <span className="font-medium text-slate-800 truncate" title={p.modalidade}>
+                        {p.modalidade || '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Informações Complementares: Nascimento e Telefone */}
+                  <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] text-slate-600">
                     <div className="flex items-center gap-1.5 truncate">
-                      <Calendar size={12} className="text-[#0D8272] shrink-0" />
+                      <Calendar size={12} className="text-slate-400 shrink-0" />
                       <span className="truncate">Nasc: {p.dataNascimento}</span>
                     </div>
 
                     <div className="flex items-center gap-1.5 truncate">
-                      <Phone size={12} className="text-[#0D8272] shrink-0" />
+                      <Phone size={12} className="text-slate-400 shrink-0" />
                       <span className="truncate">{p.telefone}</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 truncate col-span-2">
-                      <Building2 size={12} className="text-[#0D8272] shrink-0" />
-                      <span className="truncate">Convênio: {p.convenio}</span>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end text-[11px] font-bold text-[#0D8272] pt-1">
-                    <span>Ver ficha & orçamentos</span>
+                  {/* Link Ficha e Orçamentos */}
+                  <div className="flex items-center justify-end text-[11px] font-bold text-[#0D8272] pt-1 border-t border-slate-100">
+                    <span>Ver ficha completa & orçamentos</span>
                     <ChevronRight
                       size={14}
                       className="ml-1 group-hover:translate-x-1 transition-transform"
@@ -394,7 +567,7 @@ export default function Pacientes() {
         </div>
       )}
 
-      {/* 5. MODAL: FICHA DO PACIENTE + ORÇAMENTOS VINCULADOS */}
+      {/* 6. MODAL: FICHA DO PACIENTE + ORÇAMENTOS VINCULADOS */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
         <DialogContent className="max-w-2xl w-[94vw] sm:w-full p-4 sm:p-6 rounded-2xl bg-white max-h-[92vh] flex flex-col">
           <DialogHeader className="pb-3 border-b border-emerald-950/10 shrink-0 text-left">
@@ -415,10 +588,42 @@ export default function Pacientes() {
           </DialogHeader>
 
           <ScrollArea className="flex-1 pr-2 space-y-4 py-3">
-            {/* Dados Cadastrais */}
+            {/* Bloco de Destaque: Convênio e Modalidade */}
+            <div className="p-3.5 rounded-xl bg-emerald-50/80 border border-emerald-200/60 space-y-2">
+              <span className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider block">
+                Convênio & Modalidade do Atendimento
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                <div className="flex items-start gap-2">
+                  <Building2 size={16} className="text-[#0D8272] shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                      Convênio / Operadora:
+                    </span>
+                    <span className="text-sm font-bold text-[#0C4336]">
+                      {patientDetail?.convenio || '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2">
+                  <Layers size={16} className="text-[#0D8272] shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                      Modalidade / Regime:
+                    </span>
+                    <span className="text-sm font-bold text-slate-800">
+                      {patientDetail?.modalidade || '—'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Demais Dados Cadastrais */}
             <div className="p-3.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 space-y-2">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                Dados Cadastrais do Paciente
+                Dados Demográficos e Contato
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                 <div>
@@ -449,12 +654,6 @@ export default function Pacientes() {
                   <span className="text-slate-400 block text-[10px]">Endereço / Localidade:</span>
                   <span className="font-semibold text-slate-800">
                     {patientDetail?.endereco || '—'}
-                  </span>
-                </div>
-                <div className="sm:col-span-2">
-                  <span className="text-slate-400 block text-[10px]">Convênio / Operadora:</span>
-                  <span className="font-semibold text-slate-800">
-                    {patientDetail?.convenio || '—'}
                   </span>
                 </div>
               </div>
