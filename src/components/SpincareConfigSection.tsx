@@ -4,13 +4,6 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -22,10 +15,8 @@ import {
   RefreshCw,
   ShieldCheck,
   Globe,
-  Sliders,
   Eye,
   EyeOff,
-  ExternalLink,
   Lock,
 } from 'lucide-react'
 import {
@@ -44,15 +35,14 @@ export function SpincareConfigSection() {
   const [testing, setTesting] = useState(false)
 
   const [baseUrl, setBaseUrl] = useState('')
-  const [authType, setAuthType] = useState<'bearer' | 'api_key_header' | 'basic'>('bearer')
-  const [headerName, setHeaderName] = useState('Authorization')
-  const [tokenPrefix, setTokenPrefix] = useState('Bearer ')
+  const [apiLogin, setApiLogin] = useState('')
+  const [apiPassword, setApiPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [apiToken, setApiToken] = useState('')
-  const [endpointPatients, setEndpointPatients] = useState('/v1/patients')
-  const [endpointBudgets, setEndpointBudgets] = useState('/v1/budgets')
+  const [endpointPatients, setEndpointPatients] = useState('/integration-engine/get/patients')
+  const [endpointBudgets, setEndpointBudgets] = useState('/integration-engine/get/budgets')
   const [isActive, setIsActive] = useState(true)
 
-  const [showToken, setShowToken] = useState(false)
   const [currentConfig, setCurrentConfig] = useState<SpincareConfig | null>(null)
   const [testResult, setTestResult] = useState<{
     tested: boolean
@@ -66,13 +56,20 @@ export function SpincareConfigSection() {
     try {
       const data = await getSpincareConfig()
       setCurrentConfig(data)
-      setBaseUrl(data.base_url || '')
-      setAuthType(data.auth_type || 'bearer')
-      setHeaderName(data.header_name || 'Authorization')
-      setTokenPrefix(data.token_prefix !== undefined ? data.token_prefix : 'Bearer ')
-      setEndpointPatients(data.endpoint_patients || '/v1/patients')
-      setEndpointBudgets(data.endpoint_budgets || '/v1/budgets')
+      setBaseUrl(data.base_url || 'https://integration.spincare.com.br/spincare_integration')
+      setEndpointPatients(data.endpoint_patients || '/integration-engine/get/patients')
+      setEndpointBudgets(data.endpoint_budgets || '/integration-engine/get/budgets')
       setIsActive(data.is_active !== undefined ? data.is_active : true)
+      if (data.login_masked) {
+        setApiLogin(data.login_masked)
+      } else {
+        setApiLogin('')
+      }
+      if (data.has_password) {
+        setApiPassword('••••••••')
+      } else {
+        setApiPassword('')
+      }
       if (data.token_masked) {
         setApiToken(data.token_masked)
       } else {
@@ -102,32 +99,17 @@ export function SpincareConfigSection() {
     loadConfig()
   }, [])
 
-  const handleAuthTypeChange = (type: 'bearer' | 'api_key_header' | 'basic') => {
-    setAuthType(type)
-    if (type === 'bearer') {
-      setHeaderName('Authorization')
-      setTokenPrefix('Bearer ')
-    } else if (type === 'api_key_header') {
-      setHeaderName('X-API-Key')
-      setTokenPrefix('')
-    } else if (type === 'basic') {
-      setHeaderName('Authorization')
-      setTokenPrefix('Basic ')
-    }
-  }
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
     try {
       const result = await saveSpincareConfig({
         base_url: baseUrl.trim(),
-        auth_type: authType,
-        header_name: headerName.trim(),
-        token_prefix: tokenPrefix,
+        api_login: apiLogin.trim(),
+        api_password: apiPassword.trim(),
         api_token: apiToken.trim(),
-        endpoint_patients: endpointPatients.trim() || '/v1/patients',
-        endpoint_budgets: endpointBudgets.trim() || '/v1/budgets',
+        endpoint_patients: endpointPatients.trim() || '/integration-engine/get/patients',
+        endpoint_budgets: endpointBudgets.trim() || '/integration-engine/get/budgets',
         is_active: isActive,
       })
 
@@ -153,11 +135,10 @@ export function SpincareConfigSection() {
     try {
       const res = await testSpincareConnection({
         base_url: baseUrl.trim(),
-        auth_type: authType,
-        header_name: headerName.trim(),
-        token_prefix: tokenPrefix,
-        api_token: apiToken.trim(),
-        endpoint_patients: endpointPatients.trim() || '/v1/patients',
+        api_login: apiLogin.trim(),
+        api_password: apiPassword.trim(),
+        endpoint_patients: endpointPatients.trim() || '/integration-engine/get/patients',
+        endpoint_budgets: endpointBudgets.trim() || '/integration-engine/get/budgets',
       })
 
       setTestResult({
@@ -288,92 +269,72 @@ export function SpincareConfigSection() {
             </div>
           </div>
 
-          {/* 2. Método de Autenticação */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700">Tipo de Autenticação *</Label>
-              <Select
-                value={authType}
-                onValueChange={(val: 'bearer' | 'api_key_header' | 'basic') =>
-                  handleAuthTypeChange(val)
-                }
-              >
-                <SelectTrigger className="h-11 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl">
-                  <SelectValue placeholder="Selecione o tipo" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bearer">Bearer Token (Padrão)</SelectItem>
-                  <SelectItem value="api_key_header">API Key Header (Ex: X-API-Key)</SelectItem>
-                  <SelectItem value="basic">HTTP Basic Auth</SelectItem>
-                </SelectContent>
-              </Select>
+          {/* 2. Credenciais de Autenticação da API (OpenAPI SpinCare: /token/v1) */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <KeyRound className="h-4 w-4 text-[#0D8272]" />
+                Credenciais de Acesso Oficial SpinCare (/token/v1)
+              </span>
+              <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                OAuth / Token Automático
+              </span>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="headerName" className="text-xs font-bold text-slate-700">
-                Nome do Header HTTP *
-              </Label>
-              <Input
-                id="headerName"
-                type="text"
-                required
-                placeholder="Authorization ou X-API-Key"
-                value={headerName}
-                onChange={(e) => setHeaderName(e.target.value)}
-                className="h-11 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="apiLogin" className="text-xs font-bold text-slate-700">
+                  Login / E-mail da SpinCare *
+                </Label>
+                <Input
+                  id="apiLogin"
+                  type="email"
+                  required
+                  placeholder="usuario@helpvida.com.br"
+                  value={apiLogin}
+                  onChange={(e) => setApiLogin(e.target.value)}
+                  className="h-11 text-xs sm:text-sm bg-white border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label
+                  htmlFor="apiPassword"
+                  className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                >
+                  <span>Senha de Acesso *</span>
+                  {currentConfig?.has_password && (
+                    <span className="text-[10px] text-emerald-700 font-medium flex items-center gap-0.5">
+                      <Lock size={10} /> Salva
+                    </span>
+                  )}
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="apiPassword"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    placeholder="Senha da API SpinCare..."
+                    value={apiPassword}
+                    onChange={(e) => setApiPassword(e.target.value)}
+                    className="h-11 pr-10 text-xs sm:text-sm font-mono bg-white border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md"
+                    title={showPassword ? 'Ocultar' : 'Exibir'}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="tokenPrefix" className="text-xs font-bold text-slate-700">
-                Prefixo do Valor
-              </Label>
-              <Input
-                id="tokenPrefix"
-                type="text"
-                placeholder='Ex: "Bearer " (ou deixe vazio)'
-                value={tokenPrefix}
-                onChange={(e) => setTokenPrefix(e.target.value)}
-                className="h-11 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono"
-              />
-            </div>
-          </div>
-
-          {/* 3. Credencial / Token */}
-          <div className="space-y-1.5">
-            <Label
-              htmlFor="apiToken"
-              className="text-xs font-bold text-slate-700 flex items-center justify-between"
-            >
-              <span>Token ou Chave de Acesso da API SpinCare *</span>
-              {currentConfig?.has_token && (
-                <span className="text-[10px] text-emerald-700 font-medium flex items-center gap-1">
-                  <Lock size={11} />
-                  Chave já salva com segurança
-                </span>
-              )}
-            </Label>
-            <div className="relative">
-              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                id="apiToken"
-                type={showToken ? 'text' : 'password'}
-                placeholder="Cole o token ou chave gerada no SpinCare..."
-                value={apiToken}
-                onChange={(e) => setApiToken(e.target.value)}
-                className="h-11 pl-9 pr-10 text-xs sm:text-sm font-mono bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken(!showToken)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md"
-                title={showToken ? 'Ocultar' : 'Exibir'}
-              >
-                {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
             <p className="text-[11px] text-slate-500">
-              Para manter o token atual inalterado, não edite este campo se já estiver com máscara.
+              O middleware efetua login automaticamente contra <code>/token/v1</code>, renova o
+              token em memória quando expirar e garante que todas as chamadas de pacientes e
+              orçamentos permaneçam ativas.
             </p>
           </div>
 

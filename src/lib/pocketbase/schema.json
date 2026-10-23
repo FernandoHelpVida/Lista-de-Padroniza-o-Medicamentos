@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-23T12:02:37.562Z",
+  "generatedAt": "2026-10-23T12:25:59.735Z",
   "collections": [
     {
       "name": "users",
@@ -477,6 +477,18 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "api_login",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "api_password",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": []

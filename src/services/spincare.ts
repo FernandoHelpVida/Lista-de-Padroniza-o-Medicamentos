@@ -15,6 +15,9 @@ export interface SpincareConfig {
   token_prefix: string
   endpoint_patients: string
   endpoint_budgets: string
+  has_login?: boolean
+  login_masked?: string
+  has_password?: boolean
   has_token: boolean
   token_masked?: string
   last_tested_at?: string
@@ -24,9 +27,11 @@ export interface SpincareConfig {
 
 export interface SaveSpincareConfigInput {
   base_url: string
-  auth_type: 'bearer' | 'api_key_header' | 'basic'
-  header_name: string
-  token_prefix: string
+  auth_type?: 'bearer' | 'api_key_header' | 'basic'
+  header_name?: string
+  token_prefix?: string
+  api_login?: string
+  api_password?: string
   api_token?: string
   endpoint_patients: string
   endpoint_budgets: string
@@ -38,6 +43,7 @@ export interface TestConnectionResult {
   statusCode?: number
   message: string
   testedAt?: string
+  details?: Record<string, unknown>
 }
 
 export interface SpincarePatient {
