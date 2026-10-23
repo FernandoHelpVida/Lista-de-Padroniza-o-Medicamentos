@@ -17,8 +17,8 @@
 // ----------------------------------------------------------------------------
 
 routerAdd(
-  'POST',
-  '/backend/v1/spincare/check-medication',
+  'GET',
+  '/backend/v1/spincare/config',
   (e) => {
     try {
       const authUser = e.auth
