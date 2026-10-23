@@ -84,7 +84,14 @@ export function PoliticaPrivacidadeModal({ open, onOpenChange }: PoliticaPrivaci
                   Auditoria assistencial, rastreabilidade técnica e comunicação entre farmácia e
                   corpo clínico;
                 </li>
-                <li>Segurança e autenticação de profissionais autorizados no sistema Help Vida.</li>
+                <li>Segurança e autenticação de profissionais autorizados no sistema Help Vida;</li>
+                <li>
+                  <strong>Consulta ao vivo via Middleware SpinCare:</strong> visualização em tempo
+                  real de cadastros e orçamentos aprovados pelo corpo clínico e administradores para
+                  a tutela da saúde em atenção domiciliar, sem persistência ou replicação de dados
+                  no banco local, com registro auditável de cada consulta realizada (perfil Médico
+                  Visitador não tem acesso a dados de pacientes).
+                </li>
               </ul>
             </section>
 

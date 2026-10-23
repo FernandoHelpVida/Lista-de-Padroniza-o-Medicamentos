@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dialog'
 import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 import { InstallPwaPrompt } from '@/components/InstallPwaPrompt'
+import { SpincareConfigSection } from '@/components/SpincareConfigSection'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 export default function Configuracoes() {
@@ -312,58 +313,63 @@ export default function Configuracoes() {
 
       {/* 0. PAINEL DE GESTÃO INSTITUCIONAL (ADMINISTRADOR ONLY) */}
       {isAdmin && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Card className="border-emerald-600/30 bg-gradient-to-r from-[#0F5342]/10 via-[#0C4336]/5 to-transparent shadow-xs">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm sm:text-base font-bold text-[#0C4336] flex items-center gap-2">
-                  <FileUp className="h-5 w-5 text-[#0D8272]" />
-                  Atualização da Padronização (PDF)
-                </CardTitle>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0F5342] text-white">
-                  Admin
-                </span>
-              </div>
-              <CardDescription className="text-xs text-slate-600">
-                Importe e atualize em lote via PDF oficial com histórico completo de registros.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <Button
-                onClick={() => navigate('/importar')}
-                className="w-full bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 rounded-xl shadow-xs"
-              >
-                <FileUp className="mr-2 h-4 w-4 text-[#F5B31C]" />
-                Abrir Ferramenta de Importação
-              </Button>
-            </CardContent>
-          </Card>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Card className="border-emerald-600/30 bg-gradient-to-r from-[#0F5342]/10 via-[#0C4336]/5 to-transparent shadow-xs">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm sm:text-base font-bold text-[#0C4336] flex items-center gap-2">
+                    <FileUp className="h-5 w-5 text-[#0D8272]" />
+                    Atualização da Padronização (PDF)
+                  </CardTitle>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0F5342] text-white">
+                    Admin
+                  </span>
+                </div>
+                <CardDescription className="text-xs text-slate-600">
+                  Importe e atualize em lote via PDF oficial com histórico completo de registros.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <Button
+                  onClick={() => navigate('/importar')}
+                  className="w-full bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 rounded-xl shadow-xs"
+                >
+                  <FileUp className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                  Abrir Ferramenta de Importação
+                </Button>
+              </CardContent>
+            </Card>
 
-          <Card className="border-emerald-600/30 bg-gradient-to-r from-[#0F5342]/10 via-[#0C4336]/5 to-transparent shadow-xs">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm sm:text-base font-bold text-[#0C4336] flex items-center gap-2">
-                  <Users className="h-5 w-5 text-[#0D8272]" />
-                  Gestão da Equipe Help Vida
-                </CardTitle>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0F5342] text-white">
-                  Admin
-                </span>
-              </div>
-              <CardDescription className="text-xs text-slate-600">
-                Cadastre as contas dos colegas médicos e farmacêuticos para circulação na equipe.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <Button
-                onClick={() => navigate('/equipe')}
-                className="w-full bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 rounded-xl shadow-xs"
-              >
-                <Users className="mr-2 h-4 w-4 text-[#F5B31C]" />
-                Gerenciar Contas da Equipe
-              </Button>
-            </CardContent>
-          </Card>
+            <Card className="border-emerald-600/30 bg-gradient-to-r from-[#0F5342]/10 via-[#0C4336]/5 to-transparent shadow-xs">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm sm:text-base font-bold text-[#0C4336] flex items-center gap-2">
+                    <Users className="h-5 w-5 text-[#0D8272]" />
+                    Gestão da Equipe Help Vida
+                  </CardTitle>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0F5342] text-white">
+                    Admin
+                  </span>
+                </div>
+                <CardDescription className="text-xs text-slate-600">
+                  Cadastre as contas dos colegas médicos e farmacêuticos para circulação na equipe.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <Button
+                  onClick={() => navigate('/equipe')}
+                  className="w-full bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold h-10 rounded-xl shadow-xs"
+                >
+                  <Users className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                  Gerenciar Contas da Equipe
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Integração do Middleware SpinCare (Apenas Administrador) */}
+          <SpincareConfigSection />
         </div>
       )}
 

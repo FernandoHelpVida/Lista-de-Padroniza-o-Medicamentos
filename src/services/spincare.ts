@@ -1,0 +1,184 @@
+/**
+ * Serviços tipados de integração com o middleware SpinCare (Help Vida).
+ * Todas as requisições passam pelo backend PocketBase (/backend/v1/spincare/*)
+ * que injeta credenciais seguras e registra auditoria LGPD.
+ */
+import pb from '@/lib/pocketbase/client'
+
+export interface SpincareConfig {
+  id?: string
+  configured: boolean
+  is_active: boolean
+  base_url: string
+  auth_type: 'bearer' | 'api_key_header' | 'basic'
+  header_name: string
+  token_prefix: string
+  endpoint_patients: string
+  endpoint_budgets: string
+  has_token: boolean
+  token_masked?: string
+  last_tested_at?: string
+  last_test_status?: string
+  last_test_message?: string
+}
+
+export interface SaveSpincareConfigInput {
+  base_url: string
+  auth_type: 'bearer' | 'api_key_header' | 'basic'
+  header_name: string
+  token_prefix: string
+  api_token?: string
+  endpoint_patients: string
+  endpoint_budgets: string
+  is_active?: boolean
+}
+
+export interface TestConnectionResult {
+  success: boolean
+  statusCode?: number
+  message: string
+  testedAt?: string
+}
+
+export interface SpincarePatient {
+  id: string
+  nome: string
+  documento: string
+  dataNascimento: string
+  telefone: string
+  email: string
+  endereco: string
+  convenio: string
+  statusAtendimento: string
+}
+
+export interface SpincareBudgetItem {
+  descricao: string
+  quantidade: number
+  valorUnitario: number
+  valorTotal: number
+}
+
+export interface SpincareBudget {
+  id: string
+  numero: string
+  pacienteId: string
+  pacienteNome: string
+  status: string
+  dataAprovacao: string
+  anoAprovacao: number | null
+  valor: number
+  observacao: string
+  itens: SpincareBudgetItem[]
+}
+
+export interface SpincarePatientsSearchResult {
+  total: number
+  page: number
+  limit: number
+  items: SpincarePatient[]
+}
+
+export interface SpincarePatientDetailResult {
+  patient: SpincarePatient
+  budgets: SpincareBudget[]
+}
+
+export interface SpincareBudgetsResult {
+  total: number
+  startDate: string
+  endDate: string
+  statusFilter: string
+  page: number
+  limit: number
+  items: SpincareBudget[]
+}
+
+/**
+ * Recupera o status atual da configuração do SpinCare.
+ */
+export async function getSpincareConfig(): Promise<SpincareConfig> {
+  return await pb.send<SpincareConfig>('/backend/v1/spincare/config', {
+    method: 'GET',
+  })
+}
+
+/**
+ * Salva os parâmetros da integração com o SpinCare (Admin only).
+ */
+export async function saveSpincareConfig(
+  data: SaveSpincareConfigInput,
+): Promise<{ success: boolean; message: string }> {
+  return await pb.send<{ success: boolean; message: string }>('/backend/v1/spincare/config', {
+    method: 'POST',
+    body: data,
+  })
+}
+
+/**
+ * Testa a conexão com a API do SpinCare (Admin only).
+ */
+export async function testSpincareConnection(
+  data?: Partial<SaveSpincareConfigInput>,
+): Promise<TestConnectionResult> {
+  return await pb.send<TestConnectionResult>('/backend/v1/spincare/test-connection', {
+    method: 'POST',
+    body: data || {},
+  })
+}
+
+/**
+ * Busca pacientes ao vivo no SpinCare por nome e/ou documento.
+ */
+export async function searchSpincarePatients(params: {
+  query?: string
+  documento?: string
+  limit?: number
+  page?: number
+}): Promise<SpincarePatientsSearchResult> {
+  return await pb.send<SpincarePatientsSearchResult>('/backend/v1/spincare/patients/search', {
+    method: 'POST',
+    body: params,
+  })
+}
+
+/**
+ * Obtém os dados cadastrais completos do paciente e seus orçamentos aprovados.
+ */
+export async function getSpincarePatientById(
+  patientId: string,
+): Promise<SpincarePatientDetailResult> {
+  return await pb.send<SpincarePatientDetailResult>(
+    `/backend/v1/spincare/patients/${encodeURIComponent(patientId)}`,
+    {
+      method: 'GET',
+    },
+  )
+}
+
+/**
+ * Busca a listagem de orçamentos aprovados no SpinCare (padrão >= 2026-01-01).
+ */
+export async function getSpincareBudgets(params?: {
+  startDate?: string
+  endDate?: string
+  status?: string
+  search?: string
+  patientId?: string
+  limit?: number
+  page?: number
+}): Promise<SpincareBudgetsResult> {
+  const query = new URLSearchParams()
+  if (params?.startDate) query.set('start_date', params.startDate)
+  if (params?.endDate) query.set('end_date', params.endDate)
+  if (params?.status) query.set('status', params.status)
+  if (params?.search) query.set('search', params.search)
+  if (params?.patientId) query.set('patient_id', params.patientId)
+  if (params?.limit) query.set('limit', String(params.limit))
+  if (params?.page) query.set('page', String(params.page))
+
+  const queryString = query.toString() ? `?${query.toString()}` : ''
+  return await pb.send<SpincareBudgetsResult>(`/backend/v1/spincare/budgets${queryString}`, {
+    method: 'GET',
+  })
+}

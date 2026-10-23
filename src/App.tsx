@@ -23,6 +23,8 @@ import Assistente from '@/pages/Assistente'
 import Solicitacoes from '@/pages/Solicitacoes'
 import Equipe from '@/pages/Equipe'
 import Configuracoes from '@/pages/Configuracoes'
+import Pacientes from '@/pages/Pacientes'
+import Orcamentos from '@/pages/Orcamentos'
 import NotFound from '@/pages/NotFound'
 
 const App = () => (
@@ -53,6 +55,8 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/medicamentos" element={<Medicamentos />} />
             <Route path="/solicitacoes" element={<Solicitacoes />} />
+            <Route path="/pacientes" element={<Pacientes />} />
+            <Route path="/orcamentos" element={<Orcamentos />} />
             <Route path="/importar" element={<Importar />} />
             <Route path="/equipe" element={<Equipe />} />
             <Route path="/assistente" element={<Assistente />} />

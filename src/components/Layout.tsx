@@ -18,6 +18,8 @@ import {
   Users,
   Clock,
   UserCheck,
+  UserSquare2,
+  DollarSign,
   AlertCircle,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -46,7 +48,7 @@ import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export default function Layout() {
-  const { user, logout, isAdmin } = useAuth()
+  const { user, logout, isAdmin, isMedicoVisitador } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -210,6 +212,8 @@ export default function Layout() {
     if (path === '/') return 'Visão Geral da Padronização'
     if (path.startsWith('/medicamentos')) return 'Catálogo de Medicamentos'
     if (path.startsWith('/solicitacoes')) return 'Solicitações de Padronização'
+    if (path.startsWith('/pacientes')) return 'Pacientes (SpinCare)'
+    if (path.startsWith('/orcamentos')) return 'Orçamentos Aprovados (SpinCare)'
     if (path.startsWith('/importar')) return 'Importar Lista Padronizada (PDF)'
     if (path.startsWith('/equipe')) return 'Gestão de Contas da Equipe'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
@@ -218,6 +222,9 @@ export default function Layout() {
   }
 
   // Itens da barra de navegação lateral (Desktop)
+  // Médicos visitadores NÃO têm acesso a pacientes nem orçamentos (LGPD)
+  const canAccessSpincare = !isMedicoVisitador
+
   const navItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
     { title: 'Medicamentos', path: '/medicamentos', icon: Pill },
@@ -227,6 +234,12 @@ export default function Layout() {
       icon: FileQuestion,
       badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
     },
+    ...(canAccessSpincare
+      ? [
+          { title: 'Pacientes', path: '/pacientes', icon: UserSquare2 },
+          { title: 'Orçamentos', path: '/orcamentos', icon: DollarSign },
+        ]
+      : []),
     ...(isAdmin ? [{ title: 'Importar PDF', path: '/importar', icon: FileUp }] : []),
     ...(isAdmin
       ? [
@@ -510,6 +523,35 @@ export default function Layout() {
                   </p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {canAccessSpincare && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => navigate('/pacientes')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50 flex items-center justify-between"
+                    >
+                      <div className="flex items-center">
+                        <UserSquare2 size={14} className="mr-2 text-[#0D8272]" />
+                        <span>Pacientes (SpinCare)</span>
+                      </div>
+                      <span className="bg-emerald-50 text-[#0C4336] text-[9px] font-bold px-1.5 py-0.2 rounded border border-emerald-200">
+                        Ao Vivo
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => navigate('/orcamentos')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50 flex items-center justify-between"
+                    >
+                      <div className="flex items-center">
+                        <DollarSign size={14} className="mr-2 text-[#0D8272]" />
+                        <span>Orçamentos (&ge; 2026)</span>
+                      </div>
+                      <span className="bg-[#FEF8EC] text-[#92400E] text-[9px] font-bold px-1.5 py-0.2 rounded border border-[#F5B31C]/40">
+                        &ge; 2026
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 {isAdmin && (
                   <>
                     <DropdownMenuItem

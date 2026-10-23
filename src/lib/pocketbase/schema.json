@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T20:12:50.094Z",
+  "generatedAt": "2026-10-23T12:02:37.562Z",
   "collections": [
     {
       "name": "users",
@@ -385,6 +385,101 @@
         "CREATE INDEX idx_audit_acao ON audit_logs (acao)",
         "CREATE INDEX idx_audit_created ON audit_logs (created DESC)"
       ]
+    },
+    {
+      "name": "spincare_config",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')"
+      },
+      "fields": [
+        {
+          "name": "base_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "auth_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["bearer", "api_key_header", "basic"]
+        },
+        {
+          "name": "header_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "token_prefix",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "api_token",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "endpoint_patients",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "endpoint_budgets",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_tested_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_test_status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_test_message",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": []
     }
   ]
 }
