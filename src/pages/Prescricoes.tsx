@@ -234,7 +234,20 @@ export default function Prescricoes() {
 
     // Se temos resultado da rota server-side dedicada:
     if (serverCheckResult) {
-      const occurrences: OccurrenceItem[] = serverCheckResult.occurrences.map((occ) => {
+      // Regra de segurança estrita no cliente: mesmo em qualquer eventualidade,
+      // se o usuário buscou por um paciente, NUNCA exibe ocorrências de outro paciente
+      const normClientPat = activeCheckPatient ? normalize(activeCheckPatient) : ''
+      const clientPatWords = normClientPat ? normClientPat.split(' ').filter(Boolean) : []
+
+      const validRawOccurrences = serverCheckResult.occurrences.filter((occ) => {
+        if (clientPatWords.length > 0) {
+          const normOccPat = normalize(occ.pacienteNome)
+          return clientPatWords.every((w) => normOccPat.includes(w))
+        }
+        return true
+      })
+
+      const occurrences: OccurrenceItem[] = validRawOccurrences.map((occ) => {
         // Encontra ou monta a prescrição
         const existing = allPrescriptions.find((p) => p.id === occ.prescricaoId)
         const presc: SpincarePrescription = existing || {
@@ -253,10 +266,12 @@ export default function Prescricoes() {
               codigo: occ.item.codigo,
               descricao: occ.item.descricao,
               posologia: occ.item.posologia || occ.item.dose,
+              dose: occ.item.dose,
               viaAdministracao: occ.item.viaAdministracao,
               unidade: occ.item.unidade,
               quantidade: occ.item.quantidade,
               observacao: occ.item.observacao,
+              fornecimento: occ.item.fornecimento,
             },
           ],
         }
@@ -266,10 +281,12 @@ export default function Prescricoes() {
           codigo: occ.item.codigo,
           descricao: occ.item.descricao,
           posologia: occ.item.posologia || occ.item.dose,
+          dose: occ.item.dose,
           viaAdministracao: occ.item.viaAdministracao,
           unidade: occ.item.unidade,
           quantidade: occ.item.quantidade,
           observacao: occ.item.observacao,
+          fornecimento: occ.item.fornecimento,
         }
 
         return { presc, item }
@@ -364,9 +381,28 @@ export default function Prescricoes() {
       // 3. Verificação dos itens da prescrição com o medicamento
       p.itens.forEach((it) => {
         const desc = normalize(it.descricao)
-        const isSubstring = desc.includes(qMed) || qMed.includes(desc)
-        const isWordsMatch = medWords.length > 0 && medWords.every((w) => desc.includes(w))
-        if (isSubstring || isWordsMatch) {
+        let isMatch = desc.includes(qMed) || qMed.includes(desc)
+        if (!isMatch && medWords.length > 0 && medWords.every((w) => desc.includes(w))) {
+          isMatch = true
+        }
+        if (
+          !isMatch &&
+          qMed.includes('insulina') &&
+          (desc.includes('lantus') ||
+            desc.includes('glargina') ||
+            desc.includes('tresiba') ||
+            desc.includes('novorapid') ||
+            desc.includes('humalog') ||
+            desc.includes('nph') ||
+            desc.includes('regular') ||
+            desc.includes('degludeca') ||
+            desc.includes('lispro') ||
+            desc.includes('aspart'))
+        ) {
+          isMatch = true
+        }
+
+        if (isMatch) {
           occurrences.push({ presc: p, item: it })
           matchingPrescriptionIds.add(p.id)
         }
@@ -805,6 +841,14 @@ export default function Prescricoes() {
                                 (occ.item as unknown as { fornecimento?: string })
                                   .fornecimento) && (
                                 <div className="pt-1 border-t border-emerald-200/60 flex flex-wrap items-center gap-3 text-[11px] text-slate-700">
+                                  {occ.item.dose && (
+                                    <span>
+                                      <span className="text-slate-400 font-medium">Dose: </span>
+                                      <strong className="text-emerald-900">
+                                        {occ.item.dose} {occ.item.unidade || ''}
+                                      </strong>
+                                    </span>
+                                  )}
                                   {occ.item.posologia && (
                                     <span>
                                       <span className="text-slate-400 font-medium">
@@ -831,10 +875,18 @@ export default function Prescricoes() {
                                     .fornecimento && (
                                     <Badge className="bg-amber-100 text-amber-900 border-amber-200 text-[10px] font-bold">
                                       F/P:{' '}
-                                      {
-                                        (occ.item as unknown as { fornecimento?: string })
-                                          .fornecimento
-                                      }
+                                      {(occ.item as unknown as { fornecimento?: string })
+                                        .fornecimento === 'e' ||
+                                      (occ.item as unknown as { fornecimento?: string })
+                                        .fornecimento === 'Empresa'
+                                        ? 'Empresa'
+                                        : (occ.item as unknown as { fornecimento?: string })
+                                              .fornecimento === 'o' ||
+                                            (occ.item as unknown as { fornecimento?: string })
+                                              .fornecimento === 'Operadora'
+                                          ? 'Operadora'
+                                          : (occ.item as unknown as { fornecimento?: string })
+                                              .fornecimento}
                                     </Badge>
                                   )}
                                 </div>

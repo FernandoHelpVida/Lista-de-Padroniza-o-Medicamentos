@@ -15,9 +15,10 @@
 // ----------------------------------------------------------------------------
 // ROTA 1: GET /backend/v1/spincare/config
 // ----------------------------------------------------------------------------
+
 routerAdd(
-  'GET',
-  '/backend/v1/spincare/config',
+  'POST',
+  '/backend/v1/spincare/check-medication',
   (e) => {
     try {
       const authUser = e.auth
@@ -28,10 +29,9 @@ routerAdd(
       const role = authUser.getString('role') || 'comum'
       if (role === 'medico_visitador') {
         return e.forbiddenError(
-          'Acesso restrito: Médicos Visitadores não possuem autorização para consultar dados de pacientes ou orçamentos.',
+          'Acesso restrito: Médicos Visitadores não possuem autorização para consultar prescrições médicas.',
         )
       }
-
       const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
       if (!records || records.length === 0) {
         return e.json(200, {
@@ -302,21 +302,36 @@ routerAdd(
           const normTargetPat = norm(patientName)
           const targetWords = normTargetPat.split(' ').filter(Boolean)
           console.log('[check-medication] Pacientes retornados da API:', patList.length)
-          const matchPat = patList.find((p) => {
-            const pNorm = norm(p.name || p.nome || '')
-            return targetWords.every((w) => pNorm.includes(w))
-          })
-          if (matchPat && matchPat.id) {
-            resolvedPatientId = String(matchPat.id)
-            resolvedPatientNameFromApi = String(matchPat.name || matchPat.nome || '')
+          if (patList.length > 0) {
             console.log(
-              '[check-medication] Paciente resolvido com sucesso:',
-              resolvedPatientNameFromApi,
-              'ID:',
-              resolvedPatientId,
+              '[check-medication] Amostra paciente retornado:',
+              JSON.stringify(patList[0]).slice(0, 300),
             )
+          }
+          const matchPat = patList.find((p) => {
+            const pName = p.name || p.nome || p.nm_paciente || p.patient_name || ''
+            const pNorm = norm(pName)
+            return targetWords.length > 0 && targetWords.every((w) => pNorm.includes(w))
+          })
+          if (matchPat) {
+            const resolvedId = matchPat.id || matchPat.patient_id || matchPat.id_paciente
+            const resolvedName =
+              matchPat.name || matchPat.nome || matchPat.nm_paciente || matchPat.patient_name || ''
+            if (resolvedId) {
+              resolvedPatientId = String(resolvedId)
+              resolvedPatientNameFromApi = String(resolvedName)
+              console.log(
+                '[check-medication] Paciente resolvido com sucesso:',
+                resolvedPatientNameFromApi,
+                'ID:',
+                resolvedPatientId,
+              )
+            }
           } else {
-            console.log('[check-medication] Paciente não correspondido na lista de pacientes')
+            console.log(
+              '[check-medication] Paciente não correspondido na lista de pacientes:',
+              patientName,
+            )
           }
         } catch (patErr) {
           console.warn('Erro ao tentar pré-resolver paciente no check-medication:', patErr)
@@ -331,6 +346,7 @@ routerAdd(
         withPatientFilter,
         overrideInitialDt,
         overrideFinalDt,
+        explicitPatientId,
       ) => {
         let pUrl =
           baseUrl +
@@ -347,8 +363,9 @@ routerAdd(
         if (finalParam) {
           pUrl += '&final_dt=' + encodeURIComponent(finalParam)
         }
-        if (withPatientFilter && resolvedPatientId) {
-          pUrl += '&patient_id=' + encodeURIComponent(resolvedPatientId)
+        const pidToUse = explicitPatientId || (withPatientFilter ? resolvedPatientId : '')
+        if (pidToUse) {
+          pUrl += '&patient_id=' + encodeURIComponent(pidToUse)
         }
 
         const reqHeaders = {
@@ -482,17 +499,20 @@ routerAdd(
       let allRawPrescriptions = []
       let analyzedCount = 0
 
+      const normTargetPat = patientName ? norm(patientName) : ''
+      const targetWords = normTargetPat ? normTargetPat.split(' ').filter(Boolean) : []
+
       // ESTRATÉGIA DE VARREDURA EXAUSTIVA:
       // O objetivo é encontrar com 100% de precisão as prescrições médicas na SpinCare.
-      // 1) Se conseguimos resolver o patient_id, buscamos primeiramente as prescrições dele direto na API
-      //    (com janela ampla desde 2026-01-01 para capturar prescrições criadas em meses anteriores mas vigentes no período).
+      // 1) Se conseguimos resolver o patient_id com certeza (todas as palavras do nome bateram),
+      //    buscamos primeiramente as prescrições dele direto na API com patient_id
       if (resolvedPatientId) {
         console.log(
           '[check-medication] Fase 1: buscando prescrições para patient_id:',
           resolvedPatientId,
           'com janela ampla de vigência desde 2026-01-01',
         )
-        for (let p = 1; p <= 25; p++) {
+        for (let p = 1; p <= 15; p++) {
           const resP = fetchPrescriptionsPage(p, 100, true, '2026-01-01 00:00:00', '')
           if (resP.error || !resP.items || resP.items.length === 0) break
           allRawPrescriptions = allRawPrescriptions.concat(resP.items)
@@ -500,12 +520,29 @@ routerAdd(
         }
       }
 
-      // 2) Se não resolveu patient_id OU se a busca com patient_id na API não trouxe nenhuma prescrição,
-      //    executa a varredura ampla de todas as páginas da API (lotes de 100)
+      // Verificação de segurança: as prescrições obtidas de fato contêm o paciente procurado?
+      if (patientName && allRawPrescriptions.length > 0) {
+        const hasTarget = allRawPrescriptions.some((pr) => {
+          const pnome = norm(extractPatientName(pr))
+          return targetWords.every((w) => pnome.includes(w))
+        })
+        if (!hasTarget) {
+          console.log(
+            '[check-medication] As prescrições obtidas com patient_id ' +
+              resolvedPatientId +
+              ' não pertencem a "' +
+              patientName +
+              '". Descartando lote inválido e executando varredura.',
+          )
+          allRawPrescriptions = []
+        }
+      }
+
+      // 2) Se não temos prescrições ainda (ex: /patients devolveu nome truncado ou homônimo):
+      //    Varre as prescrições a partir de 2026-01-01.
+      //    Ao encontrar a primeira prescrição do paciente procurado, descobre o patient_id real dele
+      //    e busca o histórico completo de prescrições dele diretamente!
       if (allRawPrescriptions.length === 0) {
-        // Para cobrir prescrições criadas antes do período (ex: criadas em 24/07/2026 com vigência em setembro),
-        // se o usuário buscou um paciente específico iniciamos a varredura desde 2026-01-01.
-        // Se não especificou paciente, varre no período informado (ou desde 2026-01-01 se for no ano de 2026).
         const sweepInitialDt =
           patientName && isoStart > '2026-01-01'
             ? '2026-01-01 00:00:00'
@@ -517,14 +554,59 @@ routerAdd(
           '[check-medication] Fase 2: varredura exaustiva de prescrições em lotes de 100 a partir de:',
           sweepInitialDt,
         )
+
+        let discoveredPatientId = ''
+
         for (let p = 1; p <= 35; p++) {
           const resP = fetchPrescriptionsPage(p, 100, false, sweepInitialDt, '')
           if (resP.error || !resP.items || resP.items.length === 0) break
-          allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+
+          if (targetWords.length > 0) {
+            for (let i = 0; i < resP.items.length; i++) {
+              const pr = resP.items[i]
+              const pnome = norm(extractPatientName(pr))
+              if (targetWords.every((w) => pnome.includes(w))) {
+                allRawPrescriptions.push(pr)
+                if (!discoveredPatientId && (pr.patient_id || pr.id_paciente)) {
+                  discoveredPatientId = String(pr.patient_id || pr.id_paciente)
+                }
+              }
+            }
+
+            // Aceleração: se encontramos o ID real do paciente na primeira página em que ele apareceu,
+            // consultamos diretamente as prescrições dele para garantir 100% de integridade
+            if (discoveredPatientId) {
+              console.log(
+                '[check-medication] Patient_id real descoberto via prescrições:',
+                discoveredPatientId,
+                '. Carregando prescrições do paciente...',
+              )
+              const directPrescs = []
+              for (let pp = 1; pp <= 10; pp++) {
+                const rPP = fetchPrescriptionsPage(
+                  pp,
+                  100,
+                  false,
+                  '2026-01-01 00:00:00',
+                  '',
+                  discoveredPatientId,
+                )
+                if (rPP.error || !rPP.items || rPP.items.length === 0) break
+                directPrescs.push(...rPP.items)
+                if (rPP.items.length < 100) break
+              }
+              if (directPrescs.length > 0) {
+                allRawPrescriptions = directPrescs
+                break
+              }
+            }
+          } else {
+            allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+          }
+
           if (resP.items.length < 100) break
         }
       }
-
       // Deduplicação por id das prescrições coletadas na varredura
       const seenIds = {}
       const dedupedPrescriptions = []
@@ -577,7 +659,8 @@ routerAdd(
           const it = rawItems[j]
           if (!it) continue
           const desc = String(
-            it.description ||
+            it.itemDescription ||
+              it.description ||
               it.ds_produto ||
               it.ds_item ||
               it.descricao ||
@@ -591,12 +674,28 @@ routerAdd(
           const normDesc = norm(desc)
           const normObs = norm(obs)
 
+          // Casamento inteligente de medicamento:
+          // Se o usuário procurou INSULINA, LANTUS (Insulina Glargina) é uma insulina e deve ser reconhecido!
           let isMedMatch = false
           if (normDesc.includes(normMedTarget) || normMedTarget.includes(normDesc)) {
             isMedMatch = true
           } else if (
             medWords.length > 0 &&
             medWords.every((w) => normDesc.includes(w) || normObs.includes(w))
+          ) {
+            isMedMatch = true
+          } else if (
+            normMedTarget.includes('insulina') &&
+            (normDesc.includes('lantus') ||
+              normDesc.includes('glargina') ||
+              normDesc.includes('tresiba') ||
+              normDesc.includes('novorapid') ||
+              normDesc.includes('humalog') ||
+              normDesc.includes('nph') ||
+              normDesc.includes('regular') ||
+              normDesc.includes('degludeca') ||
+              normDesc.includes('lispro') ||
+              normDesc.includes('aspart'))
           ) {
             isMedMatch = true
           }
@@ -611,19 +710,15 @@ routerAdd(
           continue
         }
 
-        // 1. FILTRO DE PACIENTE (se informado): NOME TOLERANTE OU ID
-        // Regra estrita de saúde: se o usuário digitou o paciente (ex: "Ademir Rostirolla"),
-        // TODAS as palavras significativas do nome do paciente devem estar presentes no nome retornado,
-        // OU se o ID do paciente foi resolvido, o ID deve bater.
+        // 1. FILTRO DE PACIENTE (se informado):
+        // REGRA DE OURO DE SAÚDE: O paciente da prescrição DEVE ser o paciente procurado.
+        // Se o usuário digitou o nome do paciente (ex: "Ademir Rostirolla"), NUNCA podemos aceitar
+        // outro paciente (ex: "Abhner Gabriel") mesmo que um ID tenha sido confundido.
+        // O nome do paciente na prescrição DEVE conter TODAS as palavras do nome buscado.
         let patientMatches = true
         if (patWords.length > 0) {
-          // Todas as palavras do paciente procurado devem estar contidas no nome do paciente da prescrição
           const matchesAllWords = patWords.every((w) => normPnome.includes(w))
-          const matchesId = Boolean(
-            resolvedPatientId && pid && String(pid).trim() === String(resolvedPatientId).trim(),
-          )
-
-          patientMatches = matchesAllWords || matchesId
+          patientMatches = matchesAllWords
         }
 
         // 2. FILTRO DE PERÍODO:
@@ -747,12 +842,28 @@ routerAdd(
               '',
           ).trim()
           const via = String(
-            it.route || it.via || it.via_administracao || it.administration_route || '',
+            it.admin_route ||
+              it.route ||
+              it.via ||
+              it.via_administracao ||
+              it.administration_route ||
+              '',
           ).trim()
           const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
-          const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+          const rawDose =
+            it.dose_qt !== undefined && it.dose_qt !== null
+              ? it.dose_qt
+              : it.dose || it.dosage || ''
+          const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
+          const qtd = Number(it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1))
           const fp = String(
-            it.funding_source || it.fp || it.f_p || it.source || it.tipo_fornecimento || '',
+            it.supplied_type ||
+              it.funding_source ||
+              it.fp ||
+              it.f_p ||
+              it.source ||
+              it.tipo_fornecimento ||
+              '',
           ).trim()
 
           const occurrence = {
@@ -766,11 +877,11 @@ routerAdd(
             dataFinal: dataFinalFormatada,
             status: String(raw.status || 'Liberada'),
             item: {
-              id: String(it.id || it.item_id || m.index),
-              codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+              id: String(it.id || it.item_id || it.itemId || it.recordId || m.index),
+              codigo: String(it.code || it.codigo || it.product_code || it.itemId || '').trim(),
               descricao: desc,
               posologia: poso,
-              dose: String(it.dose || it.dosage || '').trim(),
+              dose: doseStr,
               viaAdministracao: via,
               unidade: unit,
               quantidade: qtd,
