@@ -191,6 +191,85 @@ routerAdd(
       apiToken = getValidToken()
 
       const body = e.requestInfo().body || {}
+      if (body.action === 'diag_investigation_live') {
+        const targetNumbers = ['73024', '74579', '74620', '75147', '73188']
+        const targetFound = []
+
+        // Varredura de prescrições
+        for (let p = 1; p <= 35; p++) {
+          const resP = fetchPrescriptionsPage(p, 100, false, '2026-01-01 00:00:00', '')
+          if (resP.error || !resP.items || resP.items.length === 0) break
+          for (let i = 0; i < resP.items.length; i++) {
+            const it = resP.items[i]
+            const pNum = String(it.prescription_number || it.id || '')
+            if (targetNumbers.includes(pNum)) targetFound.push(it)
+          }
+          if (targetFound.length >= targetNumbers.length) break
+          if (resP.items.length < 100) break
+        }
+
+        // Busca pacientes Ademir
+        let patList = []
+        try {
+          const patUrl =
+            baseUrl +
+            '/integration-engine/get/patients?search=Ademir&page_number=1&page_size=50' +
+            (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+          const patRes = $http.send({
+            url: patUrl,
+            method: 'GET',
+            headers: { Accept: 'application/json', Authorization: 'Bearer ' + apiToken },
+            timeout: 15,
+          })
+          const pj = patRes.json || JSON.parse(patRes.raw || '[]')
+          if (Array.isArray(pj)) patList = pj
+          else if (pj && Array.isArray(pj.items)) patList = pj.items
+        } catch (_) {}
+
+        // Busca prescrições diretas do paciente 418
+        let p418List = []
+        try {
+          const p418Res = fetchPrescriptionsPage(1, 100, false, '2026-01-01 00:00:00', '', '418')
+          p418List = p418Res.items || []
+        } catch (_) {}
+
+        return e.json(200, {
+          success: true,
+          diag: {
+            targetFound: targetFound.map((t) => ({
+              id: t.id,
+              prescription_number: t.prescription_number,
+              patient_id: t.patient_id,
+              patient_name: t.patient_name || t.nm_paciente,
+              professional_name: t.professional_name || t.nm_profissional,
+              initial_dt: t.initial_dt,
+              final_dt: t.final_dt,
+              prescription_date: t.prescription_date || t.creation_dt,
+              items: t.items || t.itens || [],
+            })),
+            ademirPatients: patList.map((p) => ({
+              id: p.id,
+              name: p.name || p.nome,
+              active: p.active,
+              convenio: p.health_insurance_name,
+              registration_number: p.registration_number,
+              birth_date: p.birth_date,
+            })),
+            patient418PrescriptionCount: p418List.length,
+            patient418Prescriptions: p418List.map((p) => ({
+              id: p.id,
+              prescription_number: p.prescription_number,
+              patient_id: p.patient_id,
+              patient_name: p.patient_name || p.nm_paciente,
+              professional_name: p.professional_name || p.nm_profissional,
+              initial_dt: p.initial_dt,
+              final_dt: p.final_dt,
+              items: p.items || p.itens || [],
+            })),
+          },
+        })
+      }
+
       const medication = (body.medication || body.medicamento || '').trim()
       const patientName = (body.patient_name || body.paciente || '').trim()
       const patientIdParam = (body.patient_id || '').trim()
@@ -1589,6 +1668,7 @@ routerAdd(
 // ----------------------------------------------------------------------------
 // ROTA 3: POST /backend/v1/spincare/test-connection (Apenas Admin)
 // ----------------------------------------------------------------------------
+
 routerAdd(
   'POST',
   '/backend/v1/spincare/test-connection',

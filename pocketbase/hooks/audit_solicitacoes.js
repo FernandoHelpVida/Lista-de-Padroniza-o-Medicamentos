@@ -60,6 +60,7 @@ onRecordAfterCreateSuccess((e) => {
 }, 'solicitacoes')
 
 // 2. Hook onRecordAfterUpdateSuccess for solicitacoes
+
 onRecordAfterUpdateSuccess((e) => {
   try {
     const record = e.record
@@ -132,6 +133,7 @@ onRecordAfterUpdateSuccess((e) => {
 }, 'solicitacoes')
 
 // 3. Hook onRecordAfterDeleteSuccess for solicitacoes
+
 onRecordAfterDeleteSuccess((e) => {
   try {
     const record = e.record
