@@ -35,8 +35,10 @@ import {
 } from 'lucide-react'
 import {
   getSpincarePrescriptions,
+  checkSpincareMedicationPrescribed,
   type SpincarePrescription,
   type SpincarePrescriptionItem,
+  type CheckMedicationResult,
 } from '@/services/spincare'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { SpincareTabsNav } from '@/components/SpincareTabsNav'
@@ -96,8 +98,6 @@ export default function Prescricoes() {
     setUnconfigured(false)
     setDisplayLimit(50)
     try {
-      // Se houver busca por paciente específica informada no formulário de verificação,
-      // enviamos também para o endpoint da API para otimizar caso o backend suporte
       const res = await getSpincarePrescriptions({
         startDate: startDate.trim() || '2026-01-01',
         endDate: endDate.trim() || undefined,
@@ -163,9 +163,10 @@ export default function Prescricoes() {
   }
 
   // Handler da busca combinada de medicamento
-  const handleExecuteCombinedSearch = (e?: React.FormEvent) => {
+  const handleExecuteCombinedSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (!medQuery.trim()) {
+    const targetMed = medQuery.trim()
+    if (!targetMed) {
       toast({
         title: 'Nome do medicamento obrigatório',
         description: 'Digite o nome do medicamento para verificar as prescrições.',
@@ -174,12 +175,32 @@ export default function Prescricoes() {
       return
     }
 
-    setActiveCheckMed(medQuery.trim())
-    setActiveCheckPatient(patientQuery.trim())
-    setActiveCheckStart(startDate.trim() || '2026-01-01')
-    setActiveCheckEnd(endDate.trim() || hojeIso)
+    const targetPatient = patientQuery.trim()
+    const targetStart = startDate.trim() || '2026-01-01'
+    const targetEnd = endDate.trim() || hojeIso
+
+    setActiveCheckMed(targetMed)
+    setActiveCheckPatient(targetPatient)
+    setActiveCheckStart(targetStart)
+    setActiveCheckEnd(targetEnd)
     setHasExecutedMedCheck(true)
     setDisplayLimit(50)
+    setServerCheckLoading(true)
+
+    try {
+      const res = await checkSpincareMedicationPrescribed({
+        medication: targetMed,
+        patientName: targetPatient || undefined,
+        startDate: targetStart,
+        endDate: targetEnd,
+      })
+      setServerCheckResult(res)
+    } catch (err: unknown) {
+      console.warn('Falha na rota server-side de busca combinada, utilizando fallback:', err)
+      setServerCheckResult(null)
+    } finally {
+      setServerCheckLoading(false)
+    }
   }
 
   const handleClearCombinedSearch = () => {
@@ -191,6 +212,7 @@ export default function Prescricoes() {
     setActiveCheckPatient('')
     setActiveCheckStart('2026-01-01')
     setActiveCheckEnd(hojeIso)
+    setServerCheckResult(null)
     setHasExecutedMedCheck(false)
     setDisplayLimit(50)
   }
@@ -201,12 +223,82 @@ export default function Prescricoes() {
     item: SpincarePrescriptionItem
   }
 
-  // Cálculo das ocorrências combinadas quando a busca por medicamento está ativa
+  // Resultado direto da verificação combinada server-side (garante busca exaustiva)
+  const [serverCheckResult, setServerCheckResult] = useState<CheckMedicationResult | null>(null)
+  const [serverCheckLoading, setServerCheckLoading] = useState(false)
+
+  // Cálculo das ocorrências combinadas
+  // Se houver resultado do servidor, prioriza o resultado do servidor (que varreu todas as páginas de 100 até esgotar)
   const combinedSearchResults = useMemo(() => {
     if (!hasExecutedMedCheck || !activeCheckMed.trim()) return null
 
+    // Se temos resultado da rota server-side dedicada:
+    if (serverCheckResult) {
+      const occurrences: OccurrenceItem[] = serverCheckResult.occurrences.map((occ) => {
+        // Encontra ou monta a prescrição
+        const existing = allPrescriptions.find((p) => p.id === occ.prescricaoId)
+        const presc: SpincarePrescription = existing || {
+          id: occ.prescricaoId,
+          numero: occ.prescricaoNumero,
+          pacienteId: occ.pacienteId,
+          pacienteNome: occ.pacienteNome,
+          medicoPrescritor: occ.medicoPrescritor,
+          dataPrescricao: occ.dataPrescricao,
+          dataInicial: occ.dataInicial,
+          dataFinal: occ.dataFinal,
+          status: occ.status,
+          itens: [
+            {
+              id: occ.item.id,
+              codigo: occ.item.codigo,
+              descricao: occ.item.descricao,
+              posologia: occ.item.posologia || occ.item.dose,
+              viaAdministracao: occ.item.viaAdministracao,
+              unidade: occ.item.unidade,
+              quantidade: occ.item.quantidade,
+              observacao: occ.item.observacao,
+            },
+          ],
+        }
+
+        const item: SpincarePrescriptionItem = {
+          id: occ.item.id,
+          codigo: occ.item.codigo,
+          descricao: occ.item.descricao,
+          posologia: occ.item.posologia || occ.item.dose,
+          viaAdministracao: occ.item.viaAdministracao,
+          unidade: occ.item.unidade,
+          quantidade: occ.item.quantidade,
+          observacao: occ.item.observacao,
+        }
+
+        return { presc, item }
+      })
+
+      const uniquePatients = Array.from(new Set(occurrences.map((o) => o.presc.pacienteNome)))
+      const matchingIds = new Set(occurrences.map((o) => o.presc.id))
+      const uniquePrescriptions = occurrences
+        .map((o) => o.presc)
+        .filter((p, idx, arr) => arr.findIndex((x) => x.id === p.id) === idx)
+
+      return {
+        queryMed: serverCheckResult.searchedMedication || activeCheckMed,
+        queryPatient: serverCheckResult.searchedPatient || activeCheckPatient,
+        startDate: serverCheckResult.startDate || activeCheckStart,
+        endDate: serverCheckResult.endDate || activeCheckEnd,
+        occurrences,
+        uniquePatients,
+        uniquePrescriptions,
+        analyzedCount: serverCheckResult.analyzedPrescriptionsCount,
+        isServerSide: true,
+      }
+    }
+
+    // Fallback em memória sobre allPrescriptions com algoritmo tolerante NFD
     const qMed = normalize(activeCheckMed)
+    const medWords = qMed.split(' ').filter((w) => w.length > 1)
     const qPatient = activeCheckPatient ? normalize(activeCheckPatient) : ''
+    const patWords = qPatient.split(' ').filter(Boolean)
     const startComp = parseDateToComparable(activeCheckStart)
     const endComp = parseDateToComparable(activeCheckEnd)
 
@@ -214,10 +306,12 @@ export default function Prescricoes() {
     const matchingPrescriptionIds = new Set<string>()
 
     allPrescriptions.forEach((p) => {
-      // 1. Filtro por paciente (tolerante, aceita parcial)
-      if (qPatient) {
+      // 1. Filtro por paciente (tolerante, aceita qualquer combinação de palavras)
+      if (patWords.length > 0) {
         const pNome = normalize(p.pacienteNome)
-        if (!pNome.includes(qPatient) && !qPatient.includes(pNome)) {
+        const matchWords = patWords.every((w) => pNome.includes(w))
+        const matchFull = pNome.includes(qPatient) || qPatient.includes(pNome)
+        if (!matchWords && !matchFull) {
           return
         }
       }
@@ -237,7 +331,9 @@ export default function Prescricoes() {
       // 3. Verificação dos itens da prescrição com o medicamento
       p.itens.forEach((it) => {
         const desc = normalize(it.descricao)
-        if (desc === qMed || desc.includes(qMed) || qMed.includes(desc)) {
+        const isSubstring = desc.includes(qMed) || qMed.includes(desc)
+        const isWordsMatch = medWords.length > 0 && medWords.every((w) => desc.includes(w))
+        if (isSubstring || isWordsMatch) {
           occurrences.push({ presc: p, item: it })
           matchingPrescriptionIds.add(p.id)
         }
@@ -255,6 +351,8 @@ export default function Prescricoes() {
       occurrences,
       uniquePatients,
       uniquePrescriptions,
+      analyzedCount: allPrescriptions.length,
+      isServerSide: false,
     }
   }, [
     hasExecutedMedCheck,
@@ -262,6 +360,7 @@ export default function Prescricoes() {
     activeCheckPatient,
     activeCheckStart,
     activeCheckEnd,
+    serverCheckResult,
     allPrescriptions,
   ])
 
@@ -499,177 +598,245 @@ export default function Prescricoes() {
               <div className="md:col-span-1 flex items-end">
                 <Button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || serverCheckLoading}
                   className="w-full h-11 min-h-[44px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
                   title="Executar Verificação Combinada"
                 >
-                  <Search size={15} className="shrink-0" />
+                  {serverCheckLoading ? (
+                    <Loader2 size={15} className="shrink-0 animate-spin" />
+                  ) : (
+                    <Search size={15} className="shrink-0" />
+                  )}
                   <span className="md:hidden">Consultar</span>
                 </Button>
               </div>
             </div>
           </form>
 
-          {/* RESUMO CLARO NO TOPO (Requisito 2) */}
-          {hasExecutedMedCheck && combinedSearchResults && (
-            <div className="pt-2">
-              {combinedSearchResults.occurrences.length > 0 ? (
-                <div className="p-3.5 rounded-xl bg-white border border-emerald-300 text-xs space-y-2.5 shadow-2xs">
-                  <div className="flex items-start gap-2 text-emerald-950 font-bold">
-                    <CheckCircle2 size={18} className="text-emerald-700 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-xs sm:text-sm text-emerald-900 leading-snug">
-                        Encontrada{combinedSearchResults.occurrences.length === 1 ? '' : 's'}{' '}
-                        <strong>{combinedSearchResults.occurrences.length}</strong> prescriç
-                        {combinedSearchResults.occurrences.length === 1 ? 'ão' : 'ões'} com o
-                        medicamento <strong>&quot;{combinedSearchResults.queryMed}&quot;</strong>
-                        {combinedSearchResults.queryPatient ? (
-                          <>
-                            {' '}
-                            para o paciente{' '}
-                            <strong>&quot;{combinedSearchResults.queryPatient}&quot;</strong>
-                          </>
-                        ) : (
-                          <>
-                            {' '}
-                            em <strong>{combinedSearchResults.uniquePatients.length}</strong>{' '}
-                            paciente(s)
-                          </>
-                        )}{' '}
-                        no período de{' '}
-                        <strong>{formatIsoToBr(combinedSearchResults.startDate)}</strong> até{' '}
-                        <strong>{formatIsoToBr(combinedSearchResults.endDate)}</strong>.
-                      </p>
-                      <p className="text-[11px] text-slate-500 font-normal mt-1">
-                        Veja abaixo a lista discriminada com número da prescrição, data, médico
-                        prescritor, posologia, via e quantidade.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* CARDS EMPILHADOS DAS OCORRÊNCIAS (Mobile-First) */}
-                  <div className="space-y-2 pt-1 border-t border-emerald-100">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                      Ocorrências Discriminadas do Medicamento:
-                    </span>
-                    <div className="grid grid-cols-1 gap-2">
-                      {combinedSearchResults.occurrences.map((occ, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => {
-                            setSelectedPrescription(occ.presc)
-                            setDetailModalOpen(true)
-                          }}
-                          className="p-3 rounded-xl bg-emerald-50/50 hover:bg-emerald-100/50 border border-emerald-200 transition cursor-pointer space-y-1.5"
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                            <div className="flex items-center gap-2">
-                              <span className="h-5 w-5 rounded-md bg-emerald-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
-                                {idx + 1}
-                              </span>
-                              <span className="font-bold text-slate-900 text-xs sm:text-sm">
-                                {occ.item.descricao}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5 self-start sm:self-auto">
-                              <Badge className="bg-white text-emerald-800 border-emerald-300 text-[10px] font-bold">
-                                Prescrição #{occ.presc.numero}
-                              </Badge>
-                              <Badge className="bg-emerald-100 text-emerald-900 border-emerald-200 text-[10px]">
-                                {occ.presc.status}
-                              </Badge>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 pt-1 text-[11px] text-slate-600">
-                            <div>
-                              <span className="text-slate-400 block text-[10px]">Paciente:</span>
-                              <strong className="text-slate-900 break-words">
-                                {occ.presc.pacienteNome}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span className="text-slate-400 block text-[10px]">
-                                Data da Prescrição:
-                              </span>
-                              <strong className="text-slate-800">{occ.presc.dataPrescricao}</strong>
-                            </div>
-
-                            <div>
-                              <span className="text-slate-400 block text-[10px]">
-                                Médico Prescritor:
-                              </span>
-                              <strong className="text-[#0C4336] break-words">
-                                {occ.presc.medicoPrescritor}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span className="text-slate-400 block text-[10px]">Quantidade:</span>
-                              <strong className="text-slate-800 font-mono">
-                                {occ.item.quantidade || 1} {occ.item.unidade || ''}
-                              </strong>
-                            </div>
-                          </div>
-
-                          {(occ.item.posologia || occ.item.viaAdministracao) && (
-                            <div className="pt-1 border-t border-emerald-200/60 flex flex-wrap items-center gap-3 text-[11px] text-slate-700">
-                              {occ.item.posologia && (
-                                <span>
-                                  <span className="text-slate-400 font-medium">Posologia: </span>
-                                  <strong>{occ.item.posologia}</strong>
-                                </span>
-                              )}
-                              {occ.item.viaAdministracao && (
-                                <span>
-                                  <span className="text-slate-400 font-medium">Via: </span>
-                                  <strong>{occ.item.viaAdministracao}</strong>
-                                </span>
-                              )}
-                              {occ.item.frequencia && (
-                                <span>
-                                  <span className="text-slate-400 font-medium">Frequência: </span>
-                                  <strong>{occ.item.frequencia}</strong>
-                                </span>
-                              )}
-                            </div>
-                          )}
+          {/* RESUMO CLARO NO TOPO COM AUDITORIA EXAUSTIVA */}
+          {hasExecutedMedCheck &&
+            (serverCheckLoading ? (
+              <div className="p-4 rounded-xl bg-white border border-blue-200 text-xs flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-600 shrink-0" />
+                <div className="text-blue-950">
+                  <p className="font-bold">Realizando busca combinada exaustiva no SpinCare...</p>
+                  <p className="text-[11px] text-blue-700">
+                    Varrendo todas as páginas de prescrições do período no servidor para garantir
+                    segurança total do paciente.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              combinedSearchResults && (
+                <div className="pt-2">
+                  {combinedSearchResults.occurrences.length > 0 ? (
+                    <div className="p-3.5 rounded-xl bg-white border border-emerald-300 text-xs space-y-2.5 shadow-2xs">
+                      <div className="flex items-start gap-2 text-emerald-950 font-bold">
+                        <CheckCircle2 size={18} className="text-emerald-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs sm:text-sm text-emerald-900 leading-snug">
+                            Encontrada{combinedSearchResults.occurrences.length === 1 ? '' : 's'}{' '}
+                            <strong>{combinedSearchResults.occurrences.length}</strong> ocorrência
+                            {combinedSearchResults.occurrences.length === 1 ? '' : 's'} em{' '}
+                            <strong>{combinedSearchResults.uniquePrescriptions.length}</strong>{' '}
+                            prescriç
+                            {combinedSearchResults.uniquePrescriptions.length === 1
+                              ? 'ão'
+                              : 'ões'}{' '}
+                            com o medicamento{' '}
+                            <strong>&quot;{combinedSearchResults.queryMed}&quot;</strong>
+                            {combinedSearchResults.queryPatient ? (
+                              <>
+                                {' '}
+                                para o paciente{' '}
+                                <strong>&quot;{combinedSearchResults.queryPatient}&quot;</strong>
+                              </>
+                            ) : (
+                              <>
+                                {' '}
+                                em <strong>
+                                  {combinedSearchResults.uniquePatients.length}
+                                </strong>{' '}
+                                paciente(s)
+                              </>
+                            )}{' '}
+                            no período de{' '}
+                            <strong>{formatIsoToBr(combinedSearchResults.startDate)}</strong> até{' '}
+                            <strong>{formatIsoToBr(combinedSearchResults.endDate)}</strong>.
+                          </p>
+                          <p className="text-[11px] text-slate-500 font-normal mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span>
+                              Analisadas exaustivamente{' '}
+                              <strong>
+                                {combinedSearchResults.analyzedCount.toLocaleString('pt-BR')}
+                              </strong>{' '}
+                              prescrições do período.
+                            </span>
+                            <span className="text-emerald-700 font-medium">
+                              Veja abaixo os detalhes discriminados com dose, via e fornecimento
+                              (F/P).
+                            </span>
+                          </p>
                         </div>
-                      ))}
+                      </div>
+
+                      {/* CARDS EMPILHADOS DAS OCORRÊNCIAS (Mobile-First) */}
+                      <div className="space-y-2 pt-1 border-t border-emerald-100">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                          Ocorrências Discriminadas do Medicamento:
+                        </span>
+                        <div className="grid grid-cols-1 gap-2">
+                          {combinedSearchResults.occurrences.map((occ, idx) => (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                setSelectedPrescription(occ.presc)
+                                setDetailModalOpen(true)
+                              }}
+                              className="p-3 rounded-xl bg-emerald-50/50 hover:bg-emerald-100/50 border border-emerald-200 transition cursor-pointer space-y-1.5"
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="h-5 w-5 rounded-md bg-emerald-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
+                                    {idx + 1}
+                                  </span>
+                                  <span className="font-bold text-slate-900 text-xs sm:text-sm">
+                                    {occ.item.descricao}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                                  <Badge className="bg-white text-emerald-800 border-emerald-300 text-[10px] font-bold">
+                                    Prescrição #{occ.presc.numero}
+                                  </Badge>
+                                  <Badge className="bg-emerald-100 text-emerald-900 border-emerald-200 text-[10px]">
+                                    {occ.presc.status}
+                                  </Badge>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 pt-1 text-[11px] text-slate-600">
+                                <div>
+                                  <span className="text-slate-400 block text-[10px]">
+                                    Paciente:
+                                  </span>
+                                  <strong className="text-slate-900 break-words">
+                                    {occ.presc.pacienteNome}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <span className="text-slate-400 block text-[10px]">
+                                    Data da Prescrição:
+                                  </span>
+                                  <strong className="text-slate-800">
+                                    {occ.presc.dataPrescricao}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <span className="text-slate-400 block text-[10px]">
+                                    Médico Prescritor:
+                                  </span>
+                                  <strong className="text-[#0C4336] break-words">
+                                    {occ.presc.medicoPrescritor}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <span className="text-slate-400 block text-[10px]">
+                                    Quantidade:
+                                  </span>
+                                  <strong className="text-slate-800 font-mono">
+                                    {occ.item.quantidade || 1} {occ.item.unidade || ''}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              {(occ.item.posologia ||
+                                occ.item.viaAdministracao ||
+                                occ.item.dose ||
+                                (occ.item as unknown as { fornecimento?: string })
+                                  .fornecimento) && (
+                                <div className="pt-1 border-t border-emerald-200/60 flex flex-wrap items-center gap-3 text-[11px] text-slate-700">
+                                  {occ.item.posologia && (
+                                    <span>
+                                      <span className="text-slate-400 font-medium">
+                                        Posologia / Dose:{' '}
+                                      </span>
+                                      <strong>{occ.item.posologia}</strong>
+                                    </span>
+                                  )}
+                                  {occ.item.viaAdministracao && (
+                                    <span>
+                                      <span className="text-slate-400 font-medium">Via: </span>
+                                      <strong>{occ.item.viaAdministracao}</strong>
+                                    </span>
+                                  )}
+                                  {occ.item.frequencia && (
+                                    <span>
+                                      <span className="text-slate-400 font-medium">
+                                        Frequência:{' '}
+                                      </span>
+                                      <strong>{occ.item.frequencia}</strong>
+                                    </span>
+                                  )}
+                                  {(occ.item as unknown as { fornecimento?: string })
+                                    .fornecimento && (
+                                    <Badge className="bg-amber-100 text-amber-900 border-amber-200 text-[10px] font-bold">
+                                      F/P:{' '}
+                                      {
+                                        (occ.item as unknown as { fornecimento?: string })
+                                          .fornecimento
+                                      }
+                                    </Badge>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-white border border-amber-300 text-xs flex items-start gap-2.5 shadow-2xs">
+                      <AlertCircle size={18} className="text-amber-700 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-amber-950 text-xs sm:text-sm block">
+                          Nenhuma prescrição encontrada
+                        </span>
+                        <span className="text-[11px] text-amber-900 leading-relaxed block mt-0.5">
+                          No período de{' '}
+                          <strong>{formatIsoToBr(combinedSearchResults.startDate)}</strong> até{' '}
+                          <strong>{formatIsoToBr(combinedSearchResults.endDate)}</strong>,{' '}
+                          {combinedSearchResults.queryPatient ? (
+                            <>
+                              o paciente{' '}
+                              <strong>&quot;{combinedSearchResults.queryPatient}&quot;</strong>{' '}
+                              <strong>NÃO</strong> possui o medicamento{' '}
+                              <strong>&quot;{combinedSearchResults.queryMed}&quot;</strong>{' '}
+                              prescrito.
+                            </>
+                          ) : (
+                            <>
+                              nenhum paciente cadastrado possui o medicamento{' '}
+                              <strong>&quot;{combinedSearchResults.queryMed}&quot;</strong>{' '}
+                              prescrito.
+                            </>
+                          )}
+                        </span>
+                        <span className="text-[10px] text-slate-500 block mt-1">
+                          (Analisadas{' '}
+                          <strong>
+                            {combinedSearchResults.analyzedCount.toLocaleString('pt-BR')}
+                          </strong>{' '}
+                          prescrições no período).
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-white border border-amber-300 text-xs flex items-start gap-2.5 shadow-2xs">
-                  <AlertCircle size={18} className="text-amber-700 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-amber-950 text-xs sm:text-sm block">
-                      Nenhuma prescrição encontrada
-                    </span>
-                    <span className="text-[11px] text-amber-900 leading-relaxed block mt-0.5">
-                      No período de{' '}
-                      <strong>{formatIsoToBr(combinedSearchResults.startDate)}</strong> até{' '}
-                      <strong>{formatIsoToBr(combinedSearchResults.endDate)}</strong>,{' '}
-                      {combinedSearchResults.queryPatient ? (
-                        <>
-                          o paciente{' '}
-                          <strong>&quot;{combinedSearchResults.queryPatient}&quot;</strong>{' '}
-                          <strong>NÃO</strong> possui o medicamento{' '}
-                          <strong>&quot;{combinedSearchResults.queryMed}&quot;</strong> prescrito.
-                        </>
-                      ) : (
-                        <>
-                          nenhum paciente cadastrado possui o medicamento{' '}
-                          <strong>&quot;{combinedSearchResults.queryMed}&quot;</strong> prescrito.
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+              )
+            ))}
         </CardContent>
       </Card>
 

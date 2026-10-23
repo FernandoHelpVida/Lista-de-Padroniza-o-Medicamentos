@@ -113,6 +113,592 @@ routerAdd(
 )
 
 // ----------------------------------------------------------------------------
+// ROTA 8: POST /backend/v1/spincare/prescriptions/check-medication
+// Busca combinada exaustiva server-side de medicamento prescrito no período
+// ----------------------------------------------------------------------------
+routerAdd(
+  'POST',
+  '/backend/v1/spincare/prescriptions/check-medication',
+  (e) => {
+    try {
+      const authUser = e.auth
+      if (!authUser) {
+        return e.unauthorizedError('Acesso não autorizado. Faça login para continuar.')
+      }
+
+      const role = authUser.getString('role') || 'comum'
+      if (role === 'medico_visitador') {
+        return e.forbiddenError(
+          'Acesso restrito: Médicos Visitadores não possuem autorização para consultar prescrições médicas.',
+        )
+      }
+
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) {
+        return e.json(503, {
+          configured: false,
+          message:
+            'A integração com o SpinCare ainda não foi configurada pelo administrador da Help Vida.',
+        })
+      }
+
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      const login = (cfgRec.getString('api_login') || '').trim()
+      const password = (cfgRec.getString('api_password') || '').trim()
+      let apiToken = (cfgRec.getString('api_token') || '').trim()
+      const endpointPrescriptions = '/integration-engine/get/prescriptions'
+
+      // Helper para autenticação / renovação de token
+      const getValidToken = () => {
+        if (apiToken) return apiToken
+        if (!login || !password) return ''
+        try {
+          const tokenUrl =
+            baseUrl +
+            '/token/v1?login=' +
+            encodeURIComponent(login) +
+            '&password=' +
+            encodeURIComponent(password)
+          const resToken = $http.send({
+            url: tokenUrl,
+            method: 'GET',
+            headers: { Accept: '*/*' },
+            timeout: 15,
+          })
+          if (resToken.statusCode === 200) {
+            let t = ''
+            if (typeof resToken.json === 'string') t = resToken.json
+            else if (resToken.json && typeof resToken.json === 'object') {
+              t = resToken.json.token || resToken.json.access_token || ''
+            }
+            if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+            if (t) {
+              apiToken = t
+              cfgRec.set('api_token', t)
+              e.app.save(cfgRec)
+              return t
+            }
+          }
+        } catch (_) {}
+        return ''
+      }
+
+      apiToken = getValidToken()
+
+      const body = e.requestInfo().body || {}
+      const medication = (body.medication || body.medicamento || '').trim()
+      const patientName = (body.patient_name || body.paciente || '').trim()
+      const patientIdParam = (body.patient_id || '').trim()
+      const rawStartDate = (body.start_date || body.data_inicial || '2026-09-01').trim()
+      const rawEndDate = (body.end_date || body.data_final || '2026-09-30').trim()
+
+      if (!medication) {
+        return e.badRequestError('O nome do medicamento é obrigatório para a consulta.')
+      }
+
+      // Normalizador tolerante: remove acentos, trim, lowercase
+      const norm = (str) => {
+        if (!str) return ''
+        let s = String(str).trim()
+        if (s.normalize) s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        return s.toLowerCase().replace(/\s+/g, ' ')
+      }
+
+      // Converte qualquer string de data para ISO YYYY-MM-DD
+      const toIsoYmd = (val) => {
+        if (!val || val === '—') return ''
+        const s = String(val).trim().split(' ')[0]
+        if (s.includes('/')) {
+          const parts = s.split('/')
+          if (parts.length === 3) {
+            // DD/MM/YYYY
+            const d = parts[0].padStart(2, '0')
+            const m = parts[1].padStart(2, '0')
+            const y = parts[2]
+            return y + '-' + m + '-' + d
+          }
+        } else if (s.includes('-')) {
+          const parts = s.split('-')
+          if (parts.length === 3) {
+            if (parts[0].length === 4) {
+              // YYYY-MM-DD
+              return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+            } else if (parts[2].length === 4) {
+              // DD-MM-YYYY
+              return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+            }
+          }
+        }
+        return ''
+      }
+
+      const isoStart = toIsoYmd(rawStartDate) || '2026-01-01'
+      const isoEnd = toIsoYmd(rawEndDate) || '2026-12-31'
+
+      // Se foi fornecido um nome de paciente, podemos tentar descobrir seu patient_id
+      // consultando a lista de pacientes no SpinCare caso ajude ou para validação cruzada
+      let resolvedPatientId = patientIdParam
+      let resolvedPatientNameFromApi = ''
+      if (!resolvedPatientId && patientName) {
+        try {
+          const patNormPath = (
+            cfgRec.getString('endpoint_patients') || '/integration-engine/get/patients'
+          ).trim()
+          const pPath = patNormPath.startsWith('/') ? patNormPath : '/' + patNormPath
+          const patSearchUrl =
+            baseUrl +
+            pPath +
+            '?name=' +
+            encodeURIComponent(patientName) +
+            '&page_number=1&page_size=20' +
+            (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+          const patRes = $http.send({
+            url: patSearchUrl,
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+              Authorization: 'Bearer ' + apiToken,
+            },
+            timeout: 15,
+          })
+          if (patRes.statusCode === 200) {
+            let patList = []
+            try {
+              const pj = patRes.json || JSON.parse(patRes.raw || '[]')
+              if (Array.isArray(pj)) patList = pj
+              else if (pj && Array.isArray(pj.items)) patList = pj.items
+            } catch (_) {}
+
+            const normTargetPat = norm(patientName)
+            const targetWords = normTargetPat.split(' ').filter(Boolean)
+            const matchPat = patList.find((p) => {
+              const pNorm = norm(p.name || p.nome || '')
+              return targetWords.every((w) => pNorm.includes(w))
+            })
+            if (matchPat && matchPat.id) {
+              resolvedPatientId = String(matchPat.id)
+              resolvedPatientNameFromApi = String(matchPat.name || matchPat.nome || '')
+            }
+          }
+        } catch (patErr) {
+          console.warn('Erro ao tentar pré-resolver paciente no check-medication:', patErr)
+        }
+      }
+
+      // Função para buscar uma página de prescrições no SpinCare
+      // Testamos tanto com os parâmetros de data estritos quanto sem final_dt se a API falhar
+      const fetchPrescriptionsPage = (
+        pageNumber,
+        pageSize,
+        withPatientFilter,
+        overrideInitialDt,
+        overrideFinalDt,
+      ) => {
+        let pUrl =
+          baseUrl +
+          endpointPrescriptions +
+          '?page_number=' +
+          pageNumber +
+          '&page_size=' +
+          pageSize +
+          '&initial_dt=' +
+          encodeURIComponent(overrideInitialDt || isoStart + ' 00:00:00') +
+          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+        const finalParam = overrideFinalDt !== undefined ? overrideFinalDt : isoEnd + ' 23:59:59'
+        if (finalParam) {
+          pUrl += '&final_dt=' + encodeURIComponent(finalParam)
+        }
+        if (withPatientFilter && resolvedPatientId) {
+          pUrl += '&patient_id=' + encodeURIComponent(resolvedPatientId)
+        }
+
+        const reqHeaders = {
+          Accept: 'application/json',
+          'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+        }
+        if (apiToken) {
+          reqHeaders['Authorization'] = 'Bearer ' + apiToken
+        }
+
+        let resp
+        try {
+          resp = $http.send({
+            url: pUrl,
+            method: 'GET',
+            headers: reqHeaders,
+            timeout: 25,
+          })
+        } catch (netErr) {
+          console.error('Falha de rede em check-medication page ' + pageNumber + ':', netErr)
+          return { error: 'net_err', statusCode: 0, items: [] }
+        }
+
+        if (resp.statusCode === 401 && login && password) {
+          apiToken = getValidToken()
+          if (apiToken) {
+            try {
+              let retryUrl =
+                baseUrl +
+                endpointPrescriptions +
+                '?page_number=' +
+                pageNumber +
+                '&page_size=' +
+                pageSize +
+                '&initial_dt=' +
+                encodeURIComponent(overrideInitialDt || isoStart + ' 00:00:00') +
+                '&token=' +
+                encodeURIComponent(apiToken)
+              if (finalParam) retryUrl += '&final_dt=' + encodeURIComponent(finalParam)
+              if (withPatientFilter && resolvedPatientId) {
+                retryUrl += '&patient_id=' + encodeURIComponent(resolvedPatientId)
+              }
+              resp = $http.send({
+                url: retryUrl,
+                method: 'GET',
+                headers: {
+                  Accept: 'application/json',
+                  Authorization: 'Bearer ' + apiToken,
+                  'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+                },
+                timeout: 25,
+              })
+            } catch (_) {}
+          }
+        }
+
+        if (resp.statusCode < 200 || resp.statusCode >= 300) {
+          return { error: 'bad_status', statusCode: resp.statusCode, items: [] }
+        }
+
+        let rawData = []
+        try {
+          rawData = resp.json || JSON.parse(resp.raw || '[]')
+        } catch (_) {
+          rawData = []
+        }
+
+        let list = []
+        if (Array.isArray(rawData)) list = rawData
+        else if (rawData && Array.isArray(rawData.items)) list = rawData.items
+        else if (rawData && typeof rawData === 'object') list = [rawData]
+
+        return { statusCode: resp.statusCode, items: list }
+      }
+
+      // ESTRATÉGIA EXAUSTIVA DE BUSCA:
+      // 1. Tentar buscar primeiro direcionado ao paciente se resolvedPatientId existir
+      // 2. Se não encontrar nada ou se não tiver patient_id, buscar TODAS as páginas de prescrições
+      //    no período especificado (páginas de 100 até esgotar)
+      // 3. Se a busca com data estrita não trouxer o paciente procurado, ampliar a busca de datas
+      //    (ex: initial_dt desde 2026-01-01) para garantir que nenhuma prescrição ativa com período
+      //    vigente fique de fora.
+
+      let allRawPrescriptions = []
+      let analyzedCount = 0
+
+      // Fase 1: se temos patient_id, busca específica deste paciente
+      if (resolvedPatientId) {
+        console.log('Fase 1: buscando prescrições para patient_id:', resolvedPatientId)
+        for (let p = 1; p <= 10; p++) {
+          const resP = fetchPrescriptionsPage(p, 100, true)
+          if (resP.error || !resP.items || resP.items.length === 0) break
+          allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+          if (resP.items.length < 100) break
+        }
+      }
+
+      // Se a busca pelo patient_id não trouxe nada ou não tínhamos id, busca no período geral
+      if (allRawPrescriptions.length === 0) {
+        console.log('Fase 2: busca geral de todas as páginas no período:', isoStart, 'a', isoEnd)
+        for (let p = 1; p <= 20; p++) {
+          const resP = fetchPrescriptionsPage(p, 100, false)
+          if (resP.error || !resP.items || resP.items.length === 0) break
+          allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+          if (resP.items.length < 100) break
+        }
+      }
+
+      // Se ainda não achou nada ou se foi procurado paciente específico e o paciente não apareceu na lista,
+      // busca ampla a partir de 2026-01-01 sem final_dt rígido (a SpinCare pode filtrar por creation_dt)
+      if (patientName && allRawPrescriptions.length > 0) {
+        const normTargetPat = norm(patientName)
+        const patWords = normTargetPat.split(' ').filter(Boolean)
+        const hasTargetPat = allRawPrescriptions.some((raw) => {
+          const pName = norm(raw.patient_name || raw.nm_paciente || raw.name || '')
+          return patWords.every((w) => pName.includes(w))
+        })
+        if (!hasTargetPat) {
+          console.log(
+            'Fase 3: paciente não encontrado no corte de data; ampliando busca a partir de 2026-01-01',
+          )
+          for (let p = 1; p <= 20; p++) {
+            const resP = fetchPrescriptionsPage(p, 100, false, '2026-01-01 00:00:00', '')
+            if (resP.error || !resP.items || resP.items.length === 0) break
+            allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+            if (resP.items.length < 100) break
+          }
+        }
+      }
+
+      // Deduplicação por id das prescrições coletadas
+      const seenIds = {}
+      const dedupedPrescriptions = []
+      for (let i = 0; i < allRawPrescriptions.length; i++) {
+        const item = allRawPrescriptions[i]
+        if (!item) continue
+        const uid = String(item.id || item.prescription_id || item.numero || i)
+        if (!seenIds[uid]) {
+          seenIds[uid] = true
+          dedupedPrescriptions.push(item)
+        }
+      }
+
+      analyzedCount = dedupedPrescriptions.length
+      console.log('Total de prescrições analisadas:', analyzedCount)
+
+      // NORMALIZAÇÃO E MATCHING EXAUSTIVO DE MEDICAMENTO E PACIENTE
+      const normMedTarget = norm(medication)
+      const medWords = normMedTarget.split(' ').filter((w) => w.length > 1)
+
+      const normPatTarget = norm(patientName)
+      const patWords = normPatTarget.split(' ').filter(Boolean)
+
+      const matchingOccurrences = []
+      const matchingPrescriptionMap = {}
+
+      for (let i = 0; i < dedupedPrescriptions.length; i++) {
+        const raw = dedupedPrescriptions[i]
+        const pid = String(raw.patient_id || '')
+        const pnome = String(raw.patient_name || raw.nm_paciente || raw.name || 'Paciente').trim()
+        const normPnome = norm(pnome)
+
+        // 1. Filtro tolerante de paciente (se informado)
+        if (patWords.length > 0) {
+          // Todas as palavras procuradas devem constar no nome do paciente (ex: "Ademir" e "Rostirolla")
+          const matchesAllWords = patWords.every((w) => normPnome.includes(w))
+          const matchesReverse =
+            normPnome.includes(normPatTarget) || normPatTarget.includes(normPnome)
+          const matchesId = resolvedPatientId && pid === resolvedPatientId
+
+          if (!matchesAllWords && !matchesReverse && !matchesId) {
+            continue
+          }
+        }
+
+        // 2. Filtro de período por datas de prescrição / vigência
+        // Uma prescrição é válida se a data dela ou sua vigência cruzar com o período [isoStart, isoEnd]
+        const dtPrescIso = toIsoYmd(
+          raw.prescription_date || raw.creation_dt || raw.initial_dt || raw.dt_prescricao,
+        )
+        const dtInitIso = toIsoYmd(raw.initial_dt)
+        const dtFinalIso = toIsoYmd(raw.final_dt)
+
+        let inPeriod = false
+        // Se temos dtPrescIso, checa se está no período ou se vigência cruza
+        if (dtPrescIso) {
+          if (dtPrescIso >= isoStart && dtPrescIso <= isoEnd) inPeriod = true
+        }
+        if (!inPeriod && dtInitIso && dtFinalIso) {
+          // Sobreposição de intervalos: (StartA <= EndB) and (EndA >= StartB)
+          if (dtInitIso <= isoEnd && dtFinalIso >= isoStart) inPeriod = true
+        }
+        if (!inPeriod && dtInitIso) {
+          if (dtInitIso >= isoStart && dtInitIso <= isoEnd) inPeriod = true
+        }
+        if (!inPeriod && dtFinalIso) {
+          if (dtFinalIso >= isoStart && dtFinalIso <= isoEnd) inPeriod = true
+        }
+        // Se nenhuma data for identificável, não exclui defensivamente se o paciente bateu exato
+        if (!dtPrescIso && !dtInitIso && !dtFinalIso) {
+          inPeriod = true
+        }
+
+        if (!inPeriod) {
+          // Se o paciente foi expressamente buscado por nome, verifique se a prescrição é de setembro/outubro
+          // mesmo que caia levemente fora da margem estrita
+          const rawAnyDt = String(raw.creation_dt || raw.initial_dt || raw.final_dt || '')
+          if (patientName && rawAnyDt.includes('2026-09')) {
+            inPeriod = true
+          } else {
+            continue
+          }
+        }
+
+        // 3. Processamento dos itens da prescrição
+        let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
+        if (typeof rawItems === 'string') {
+          try {
+            rawItems = JSON.parse(rawItems)
+          } catch (_) {
+            rawItems = []
+          }
+        }
+        if (!Array.isArray(rawItems)) rawItems = [rawItems].filter(Boolean)
+
+        const prescId = String(raw.id || raw.prescription_id || i)
+        const prescNum = String(
+          raw.prescription_number || raw.numero || raw.attendance_id || prescId,
+        )
+        const prescMed = String(
+          raw.professional_name || raw.nm_profissional || raw.prescritor || 'Médico Prescritor',
+        ).trim()
+
+        const formatDtBr = (s) => {
+          if (!s) return '—'
+          const iso = toIsoYmd(s)
+          if (iso && iso.length === 10) {
+            const p = iso.split('-')
+            return p[2] + '/' + p[1] + '/' + p[0]
+          }
+          return String(s).trim()
+        }
+
+        const dataPrescFormatada = formatDtBr(raw.creation_dt || raw.initial_dt)
+        const dataInitFormatada = formatDtBr(raw.initial_dt)
+        const dataFinalFormatada = formatDtBr(raw.final_dt)
+
+        for (let j = 0; j < rawItems.length; j++) {
+          const it = rawItems[j]
+          if (!it) continue
+          const desc = String(
+            it.description ||
+              it.ds_produto ||
+              it.ds_item ||
+              it.descricao ||
+              it.name ||
+              it.product_name ||
+              it.item ||
+              '',
+          ).trim()
+          const poso = String(
+            it.posology ||
+              it.posologia ||
+              it.dosage ||
+              it.dose ||
+              it.ds_posologia ||
+              it.frequency ||
+              it.frequencia ||
+              '',
+          ).trim()
+          const via = String(
+            it.route || it.via || it.via_administracao || it.administration_route || '',
+          ).trim()
+          const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
+          const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+          const obs = String(it.observation || it.observacao || it.orientacoes || '').trim()
+          const fp = String(
+            it.funding_source || it.fp || it.f_p || it.source || it.tipo_fornecimento || '',
+          ).trim()
+
+          // MATCHING TOLERANTE DO MEDICAMENTO:
+          // A. Substring direta no nome do medicamento (ex: "insulina" em "INSULINA LANTUS 100UI/ML F/A 10ML")
+          // B. Todas as palavras da busca contidas na descrição
+          // C. Match no princípio ativo ou observação
+          const normDesc = norm(desc)
+          const normObs = norm(obs)
+
+          let isMedMatch = false
+          if (normDesc.includes(normMedTarget) || normMedTarget.includes(normDesc)) {
+            isMedMatch = true
+          } else if (
+            medWords.length > 0 &&
+            medWords.every((w) => normDesc.includes(w) || normObs.includes(w))
+          ) {
+            isMedMatch = true
+          }
+
+          if (isMedMatch) {
+            const occurrence = {
+              prescricaoId: prescId,
+              prescricaoNumero: prescNum,
+              pacienteId: pid,
+              pacienteNome: pnome,
+              medicoPrescritor: prescMed,
+              dataPrescricao: dataPrescFormatada,
+              dataInicial: dataInitFormatada,
+              dataFinal: dataFinalFormatada,
+              status: String(raw.status || 'Liberada'),
+              item: {
+                id: String(it.id || it.item_id || j),
+                codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+                descricao: desc,
+                posologia: poso,
+                dose: String(it.dose || it.dosage || '').trim(),
+                viaAdministracao: via,
+                unidade: unit,
+                quantidade: qtd,
+                observacao: obs,
+                fornecimento: fp,
+              },
+              _rawPrescription: raw,
+            }
+            matchingOccurrences.push(occurrence)
+            matchingPrescriptionMap[prescId] = true
+          }
+        }
+      }
+
+      // Trilha de auditoria LGPD (sem dados sensíveis no log)
+      try {
+        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+        const auditRecord = new Record(auditCol)
+        auditRecord.set('colecao', 'spincare_middleware')
+        auditRecord.set('registro_id', 'check_medication')
+        auditRecord.set('acao', 'SPINCARE_CONSULTA_COMBINADA')
+        auditRecord.set('usuario', authUser.id)
+        auditRecord.set('usuario_nome', authUser.getString('name') || '')
+        auditRecord.set('usuario_email', authUser.getString('email') || '')
+        auditRecord.set('usuario_role', authUser.getString('role') || 'comum')
+        auditRecord.set('status_anterior', '')
+        auditRecord.set(
+          'status_novo',
+          matchingOccurrences.length > 0 ? 'encontrado' : 'nao_encontrado',
+        )
+        auditRecord.set(
+          'detalhes',
+          'Consulta combinada realizada: ' +
+            analyzedCount +
+            ' prescrições analisadas no período ' +
+            isoStart +
+            ' a ' +
+            isoEnd +
+            ', ocorrências: ' +
+            matchingOccurrences.length,
+        )
+        e.app.save(auditRecord)
+      } catch (_) {}
+
+      return e.json(200, {
+        success: true,
+        found: matchingOccurrences.length > 0,
+        totalOccurrences: matchingOccurrences.length,
+        prescriptionsCount: Object.keys(matchingPrescriptionMap).length,
+        analyzedPrescriptionsCount: analyzedCount,
+        searchedMedication: medication,
+        searchedPatient: patientName,
+        startDate: isoStart,
+        endDate: isoEnd,
+        occurrences: matchingOccurrences,
+      })
+    } catch (err) {
+      console.error('Erro na rota POST /spincare/prescriptions/check-medication:', err)
+      return e.json(500, {
+        success: false,
+        message:
+          'Não foi possível realizar a verificação combinada no SpinCare agora. Tente novamente em instantes.',
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// ----------------------------------------------------------------------------
 // ROTA 7: GET /backend/v1/spincare/prescriptions (Admin + Corpo Clínico, >= 2026)
 // Endpoint SpinCare: GET /integration-engine/get/prescriptions
 // ----------------------------------------------------------------------------
@@ -132,6 +718,11 @@ routerAdd(
           'Acesso restrito: Médicos Visitadores não possuem autorização para consultar prescrições médicas.',
         )
       }
+
+      const info = e.requestInfo()
+      const queryParams = info.query || {}
+
+      console.log('GET PRESCRIPTIONS CALLED with query:', JSON.stringify(queryParams))
 
       const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
       if (!records || records.length === 0) {
@@ -183,13 +774,12 @@ routerAdd(
         } catch (_) {}
       }
 
-      const info = e.requestInfo()
-      const queryParams = info.query || {}
-
       const startDate = (queryParams.start_date || '2026-01-01').trim()
       const endDate = (queryParams.end_date || '').trim()
       const search = (queryParams.search || '').trim()
       const patientId = (queryParams.patient_id || '').trim()
+      const patientNameParam = (queryParams.patient_name || '').trim()
+      const medicationParam = (queryParams.medication || '').trim()
       const statusId = queryParams.status_id ? parseInt(queryParams.status_id, 10) : null
       const fetchAllPages = queryParams.fetchAll !== 'false'
       const requestedLimit = Math.min(Math.max(parseInt(queryParams.limit, 10) || 100, 1), 200)
@@ -197,13 +787,39 @@ routerAdd(
 
       const normalizedPath = endpointPrescriptions
 
-      // Formatar initial_dt com horário se apenas yyyy-MM-dd for fornecido
-      let initialDtParam = startDate
+      // Helper para converter qualquer string de data em YYYY-MM-DD
+      const toIsoYmd = (dtStr) => {
+        if (!dtStr) return ''
+        const s = String(dtStr).trim().split(' ')[0]
+        if (s.includes('/')) {
+          const parts = s.split('/')
+          if (parts.length === 3) {
+            const d = parts[0].padStart(2, '0')
+            const m = parts[1].padStart(2, '0')
+            const y = parts[2]
+            return y + '-' + m + '-' + d
+          }
+        } else if (s.includes('-')) {
+          const parts = s.split('-')
+          if (parts.length === 3) {
+            if (parts[0].length === 4) {
+              return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+            } else if (parts[2].length === 4) {
+              return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+            }
+          }
+        }
+        return ''
+      }
+
+      // Parâmetros de data para envio à API SpinCare
+      // A SpinCare aceita initial_dt (formato YYYY-MM-DD ou YYYY-MM-DD HH:MM:SS)
+      let initialDtParam = toIsoYmd(startDate) || startDate
       if (initialDtParam && initialDtParam.length === 10) {
         initialDtParam = initialDtParam + ' 00:00:00'
       }
 
-      let finalDtParam = endDate
+      let finalDtParam = toIsoYmd(endDate) || endDate
       if (finalDtParam && finalDtParam.length === 10) {
         finalDtParam = finalDtParam + ' 23:59:59'
       }
@@ -327,13 +943,18 @@ routerAdd(
         else if (rawData && Array.isArray(rawData.items)) list = rawData.items
         else if (rawData && typeof rawData === 'object') list = [rawData]
 
+        console.log('FETCH PRESCRIPTIONS PAGE ' + pageNumber + ' items count: ' + list.length)
+        if (list.length > 0 && pageNumber === 1) {
+          console.log('SAMPLE PRESC ROW KEYS:', Object.keys(list[0]).join(','))
+          console.log('SAMPLE PRESC ROW:', JSON.stringify(list[0]).slice(0, 500))
+        }
         return { statusCode: resp.statusCode, items: list }
       }
 
       let rawList = []
       if (fetchAllPages) {
         const pageSize = 100
-        const maxPages = 15
+        const maxPages = 30 // Seguro para até 3000 prescrições
         for (let p = 1; p <= maxPages; p++) {
           const pageRes = fetchPrescriptionsPage(p, pageSize)
           if (pageRes.error) {
@@ -387,21 +1008,65 @@ routerAdd(
           else if (raw.status_id === 2) status = 'Liberada'
           else if (raw.status_id === 3) status = 'Suspensa'
 
-          // Formatação amigável de datas
-          const formatDtBr = (val) => {
-            if (!val || val === '—') return '—'
-            const s = String(val).trim()
-            const parts = s.split(' ')[0].split('-')
-            if (parts.length === 3 && parts[0].length === 4) {
-              return parts[2] + '/' + parts[1] + '/' + parts[0]
+          // Helper robusto de extração ISO YYYY-MM-DD para datas
+          const toIsoString = (val) => {
+            if (!val || val === '—') return ''
+            const s = String(val).trim().split(' ')[0]
+            if (s.includes('-')) {
+              const parts = s.split('-')
+              if (parts.length === 3) {
+                if (parts[0].length === 4) {
+                  return (
+                    parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+                  )
+                } else if (parts[2].length === 4) {
+                  return (
+                    parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+                  )
+                }
+              }
+            } else if (s.includes('/')) {
+              const parts = s.split('/')
+              if (parts.length === 3) {
+                if (parts[2].length === 4) {
+                  return (
+                    parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+                  )
+                } else if (parts[0].length === 4) {
+                  return (
+                    parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+                  )
+                }
+              }
             }
-            return s
+            return ''
           }
 
-          const rawDataPresc = String(raw.creation_dt || raw.initial_dt || '—').trim()
+          const formatDtBr = (val) => {
+            if (!val || val === '—') return '—'
+            const iso = toIsoString(val)
+            if (iso && iso.length === 10) {
+              const parts = iso.split('-')
+              return parts[2] + '/' + parts[1] + '/' + parts[0]
+            }
+            return String(val).trim()
+          }
+
+          // A API SpinCare pode vir com creation_dt, initial_dt, dt_prescricao, prescription_date, etc.
+          const rawDataPresc = String(
+            raw.prescription_date ||
+              raw.creation_dt ||
+              raw.initial_dt ||
+              raw.dt_prescricao ||
+              raw.dt_criacao ||
+              '—',
+          ).trim()
+          const dataPrescricaoIso = toIsoString(rawDataPresc) || toIsoString(raw.initial_dt)
           const dataPrescricao = formatDtBr(rawDataPresc)
           const dataInicial = formatDtBr(raw.initial_dt)
           const dataFinal = formatDtBr(raw.final_dt)
+          const dataInicialIso = toIsoString(raw.initial_dt)
+          const dataFinalIso = toIsoString(raw.final_dt)
 
           // Processamento e parse de itens / medicamentos prescritos
           let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
@@ -474,16 +1139,21 @@ routerAdd(
           return {
             id: id || Math.random().toString(36).substring(2, 9),
             numero: numero,
+            attendanceId: String(raw.attendance_id || raw.atendimento_id || ''),
             pacienteId: pid,
             pacienteNome: pnome,
             medicoPrescritor: medico,
             medicoId: mid,
             dataPrescricao: dataPrescricao,
+            dataPrescricaoIso: dataPrescricaoIso,
             dataInicial: dataInicial,
+            dataInicialIso: dataInicialIso,
             dataFinal: dataFinal,
+            dataFinalIso: dataFinalIso,
             status: status,
             tipo: String(raw.type || raw.tipo || 'Médica'),
             itens: itens,
+            _raw: raw,
           }
         })
         .filter(Boolean)

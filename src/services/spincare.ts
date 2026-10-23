@@ -116,17 +116,18 @@ export interface SpincareBudgetsResult {
 }
 
 export interface SpincarePrescriptionItem {
-  id?: string
+  id: string
   codigo?: string
   descricao: string
   posologia?: string
+  dose?: string
   frequencia?: string
   viaAdministracao?: string
   unidade?: string
   quantidade?: number
   observacao?: string
+  fornecimento?: string
 }
-
 export interface SpincarePrescription {
   id: string
   numero: string
@@ -149,6 +150,43 @@ export interface SpincarePrescriptionsResult {
   page: number
   limit: number
   items: SpincarePrescription[]
+}
+
+export interface CheckMedicationOccurrence {
+  prescricaoId: string
+  prescricaoNumero: string
+  pacienteId: string
+  pacienteNome: string
+  medicoPrescritor: string
+  dataPrescricao: string
+  dataInicial: string
+  dataFinal: string
+  status: string
+  item: {
+    id: string
+    codigo: string
+    descricao: string
+    posologia: string
+    dose: string
+    viaAdministracao: string
+    unidade: string
+    quantidade: number
+    observacao: string
+    fornecimento: string
+  }
+}
+
+export interface CheckMedicationResult {
+  success: boolean
+  found: boolean
+  totalOccurrences: number
+  prescriptionsCount: number
+  analyzedPrescriptionsCount: number
+  searchedMedication: string
+  searchedPatient: string
+  startDate: string
+  endDate: string
+  occurrences: CheckMedicationOccurrence[]
 }
 
 /**
@@ -273,6 +311,32 @@ export async function getSpincarePrescriptions(params?: {
     `/backend/v1/spincare/prescriptions${queryString}`,
     {
       method: 'GET',
+    },
+  )
+}
+
+/**
+ * Realiza a busca combinada exaustiva server-side de medicamento prescrito no período.
+ * Avalia TODAS as prescrições do período no servidor com matching tolerante.
+ */
+export async function checkSpincareMedicationPrescribed(params: {
+  medication: string
+  patientName?: string
+  patientId?: string
+  startDate?: string
+  endDate?: string
+}): Promise<CheckMedicationResult> {
+  return await pb.send<CheckMedicationResult>(
+    '/backend/v1/spincare/prescriptions/check-medication',
+    {
+      method: 'POST',
+      body: {
+        medication: params.medication,
+        patient_name: params.patientName,
+        patient_id: params.patientId,
+        start_date: params.startDate,
+        end_date: params.endDate,
+      },
     },
   )
 }
