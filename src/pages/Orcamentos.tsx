@@ -245,10 +245,10 @@ export default function Orcamentos() {
                     required
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="h-10 pl-9 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono"
+                    className="h-11 sm:h-10 pl-9 text-base sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono min-h-[44px]"
                   />
                 </div>
-                <span className="text-[10px] text-emerald-800 font-semibold">
+                <span className="text-[10px] text-emerald-800 font-semibold block">
                   Padrão: 01/01/2026
                 </span>
               </div>
@@ -261,7 +261,7 @@ export default function Orcamentos() {
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="h-10 pl-9 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono"
+                    className="h-11 sm:h-10 pl-9 text-base sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono min-h-[44px]"
                   />
                 </div>
               </div>
@@ -277,25 +277,25 @@ export default function Orcamentos() {
                     placeholder="Nome do paciente ou protocolo..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="h-10 pl-9 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
+                    className="h-11 sm:h-10 pl-9 text-base sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272] min-h-[44px]"
                   />
                 </div>
               </div>
 
-              <div className="flex items-end gap-2">
+              <div className="flex items-center gap-2 pt-1 sm:pt-0 sm:items-end">
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-10 bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
+                  className="flex-1 sm:w-full h-11 sm:h-10 min-h-[44px] bg-[#0F5342] hover:bg-[#0C4336] active:bg-[#082921] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Consultando...
                     </>
                   ) : (
                     <>
-                      <Filter className="h-3.5 w-3.5 text-[#F5B31C]" />
+                      <Filter className="h-4 w-4 text-[#F5B31C]" />
                       Filtrar Orçamentos
                     </>
                   )}
@@ -310,7 +310,7 @@ export default function Orcamentos() {
                       setEndDate('')
                       setSearch('')
                     }}
-                    className="h-10 text-xs border-slate-200 rounded-xl"
+                    className="h-11 sm:h-10 min-h-[44px] px-3.5 text-xs border-slate-200 rounded-xl"
                   >
                     Reset
                   </Button>
@@ -506,15 +506,15 @@ export default function Orcamentos() {
           {/* Barra de carregamento progressivo de orçamentos */}
           {hasMoreBudgets && (
             <div className="p-4 rounded-2xl bg-[#F4FAF8] border border-emerald-950/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-              <span className="text-slate-600">
+              <span className="text-slate-600 text-center sm:text-left">
                 Mostrando <strong>{visibleBudgets.length}</strong> de{' '}
                 <strong>{budgets.length}</strong> orçamentos aprovados
               </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 <Button
                   type="button"
                   onClick={handleLoadMore}
-                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl h-9 px-4 flex-1 sm:flex-initial"
+                  className="bg-[#0F5342] hover:bg-[#0C4336] active:bg-[#082921] text-white text-xs font-bold rounded-xl h-11 sm:h-9 min-h-[44px] sm:min-h-0 px-4 flex-1 sm:flex-initial"
                 >
                   Carregar Mais 50
                 </Button>
@@ -522,7 +522,7 @@ export default function Orcamentos() {
                   type="button"
                   variant="outline"
                   onClick={handleShowAll}
-                  className="text-xs border-emerald-950/15 rounded-xl h-9 px-3 shrink-0"
+                  className="text-xs border-emerald-950/15 rounded-xl h-11 sm:h-9 min-h-[44px] sm:min-h-0 px-4 shrink-0"
                 >
                   Exibir Todos ({budgets.length})
                 </Button>
@@ -534,15 +534,15 @@ export default function Orcamentos() {
 
       {/* 5. MODAL DETALHE DO ORÇAMENTO */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
-        <DialogContent className="max-w-lg w-[94vw] sm:w-full p-4 sm:p-6 rounded-2xl bg-white max-h-[90vh] flex flex-col">
+        <DialogContent className="max-w-lg w-[96vw] sm:w-full p-3 sm:p-6 rounded-2xl bg-white max-h-[94vh] sm:max-h-[90vh] flex flex-col">
           <DialogHeader className="pb-3 border-b border-emerald-950/10 shrink-0 text-left">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2">
-                  <DollarSign className="h-5 w-5 text-[#0D8272]" />
-                  Orçamento #{selectedBudget?.numero}
+              <div className="min-w-0 pr-1">
+                <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2 truncate">
+                  <DollarSign className="h-5 w-5 text-[#0D8272] shrink-0" />
+                  <span>Orçamento #{selectedBudget?.numero}</span>
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500 pt-0.5">
+                <DialogDescription className="text-[11px] sm:text-xs text-slate-500 pt-0.5 truncate">
                   Detalhes do orçamento aprovado no sistema SpinCare
                 </DialogDescription>
               </div>
@@ -676,7 +676,7 @@ export default function Orcamentos() {
               type="button"
               variant="outline"
               onClick={() => setDetailModalOpen(false)}
-              className="w-full sm:w-auto h-9 text-xs rounded-xl"
+              className="w-full sm:w-auto h-11 sm:h-9 min-h-[44px] sm:min-h-0 text-xs rounded-xl"
             >
               Fechar Detalhes
             </Button>

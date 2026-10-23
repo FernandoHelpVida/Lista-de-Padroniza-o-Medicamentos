@@ -260,21 +260,21 @@ export default function Layout() {
 
   // Barra de navegação inferior mobile:
   // Para corpo clínico/admin que tem acesso ao SpinCare:
-  // Início, Medicamentos, Solicitações, Pacientes, Orçamentos, Mais
+  // Início, Remédios, Solicitações, Pacientes, Prescrições, Orçamentos, Menu/Mais
   // Para médico visitador: Início, Medicamentos, Solicitações, Assistente, Configurações
   const mobileNavItems = canAccessSpincare
     ? [
         { title: 'Início', path: '/', icon: LayoutDashboard },
         { title: 'Remédios', path: '/medicamentos', icon: Pill },
         {
-          title: 'Solicitações',
+          title: 'Solicit.',
           path: '/solicitacoes',
           icon: FileQuestion,
           badgeCount: isAdmin ? pendingSolicitacoesCount : undefined,
         },
         { title: 'Pacientes', path: '/pacientes', icon: UserSquare2 },
-        { title: 'Orçamentos', path: '/orcamentos', icon: DollarSign },
-        { title: 'Ajustes', path: '/configuracoes', icon: Settings },
+        { title: 'Prescrições', path: '/prescricoes', icon: FileSpreadsheet },
+        { title: 'Orçam.', path: '/orcamentos', icon: DollarSign },
       ]
     : [
         { title: 'Início', path: '/', icon: LayoutDashboard },
@@ -441,14 +441,30 @@ export default function Layout() {
         {/* Topbar Fixa - Otimizada para Celular dos Médicos */}
         <header className="sticky top-0 z-30 h-15 sm:h-16 bg-white/95 backdrop-blur-md border-b border-emerald-950/10 px-3 sm:px-6 flex items-center justify-between shadow-xs pt-safe">
           {/* Lado esquerdo: Logo no mobile direto + Título */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            {/* Botão de Menu Hamburguer para Mobile Drawer */}
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="md:hidden p-2 rounded-xl text-slate-700 hover:text-[#0C4336] hover:bg-emerald-50 active:bg-emerald-100 transition min-h-[44px] min-w-[44px] flex items-center justify-center -ml-1"
+              aria-label="Abrir menu de navegação"
+            >
+              <div className="w-5 h-4 flex flex-col justify-between">
+                <span className="w-full h-0.5 bg-[#0C4336] rounded-full" />
+                <span className="w-full h-0.5 bg-[#0C4336] rounded-full" />
+                <span className="w-3/4 h-0.5 bg-[#0C4336] rounded-full" />
+              </div>
+            </button>
+
             {/* Logo direta no mobile */}
-            <div className="md:hidden flex items-center shrink-0">
+            <div
+              className="md:hidden flex items-center shrink-0 cursor-pointer"
+              onClick={() => navigate('/')}
+            >
               <img
                 src={logoHelpVida}
                 alt="Help Vida"
-                className="h-8 w-auto object-contain max-w-[125px]"
-                onClick={() => navigate('/')}
+                className="h-7 w-auto object-contain max-w-[110px]"
               />
             </div>
 
@@ -668,10 +684,10 @@ export default function Layout() {
       </div>
 
       {/* 3. BARRA DE NAVEGAÇÃO INFERIOR OTIMIZADA PARA CELULAR DOS MÉDICOS (< 768px) */}
-      {/* Botões com mínimo de 48px de área de toque, touch seguro, feedback tátil */}
+      {/* Botões com mínimo de 44px de área de toque, touch seguro, feedback tátil e safe-area */}
       <nav
         aria-label="Navegação inferior mobile"
-        className="md:hidden fixed bottom-0 left-0 right-0 h-[calc(4rem+env(safe-area-inset-bottom,0px))] bg-white/95 backdrop-blur-md border-t border-emerald-950/10 z-40 flex items-stretch justify-around px-1 shadow-[0_-4px_16px_rgba(12,67,54,0.08)] pb-[env(safe-area-inset-bottom,0px)]"
+        className="md:hidden fixed bottom-0 left-0 right-0 h-[calc(4rem+env(safe-area-inset-bottom,0px))] bg-white/95 backdrop-blur-md border-t border-emerald-950/10 z-40 flex items-stretch justify-around px-0.5 shadow-[0_-4px_16px_rgba(12,67,54,0.08)] pb-[env(safe-area-inset-bottom,0px)]"
       >
         {mobileNavItems.map((item) => {
           const Icon = item.icon
@@ -683,14 +699,14 @@ export default function Layout() {
               key={item.path}
               to={item.path}
               className={cn(
-                'flex flex-col items-center justify-center flex-1 h-full min-h-[48px] min-w-[44px] transition-all relative select-none px-1',
+                'flex flex-col items-center justify-center flex-1 h-full min-h-[44px] min-w-[44px] transition-all relative select-none px-0.5',
                 isActive
                   ? 'text-[#0F5342] font-bold'
                   : 'text-slate-500 hover:text-slate-800 active:text-[#0F5342]',
               )}
             >
               {isActive && (
-                <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-[#F5B31C] rounded-b-full shadow-xs" />
+                <span className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-1 bg-[#F5B31C] rounded-b-full shadow-xs" />
               )}
               <div
                 className={cn(
@@ -699,7 +715,7 @@ export default function Layout() {
                 )}
               >
                 <Icon
-                  size={19}
+                  size={18}
                   className={cn(
                     'transition-transform',
                     isActive ? 'text-[#0F5342] scale-105' : 'text-slate-500',
@@ -711,13 +727,159 @@ export default function Layout() {
                   </span>
                 )}
               </div>
-              <span className="text-[10px] mt-0.5 tracking-tight truncate max-w-[56px] text-center">
+              <span className="text-[9.5px] mt-0.5 tracking-tight truncate max-w-[54px] text-center font-medium">
                 {item.title}
               </span>
             </NavLink>
           )
         })}
+
+        {/* Botão Menu / Mais no Mobile (abre Drawer completo com todas as telas) */}
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          className="flex flex-col items-center justify-center flex-1 h-full min-h-[44px] min-w-[44px] transition-all relative select-none px-0.5 text-slate-500 hover:text-slate-800 active:text-[#0F5342]"
+          aria-label="Abrir todas as opções"
+        >
+          <div className="p-1 rounded-xl transition relative">
+            <Settings size={18} className="text-slate-500" />
+            {isAdmin && (pendingApprovalsCount > 0 || pendingSolicitacoesCount > 0) && (
+              <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white animate-pulse" />
+            )}
+          </div>
+          <span className="text-[9.5px] mt-0.5 tracking-tight truncate max-w-[54px] text-center font-medium">
+            Mais
+          </span>
+        </button>
       </nav>
+
+      {/* 4. DRAWER / MENU LATERAL MOBILE COMPLETO */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex animate-in fade-in duration-200">
+          {/* Overlay com blur */}
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+
+          {/* Painel do Drawer */}
+          <div className="relative w-[82vw] max-w-xs bg-[#082921] text-white h-full flex flex-col shadow-2xl z-10 pt-safe pb-safe">
+            {/* Cabeçalho do Drawer */}
+            <div className="p-4 border-b border-[#0F5342]/40 bg-[#06201a] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="bg-white rounded-xl p-1.5 shadow-sm border border-white/20 flex items-center justify-center shrink-0">
+                  <img
+                    src={logoHelpVida}
+                    alt="Help Vida"
+                    className="h-6 w-auto object-contain max-w-[110px]"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-bold text-[#F5B31C] tracking-wider uppercase leading-none">
+                    Menu Principal
+                  </span>
+                  <span className="text-[9px] text-emerald-200/70 font-medium mt-0.5">
+                    {isAdmin
+                      ? 'Administrador'
+                      : isMedicoVisitador
+                        ? 'Médico Visitador'
+                        : 'Corpo Clínico'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-2 rounded-xl text-emerald-200/70 hover:text-white hover:bg-[#0F5342] transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Fechar menu"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Links do Drawer */}
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {navItems.map((item) => {
+                const Icon = item.icon
+                const isActive =
+                  item.path === '/'
+                    ? location.pathname === '/'
+                    : location.pathname.startsWith(item.path)
+
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      'flex items-center gap-3 px-3.5 py-3 rounded-xl text-sm font-medium transition-all min-h-[44px]',
+                      isActive
+                        ? 'bg-[#0F5342] text-white font-bold shadow-xs'
+                        : 'text-emerald-100/80 hover:text-white hover:bg-[#0C4336]/60 active:bg-[#0F5342]',
+                    )}
+                  >
+                    <Icon
+                      size={20}
+                      className={cn(
+                        'transition-colors shrink-0',
+                        isActive ? 'text-[#F5B31C]' : 'text-emerald-200/70',
+                      )}
+                    />
+                    <span className="truncate flex-1">{item.title}</span>
+                    {Boolean(item.badgeCount && item.badgeCount > 0) && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500 text-white animate-pulse">
+                        {item.badgeCount}
+                      </span>
+                    )}
+                  </NavLink>
+                )
+              })}
+
+              <div className="pt-2 mt-2 border-t border-[#0F5342]/40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false)
+                    setPoliticaOpen(true)
+                  }}
+                  className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs text-emerald-200/80 hover:text-white hover:bg-[#0C4336]/60 transition min-h-[44px]"
+                >
+                  <ShieldCheck size={18} className="text-[#F5B31C] shrink-0" />
+                  <span>Aviso de Privacidade LGPD</span>
+                </button>
+              </div>
+            </nav>
+
+            {/* Rodapé do Drawer */}
+            <div className="p-3 border-t border-[#0F5342]/40 bg-[#06201a]/70 space-y-2">
+              <div className="px-3 py-2 rounded-xl bg-[#0C4336]/60 border border-[#0F5342]/40 flex items-center gap-2.5">
+                <Avatar className="h-8 w-8 rounded-lg bg-[#0F5342] text-white text-xs font-bold shrink-0 border border-[#1A8F7E]/40">
+                  <AvatarFallback>{userInitials}</AvatarFallback>
+                </Avatar>
+                <div className="truncate flex-1">
+                  <p className="text-xs font-semibold text-white truncate">
+                    {user?.name || 'Profissional'}
+                  </p>
+                  <p className="text-[10px] text-emerald-200/70 truncate">{user?.email}</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false)
+                  logout()
+                }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium text-rose-300 hover:bg-rose-500/10 transition min-h-[44px]"
+              >
+                <LogOut size={16} />
+                <span>Sair da conta</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Modal Popup de Alerta de Novas Solicitações de Não Padronizados para o Administrador */}
       <Dialog open={solicitacaoModalOpen} onOpenChange={setSolicitacaoModalOpen}>
         <DialogContent className="max-w-md w-[92vw] sm:w-full p-5 sm:p-6 rounded-2xl bg-white border-red-200">

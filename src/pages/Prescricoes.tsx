@@ -231,18 +231,18 @@ export default function Prescricoes() {
       <SpincareTabsNav />
 
       {/* 2. CABEÇALHO */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-bold text-[#0C4336] tracking-tight flex items-center gap-2">
-              <FileSpreadsheet className="h-6 w-6 text-[#0D8272]" />
-              Prescrições Médicas — SpinCare
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg sm:text-2xl font-bold text-[#0C4336] tracking-tight flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5 sm:h-6 sm:w-6 text-[#0D8272] shrink-0" />
+              <span>Prescrições Médicas — SpinCare</span>
             </h2>
             <Badge className="bg-[#EBF3FF] text-[#1E40AF] border-[#93C5FD]/40 text-[10px] font-bold">
               2026 Ao Vivo
             </Badge>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 leading-snug">
             Listagem completa de prescrições médicas com itens prescritos, médico prescritor e
             verificação cruzada de medicamentos.
           </p>
@@ -253,7 +253,7 @@ export default function Prescricoes() {
             variant="outline"
             size="sm"
             onClick={() => navigate('/configuracoes')}
-            className="text-xs border-[#0D8272]/30 text-[#0C4336] hover:bg-[#E6F5F2] rounded-xl self-start sm:self-auto"
+            className="text-xs border-[#0D8272]/30 text-[#0C4336] hover:bg-[#E6F5F2] rounded-xl self-start sm:self-auto min-h-[44px] sm:min-h-0"
           >
             <Settings size={13} className="mr-1.5 text-[#0D8272]" />
             Configurar SpinCare
@@ -281,16 +281,15 @@ export default function Prescricoes() {
         <CardContent className="p-3.5 sm:p-5 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold">
+              <div className="h-8 w-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold shrink-0">
                 <Pill size={16} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-xs sm:text-sm font-bold text-blue-950">
                   Verificar Medicamento na Prescrição
                 </h3>
                 <p className="text-[11px] text-blue-800/80">
-                  Descubra instantaneamente se um medicamento já consta nas prescrições médicas de
-                  2026.
+                  Descubra instantaneamente se um medicamento já consta nas prescrições de 2026.
                 </p>
               </div>
             </div>
@@ -300,9 +299,9 @@ export default function Prescricoes() {
                 variant="outline"
                 size="sm"
                 onClick={() => setMedQuery('')}
-                className="h-7 text-xs border-blue-300 text-blue-900 rounded-lg px-2"
+                className="h-8 sm:h-7 text-xs border-blue-300 text-blue-900 rounded-lg px-2.5 self-start sm:self-auto min-h-[44px] sm:min-h-0 flex items-center"
               >
-                <X size={12} className="mr-1" />
+                <X size={13} className="mr-1" />
                 Limpar checagem
               </Button>
             )}
@@ -312,10 +311,10 @@ export default function Prescricoes() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500 pointer-events-none" />
             <Input
               type="text"
-              placeholder="Digite o nome de um medicamento do catálogo (ex: Dipirona, Enoxaparina, Omeprazol, Losartana)..."
+              placeholder="Buscar remédio prescrito (ex: Dipirona, Enoxaparina, Omeprazol)..."
               value={medQuery}
               onChange={(e) => setMedQuery(e.target.value)}
-              className="h-10 pl-9 text-xs sm:text-sm bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600"
+              className="h-11 sm:h-10 pl-9 text-base sm:text-sm bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600"
             />
           </div>
 
@@ -370,10 +369,10 @@ export default function Prescricoes() {
                     required
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="h-10 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono"
+                    className="h-11 sm:h-10 text-base sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono min-h-[44px]"
                   />
                 </div>
-                <span className="text-[10px] text-emerald-800 font-semibold">
+                <span className="text-[10px] text-emerald-800 font-semibold block">
                   Padrão: 01/01/2026
                 </span>
               </div>
@@ -388,7 +387,7 @@ export default function Prescricoes() {
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="h-10 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono"
+                    className="h-11 sm:h-10 text-base sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl font-mono min-h-[44px]"
                   />
                 </div>
               </div>
@@ -404,25 +403,25 @@ export default function Prescricoes() {
                     placeholder="Nome do paciente, médico ou nº..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="h-10 text-xs sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]"
+                    className="h-11 sm:h-10 text-base sm:text-sm bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272] min-h-[44px]"
                   />
                 </div>
               </div>
 
-              <div className="flex items-end gap-2">
+              <div className="flex items-center gap-2 pt-1 sm:pt-0 sm:items-end">
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-10 bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
+                  className="flex-1 sm:w-full h-11 sm:h-10 min-h-[44px] bg-[#0F5342] hover:bg-[#0C4336] active:bg-[#082921] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Consultando...
                     </>
                   ) : (
                     <>
-                      <Filter className="h-3.5 w-3.5 text-[#F5B31C]" />
+                      <Filter className="h-4 w-4 text-[#F5B31C]" />
                       Filtrar Prescrições
                     </>
                   )}
@@ -438,7 +437,7 @@ export default function Prescricoes() {
                       setSearch('')
                       setMedQuery('')
                     }}
-                    className="h-10 text-xs border-slate-200 rounded-xl"
+                    className="h-11 sm:h-10 min-h-[44px] px-3.5 text-xs border-slate-200 rounded-xl"
                     title="Redefinir filtros"
                   >
                     Reset
@@ -605,15 +604,15 @@ export default function Prescricoes() {
           {/* Paginação progressiva */}
           {hasMore && (
             <div className="p-4 rounded-2xl bg-[#F4FAF8] border border-emerald-950/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-              <span className="text-slate-600">
+              <span className="text-slate-600 text-center sm:text-left">
                 Mostrando <strong>{visiblePrescriptions.length}</strong> de{' '}
                 <strong>{prescriptions.length}</strong> prescrições médicas
               </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 <Button
                   type="button"
                   onClick={handleLoadMore}
-                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl h-9 px-4 flex-1 sm:flex-initial"
+                  className="bg-[#0F5342] hover:bg-[#0C4336] active:bg-[#082921] text-white text-xs font-bold rounded-xl h-11 sm:h-9 min-h-[44px] sm:min-h-0 px-4 flex-1 sm:flex-initial"
                 >
                   Carregar Mais 50
                 </Button>
@@ -621,7 +620,7 @@ export default function Prescricoes() {
                   type="button"
                   variant="outline"
                   onClick={handleShowAll}
-                  className="text-xs border-emerald-950/15 rounded-xl h-9 px-3 shrink-0"
+                  className="text-xs border-emerald-950/15 rounded-xl h-11 sm:h-9 min-h-[44px] sm:min-h-0 px-4 shrink-0"
                 >
                   Exibir Todos ({prescriptions.length})
                 </Button>
@@ -631,17 +630,17 @@ export default function Prescricoes() {
         </div>
       )}
 
-      {/* 7. MODAL DETALHE DA PRESCRIÇÃO */}
+      {/* 7. MODAL DETALHE DA PRESCRIÇÃO - OTIMIZADO PARA MOBILE */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
-        <DialogContent className="max-w-2xl w-[94vw] sm:w-full p-4 sm:p-6 rounded-2xl bg-white max-h-[92vh] flex flex-col">
+        <DialogContent className="max-w-2xl w-[96vw] sm:w-full p-3 sm:p-6 rounded-2xl bg-white max-h-[94vh] sm:max-h-[92vh] flex flex-col">
           <DialogHeader className="pb-3 border-b border-emerald-950/10 shrink-0 text-left">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2">
-                  <FileSpreadsheet className="h-5 w-5 text-[#0D8272]" />
-                  Prescrição Médica #{selectedPrescription?.numero}
+              <div className="min-w-0 pr-1">
+                <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2 truncate">
+                  <FileSpreadsheet className="h-5 w-5 text-[#0D8272] shrink-0" />
+                  <span>Prescrição #{selectedPrescription?.numero}</span>
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500 pt-0.5">
+                <DialogDescription className="text-[11px] sm:text-xs text-slate-500 pt-0.5 truncate">
                   Dados do paciente, médico prescritor e itens no SpinCare
                 </DialogDescription>
               </div>
@@ -651,20 +650,20 @@ export default function Prescricoes() {
             </div>
           </DialogHeader>
 
-          <ScrollArea className="flex-1 pr-2 space-y-4 py-3">
-            <div className="p-3.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 space-y-2 text-xs">
+          <ScrollArea className="flex-1 pr-1 sm:pr-2 space-y-3 sm:space-y-4 py-3">
+            <div className="p-3 sm:p-3.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 space-y-2 text-xs">
               <div>
                 <span className="text-slate-400 block text-[10px] font-bold uppercase">
                   Paciente:
                 </span>
-                <span className="font-bold text-slate-800 text-sm">
+                <span className="font-bold text-slate-900 text-sm sm:text-base break-words">
                   {selectedPrescription?.pacienteNome || '—'}
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-emerald-950/10">
                 <div>
                   <span className="text-slate-400 block text-[10px]">Médico Prescritor:</span>
-                  <span className="font-bold text-[#0C4336]">
+                  <span className="font-bold text-[#0C4336] break-words">
                     {selectedPrescription?.medicoPrescritor || '—'}
                   </span>
                 </div>
@@ -707,14 +706,16 @@ export default function Prescricoes() {
                   {selectedPrescription.itens.map((it, idx) => (
                     <div
                       key={idx}
-                      className="p-3 rounded-xl border border-emerald-950/10 bg-white hover:bg-slate-50 transition space-y-1.5 text-xs"
+                      className="p-2.5 sm:p-3 rounded-xl border border-emerald-950/10 bg-white hover:bg-slate-50 transition space-y-1.5 text-xs shadow-2xs"
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="h-5 w-5 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <span className="h-5 w-5 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px] shrink-0 font-mono mt-0.5">
                             {idx + 1}
                           </span>
-                          <p className="font-bold text-slate-900">{it.descricao}</p>
+                          <p className="font-bold text-slate-900 break-words leading-snug">
+                            {it.descricao}
+                          </p>
                         </div>
                         {it.quantidade ? (
                           <Badge className="bg-slate-100 text-slate-700 border-slate-200 text-[10px] shrink-0 font-mono">
@@ -725,7 +726,7 @@ export default function Prescricoes() {
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pl-7 text-[11px] text-slate-600">
                         {it.posologia && (
-                          <div>
+                          <div className="break-words">
                             <span className="text-slate-400 font-medium">Posologia: </span>
                             <span className="font-semibold text-slate-800">{it.posologia}</span>
                           </div>
@@ -753,7 +754,7 @@ export default function Prescricoes() {
                       </div>
 
                       {it.observacao && (
-                        <p className="text-[11px] text-slate-500 italic pl-7 bg-[#F4FAF8] p-1.5 rounded-lg">
+                        <p className="text-[11px] text-slate-500 italic pl-7 bg-[#F4FAF8] p-1.5 rounded-lg break-words">
                           &quot;{it.observacao}&quot;
                         </p>
                       )}
@@ -776,7 +777,7 @@ export default function Prescricoes() {
               type="button"
               variant="outline"
               onClick={() => setDetailModalOpen(false)}
-              className="w-full sm:w-auto h-9 text-xs rounded-xl"
+              className="w-full sm:w-auto h-11 sm:h-9 min-h-[44px] sm:min-h-0 text-xs rounded-xl"
             >
               Fechar Detalhes
             </Button>

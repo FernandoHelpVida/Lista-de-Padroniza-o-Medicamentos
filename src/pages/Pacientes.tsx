@@ -374,20 +374,20 @@ export default function Pacientes() {
                 />
               </div>
 
-              <div className="flex items-end gap-2">
+              <div className="flex items-center gap-2 pt-1 sm:pt-0 sm:items-end">
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-10 bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
+                  className="flex-1 sm:w-full h-11 sm:h-10 min-h-[44px] bg-[#0F5342] hover:bg-[#0C4336] active:bg-[#082921] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5"
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Consultando...
                     </>
                   ) : (
                     <>
-                      <Search className="h-3.5 w-3.5 text-[#F5B31C]" />
+                      <Search className="h-4 w-4 text-[#F5B31C]" />
                       Buscar no SpinCare
                     </>
                   )}
@@ -398,11 +398,11 @@ export default function Pacientes() {
                     type="button"
                     variant="outline"
                     onClick={handleResetFilters}
-                    className="h-10 text-xs border-slate-200 rounded-xl px-3 shrink-0"
+                    className="h-11 sm:h-10 min-h-[44px] text-xs border-slate-200 rounded-xl px-3.5 shrink-0 flex items-center justify-center"
                     title="Limpar todos os filtros"
                   >
-                    <X size={14} className="sm:mr-1" />
-                    <span className="hidden sm:inline">Limpar</span>
+                    <X size={14} className="mr-1" />
+                    <span>Limpar</span>
                   </Button>
                 )}
               </div>
@@ -682,15 +682,15 @@ export default function Pacientes() {
           {/* BARRA DE CARREGAMENTO PROGRESSIVO / PAGINAÇÃO */}
           {hasMorePatients && (
             <div className="p-4 rounded-2xl bg-[#F4FAF8] border border-emerald-950/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-              <span className="text-slate-600">
+              <span className="text-slate-600 text-center sm:text-left">
                 Mostrando <strong>{visiblePatients.length}</strong> de{' '}
                 <strong>{filteredPatients.length}</strong> pacientes encontrados
               </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 <Button
                   type="button"
                   onClick={handleLoadMore}
-                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl h-9 px-4 flex-1 sm:flex-initial"
+                  className="bg-[#0F5342] hover:bg-[#0C4336] active:bg-[#082921] text-white text-xs font-bold rounded-xl h-11 sm:h-9 min-h-[44px] sm:min-h-0 px-4 flex-1 sm:flex-initial"
                 >
                   Carregar Mais 50 Pacientes
                 </Button>
@@ -698,7 +698,7 @@ export default function Pacientes() {
                   type="button"
                   variant="outline"
                   onClick={handleShowAll}
-                  className="text-xs border-emerald-950/15 rounded-xl h-9 px-3 shrink-0"
+                  className="text-xs border-emerald-950/15 rounded-xl h-11 sm:h-9 min-h-[44px] sm:min-h-0 px-4 shrink-0"
                 >
                   Exibir Todos ({filteredPatients.length})
                 </Button>
@@ -710,15 +710,15 @@ export default function Pacientes() {
 
       {/* 6. MODAL: FICHA DO PACIENTE + ORÇAMENTOS VINCULADOS */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
-        <DialogContent className="max-w-2xl w-[94vw] sm:w-full p-4 sm:p-6 rounded-2xl bg-white max-h-[92vh] flex flex-col">
+        <DialogContent className="max-w-2xl w-[96vw] sm:w-full p-3 sm:p-6 rounded-2xl bg-white max-h-[94vh] sm:max-h-[92vh] flex flex-col">
           <DialogHeader className="pb-3 border-b border-emerald-950/10 shrink-0 text-left">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2">
-                  <User className="h-5 w-5 text-[#0D8272]" />
-                  {patientDetail?.nome || 'Ficha do Paciente'}
+              <div className="min-w-0 pr-1">
+                <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2 truncate">
+                  <User className="h-5 w-5 text-[#0D8272] shrink-0" />
+                  <span className="truncate">{patientDetail?.nome || 'Ficha do Paciente'}</span>
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500 pt-0.5">
+                <DialogDescription className="text-[11px] sm:text-xs text-slate-500 pt-0.5 truncate">
                   Dados cadastrais e histórico de orçamentos aprovados no SpinCare
                 </DialogDescription>
               </div>
@@ -819,13 +819,13 @@ export default function Pacientes() {
               </p>
 
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-blue-500 pointer-events-none" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500 pointer-events-none" />
                 <Input
                   type="text"
                   placeholder="Nome do medicamento (ex: Dipirona, Enoxaparina, Omeprazol)..."
                   value={medCheckQuery}
                   onChange={(e) => setMedCheckQuery(e.target.value)}
-                  className="h-9 pl-8 text-xs bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600"
+                  className="h-11 sm:h-9 pl-8 text-base sm:text-xs bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600 min-h-[44px] sm:min-h-0"
                 />
               </div>
 
@@ -1081,7 +1081,7 @@ export default function Pacientes() {
               type="button"
               variant="outline"
               onClick={() => setDetailModalOpen(false)}
-              className="w-full sm:w-auto h-9 text-xs rounded-xl"
+              className="w-full sm:w-auto h-11 sm:h-9 min-h-[44px] sm:min-h-0 text-xs rounded-xl"
             >
               Fechar Ficha
             </Button>
