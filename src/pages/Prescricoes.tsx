@@ -187,20 +187,7 @@ export default function Prescricoes() {
     setDisplayLimit(50)
     setServerCheckLoading(true)
 
-    try {
-      const res = await checkSpincareMedicationPrescribed({
-        medication: targetMed,
-        patientName: targetPatient || undefined,
-        startDate: targetStart,
-        endDate: targetEnd,
-      })
-      setServerCheckResult(res)
-    } catch (err: unknown) {
-      console.warn('Falha na rota server-side de busca combinada, utilizando fallback:', err)
-      setServerCheckResult(null)
-    } finally {
-      setServerCheckLoading(false)
-    }
+    await runCombinedSearch()
   }
 
   const handleClearCombinedSearch = () => {
@@ -226,6 +213,48 @@ export default function Prescricoes() {
   // Resultado direto da verificação combinada server-side (garante busca exaustiva)
   const [serverCheckResult, setServerCheckResult] = useState<CheckMedicationResult | null>(null)
   const [serverCheckLoading, setServerCheckLoading] = useState(false)
+
+  // Função para executar a busca combinada permitindo passar patientId explícito (ex.: ao desambiguar homônimo)
+  const runCombinedSearch = async (overridePatientId?: string, overridePatientName?: string) => {
+    const targetMed = medQuery.trim()
+    if (!targetMed) {
+      toast({
+        title: 'Nome do medicamento obrigatório',
+        description: 'Digite o nome do medicamento para verificar as prescrições.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const targetPatient =
+      overridePatientName !== undefined ? overridePatientName : patientQuery.trim()
+    const targetStart = startDate.trim() || '2026-01-01'
+    const targetEnd = endDate.trim() || hojeIso
+
+    setActiveCheckMed(targetMed)
+    setActiveCheckPatient(targetPatient)
+    setActiveCheckStart(targetStart)
+    setActiveCheckEnd(targetEnd)
+    setHasExecutedMedCheck(true)
+    setDisplayLimit(50)
+    setServerCheckLoading(true)
+
+    try {
+      const res = await checkSpincareMedicationPrescribed({
+        medication: targetMed,
+        patientName: targetPatient || undefined,
+        patientId: overridePatientId || undefined,
+        startDate: targetStart,
+        endDate: targetEnd,
+      })
+      setServerCheckResult(res)
+    } catch (err: unknown) {
+      console.warn('Falha na rota server-side de busca combinada, utilizando fallback:', err)
+      setServerCheckResult(null)
+    } finally {
+      setServerCheckLoading(false)
+    }
+  }
 
   // Cálculo das ocorrências combinadas
   // Se houver resultado do servidor, prioriza o resultado do servidor (que varreu todas as páginas de 100 até esgotar)
@@ -693,6 +722,88 @@ export default function Prescricoes() {
                     Varrendo todas as páginas de prescrições do período no servidor para garantir
                     segurança total do paciente.
                   </p>
+                </div>
+              </div>
+            ) : serverCheckResult?.hasHomonyms &&
+              serverCheckResult?.candidates &&
+              serverCheckResult.candidates.length > 1 ? (
+              <div className="pt-2">
+                <div className="p-4 rounded-xl bg-amber-50 border-2 border-amber-400 text-xs space-y-3 shadow-sm">
+                  <div className="flex items-start gap-2.5 text-amber-950">
+                    <AlertCircle size={20} className="text-amber-700 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-sm text-amber-950">
+                        Atenção: Pacientes Homônimos Detectados no SpinCare
+                      </h4>
+                      <p className="text-xs text-amber-900 mt-0.5 leading-relaxed">
+                        {serverCheckResult.homonymWarning ||
+                          'Foram encontrados múltiplos pacientes com nomes semelhantes. Para evitar misturar prescrições de pessoas distintas, selecione abaixo o paciente correto:'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t border-amber-200">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">
+                      Selecione o cadastro para desambiguar:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {serverCheckResult.candidates.map((cand) => (
+                        <div
+                          key={cand.id}
+                          className="p-3 rounded-lg bg-white border border-amber-300 hover:border-[#0D8272] hover:bg-[#F4FAF8] transition flex flex-col justify-between gap-2"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-bold text-slate-900 text-xs">{cand.name}</span>
+                              <Badge className="bg-slate-100 text-slate-700 border-slate-200 text-[10px] font-mono">
+                                ID #{cand.id}
+                              </Badge>
+                            </div>
+                            <div className="text-[11px] text-slate-600 space-y-0.5">
+                              {cand.document && (
+                                <p>
+                                  <span className="text-slate-400">CPF/Doc:</span>{' '}
+                                  <strong>{cand.document}</strong>
+                                </p>
+                              )}
+                              {cand.registration_number && (
+                                <p>
+                                  <span className="text-slate-400">Matrícula:</span>{' '}
+                                  <strong>{cand.registration_number}</strong>
+                                </p>
+                              )}
+                              {cand.birth_date && (
+                                <p>
+                                  <span className="text-slate-400">Nascimento:</span>{' '}
+                                  <strong>{cand.birth_date}</strong>
+                                </p>
+                              )}
+                              {cand.health_insurance_name && (
+                                <p>
+                                  <span className="text-slate-400">Convênio:</span>{' '}
+                                  <strong className="text-[#0C4336]">
+                                    {cand.health_insurance_name}
+                                  </strong>
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              setPatientQuery(cand.name)
+                              runCombinedSearch(cand.id, cand.name)
+                            }}
+                            className="w-full bg-[#0F5342] hover:bg-[#0C4336] text-white text-[11px] font-bold rounded-lg h-8"
+                          >
+                            Consultar este Paciente (ID #{cand.id})
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (

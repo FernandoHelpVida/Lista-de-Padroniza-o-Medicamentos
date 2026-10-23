@@ -322,18 +322,66 @@ routerAdd(
       // consultando a lista de pacientes no SpinCare caso ajude ou para validação cruzada
       let resolvedPatientId = patientIdParam
       let resolvedPatientNameFromApi = ''
+      let homonymsDetected = []
+
+      // Helper para classificar se uma linha da prescrição é um medicamento real
+      // ou texto genérico de instrução/orientação
+      const isInstructionLine = (text) => {
+        if (!text) return true
+        const nt = norm(text)
+        if (!nt || nt.length < 3) return true
+
+        const instructionSnippets = [
+          'administrar medicamento conforme prescricao',
+          'administrar conforme prescricao',
+          'administrar medicamento',
+          'conforme prescricao medica',
+          'conforme prescricao',
+          'conforme orientacao medica',
+          'conforme orientacao',
+          'conforme recomendacao',
+          'conforme receita',
+          'conforme protocolo',
+          'uso continuo',
+          'uso se necessario',
+          'conforme quadro clinico',
+          'seguir orientacao medica',
+          'seguir prescricao medica',
+          'cuidados de enfermagem',
+          'administrar medicacao',
+        ]
+        for (let i = 0; i < instructionSnippets.length; i++) {
+          if (nt.includes(instructionSnippets[i])) return true
+        }
+
+        // Se começa com "administrar" ou "conforme" ou "seguir" e não tem apresentação farmacêutica
+        if (
+          (nt.startsWith('administrar') || nt.startsWith('conforme') || nt.startsWith('seguir')) &&
+          !nt.match(
+            /\b(mg|ml|ui|mcg|g|cp|frasco|ampola|f\/a|solucao|comprimido|capsula|gotas|adesivo|pomada|gel|creme|colirio|xarope|suspensao|lantus|glargina|insulina|dipirona|omeprazol)\b/,
+          )
+        ) {
+          return true
+        }
+
+        return false
+      }
+
       if (!resolvedPatientId && patientName) {
         try {
           const patNormPath = (
             cfgRec.getString('endpoint_patients') || '/integration-engine/get/patients'
           ).trim()
           const pPath = patNormPath.startsWith('/') ? patNormPath : '/' + patNormPath
+
+          // 1. Busca por ?name=
+          let patList = []
           const patSearchUrl =
             baseUrl +
             pPath +
             '?name=' +
             encodeURIComponent(patientName) +
-            '&page_number=1&page_size=20' +
+            '&page_number=1&page_size=50' +
             (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
           const patRes = $http.send({
             url: patSearchUrl,
@@ -344,8 +392,6 @@ routerAdd(
             },
             timeout: 15,
           })
-          console.log('[check-medication] Busca paciente HTTP status:', patRes.statusCode)
-          let patList = []
           if (patRes.statusCode === 200) {
             try {
               const pj = patRes.json || JSON.parse(patRes.raw || '[]')
@@ -354,7 +400,7 @@ routerAdd(
             } catch (_) {}
           }
 
-          // Se busca por '?name=' não retornou nada, tenta '?search='
+          // 2. Se vazio, tenta por ?search=
           if (patList.length === 0) {
             const patSearchUrl2 =
               baseUrl +
@@ -378,43 +424,115 @@ routerAdd(
             }
           }
 
+          // 3. Se ainda vazio e o nome tem múltiplas palavras, tenta buscar pelo primeiro nome para achar candidatos
           const normTargetPat = norm(patientName)
           const targetWords = normTargetPat.split(' ').filter(Boolean)
-          console.log('[check-medication] Pacientes retornados da API:', patList.length)
-          if (patList.length > 0) {
-            console.log(
-              '[check-medication] Amostra paciente retornado:',
-              JSON.stringify(patList[0]).slice(0, 300),
-            )
-          }
-          const matchPat = patList.find((p) => {
-            const pName = p.name || p.nome || p.nm_paciente || p.patient_name || ''
-            const pNorm = norm(pName)
-            return targetWords.length > 0 && targetWords.every((w) => pNorm.includes(w))
-          })
-          if (matchPat) {
-            const resolvedId = matchPat.id || matchPat.patient_id || matchPat.id_paciente
-            const resolvedName =
-              matchPat.name || matchPat.nome || matchPat.nm_paciente || matchPat.patient_name || ''
-            if (resolvedId) {
-              resolvedPatientId = String(resolvedId)
-              resolvedPatientNameFromApi = String(resolvedName)
-              console.log(
-                '[check-medication] Paciente resolvido com sucesso:',
-                resolvedPatientNameFromApi,
-                'ID:',
-                resolvedPatientId,
-              )
+          if (patList.length === 0 && targetWords.length > 1) {
+            const patSearchUrl3 =
+              baseUrl +
+              pPath +
+              '?search=' +
+              encodeURIComponent(targetWords[0]) +
+              '&page_number=1&page_size=50' +
+              (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+            const patRes3 = $http.send({
+              url: patSearchUrl3,
+              method: 'GET',
+              headers: { Accept: 'application/json', Authorization: 'Bearer ' + apiToken },
+              timeout: 15,
+            })
+            if (patRes3.statusCode === 200) {
+              try {
+                const pj = patRes3.json || JSON.parse(patRes3.raw || '[]')
+                if (Array.isArray(pj)) patList = pj
+                else if (pj && Array.isArray(pj.items)) patList = pj.items
+              } catch (_) {}
             }
+          }
+
+          console.log('[check-medication] Candidatos retornados do SpinCare:', patList.length)
+
+          // Candidatos onde TODAS as palavras do nome batem
+          const matchedCandidates = []
+          const candidateMap = {}
+
+          for (let pi = 0; pi < patList.length; pi++) {
+            const p = patList[pi]
+            const pName = String(p.name || p.nome || p.nm_paciente || p.patient_name || '').trim()
+            const pNorm = norm(pName)
+            const pid = String(p.id || p.patient_id || p.id_paciente || '').trim()
+            if (!pid || candidateMap[pid]) continue
+
+            const matchesAll = targetWords.length > 0 && targetWords.every((w) => pNorm.includes(w))
+            if (matchesAll) {
+              candidateMap[pid] = true
+              matchedCandidates.push({
+                id: pid,
+                name: pName,
+                document: p.document || p.documento || p.cpf || '',
+                registration_number: p.registration_number || p.matricula || '',
+                birth_date: p.birth_date || p.data_nascimento || '',
+                health_insurance_name: p.health_insurance_name || p.convenio || p.nm_convenio || '',
+                active: p.active !== undefined ? p.active : true,
+              })
+            }
+          }
+
+          console.log(
+            '[check-medication] Candidatos estritos correspondentes (todas as palavras):',
+            matchedCandidates.length,
+          )
+
+          if (matchedCandidates.length === 1) {
+            resolvedPatientId = String(matchedCandidates[0].id)
+            resolvedPatientNameFromApi = String(matchedCandidates[0].name)
+            console.log(
+              '[check-medication] Paciente único resolvido com sucesso:',
+              resolvedPatientNameFromApi,
+              'ID:',
+              resolvedPatientId,
+            )
+          } else if (matchedCandidates.length > 1) {
+            // DETECTADOS HOMÔNIMOS REAIS!
+            // Conforme regra do usuário: SE HOUVER HOMÔNIMOS, O SISTEMA AVISA EM VEZ DE MISTURAR.
+            homonymsDetected = matchedCandidates
+            console.warn(
+              '[check-medication] HOMÔNIMOS DETECTADOS para "' + patientName + '":',
+              matchedCandidates.length,
+              'candidatos encontrados.',
+            )
           } else {
             console.log(
-              '[check-medication] Paciente não correspondido na lista de pacientes:',
+              '[check-medication] Nenhum paciente da lista de /patients bateu com todas as palavras:',
               patientName,
             )
           }
         } catch (patErr) {
           console.warn('Erro ao tentar pré-resolver paciente no check-medication:', patErr)
         }
+      }
+
+      // Se houver homônimos ambíguos e o usuário não especificou o ID exato,
+      // interrompe a consulta combinada e retorna o aviso com candidatos para desambiguação
+      if (homonymsDetected.length > 1 && !patientIdParam) {
+        return e.json(200, {
+          success: true,
+          found: false,
+          hasHomonyms: true,
+          homonymWarning:
+            'Foram encontrados ' +
+            homonymsDetected.length +
+            ' pacientes com nomes semelhantes no SpinCare. Por segurança clínica, selecione o paciente específico para não misturar prescrições.',
+          candidates: homonymsDetected,
+          totalOccurrences: 0,
+          prescriptionsCount: 0,
+          analyzedPrescriptionsCount: 0,
+          searchedMedication: medication,
+          searchedPatient: patientName,
+          startDate: isoStart,
+          endDate: isoEnd,
+          occurrences: [],
+        })
       }
 
       // Função para buscar uma página de prescrições no SpinCare
@@ -644,39 +762,13 @@ routerAdd(
             for (let i = 0; i < resP.items.length; i++) {
               const pr = resP.items[i]
               const pnome = norm(extractPatientName(pr))
+              const prPid = extractPatientId(pr)
+              // Se temos resolvedPatientId, só aceitamos este ID
+              if (resolvedPatientId && String(prPid) !== String(resolvedPatientId)) {
+                continue
+              }
               if (targetWords.every((w) => pnome.includes(w))) {
                 allRawPrescriptions.push(pr)
-                if (!discoveredPatientId && (pr.patient_id || pr.id_paciente)) {
-                  discoveredPatientId = String(pr.patient_id || pr.id_paciente)
-                }
-              }
-            }
-
-            // Aceleração: se encontramos o ID real do paciente na primeira página em que ele apareceu,
-            // consultamos diretamente as prescrições dele para garantir 100% de integridade
-            if (discoveredPatientId) {
-              console.log(
-                '[check-medication] Patient_id real descoberto via prescrições:',
-                discoveredPatientId,
-                '. Carregando prescrições do paciente...',
-              )
-              const directPrescs = []
-              for (let pp = 1; pp <= 10; pp++) {
-                const rPP = fetchPrescriptionsPage(
-                  pp,
-                  100,
-                  false,
-                  '2026-01-01 00:00:00',
-                  '',
-                  discoveredPatientId,
-                )
-                if (rPP.error || !rPP.items || rPP.items.length === 0) break
-                directPrescs.push(...rPP.items)
-                if (rPP.items.length < 100) break
-              }
-              if (directPrescs.length > 0) {
-                allRawPrescriptions = directPrescs
-                break
               }
             }
           } else {
@@ -750,6 +842,42 @@ routerAdd(
           ).trim()
           const obs = String(it.observation || it.observacao || it.orientacoes || '').trim()
 
+          // REGRA A DO USUÁRIO: "SÓ ITEM DE MEDICAMENTO REAL GERA OCORRÊNCIA"
+          // Descartar linhas de instrução/genéricas como ocorrência de medicamento:
+          // Item só é válido se tiver descrição de medicamento real.
+          // Ex.: linha sem dose/via e com texto de instrução ("administrar", "conforme prescrição",
+          // "conforme orientação médica", "uso contínuo", etc.) NÃO é ocorrência.
+          const rawDose =
+            it.dose_qt !== undefined && it.dose_qt !== null
+              ? it.dose_qt
+              : it.dose || it.dosage || ''
+          const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
+          const rawRoute = String(
+            it.admin_route ||
+              it.route ||
+              it.via ||
+              it.via_administracao ||
+              it.administration_route ||
+              '',
+          ).trim()
+
+          // Se a descrição do item for identificada como linha de instrução/orientação
+          if (isInstructionLine(desc)) {
+            console.log(
+              '[check-medication] Descartando linha de instrução na prescrição #' +
+                (raw.prescription_number || raw.id) +
+                ': "' +
+                desc +
+                '"',
+            )
+            continue
+          }
+
+          // Se não tem dose nem via e a descrição não parece nome farmacêutico
+          if (!doseStr && !rawRoute && isInstructionLine(desc + ' ' + obs)) {
+            continue
+          }
+
           const normDesc = norm(desc)
           const normObs = norm(obs)
 
@@ -790,12 +918,16 @@ routerAdd(
         }
 
         // 1. FILTRO DE PACIENTE (se informado):
-        // REGRA DE OURO DE SAÚDE: O paciente da prescrição DEVE ser o paciente procurado.
-        // Se o usuário digitou o nome do paciente (ex: "Ademir Rostirolla"), NUNCA podemos aceitar
-        // outro paciente (ex: "Abhner Gabriel") mesmo que um ID tenha sido confundido.
-        // O nome do paciente na prescrição DEVE conter TODAS as palavras do nome buscado.
+        // REGRA B DO USUÁRIO: "VINCULAÇÃO ESTRITA AO PACIENTE RESOLVIDO"
+        // Só entram na lista ocorrências cujo patient_id corresponde ao paciente exato resolvido
+        // pelo nome completo informado (todas as palavras batem). Nunca aceitar paciente por ID parcial/homônimo.
         let patientMatches = true
-        if (patWords.length > 0) {
+        if (resolvedPatientId) {
+          // Se temos o ID do paciente exato resolvido, a prescrição DEVE pertencer a esse ID
+          patientMatches = String(pid) === String(resolvedPatientId)
+        } else if (patWords.length > 0) {
+          // Se não há ID único resolvido (ex: busca por texto sem ID resolvido prévio),
+          // TODAS as palavras do nome pesquisado DEVEM constar no nome do paciente da prescrição
           const matchesAllWords = patWords.every((w) => normPnome.includes(w))
           patientMatches = matchesAllWords
         }
@@ -1007,6 +1139,10 @@ routerAdd(
       return e.json(200, {
         success: true,
         found: matchingOccurrences.length > 0,
+        hasHomonyms: false,
+        resolvedPatient: resolvedPatientId
+          ? { id: resolvedPatientId, name: resolvedPatientNameFromApi || patientName }
+          : null,
         totalOccurrences: matchingOccurrences.length,
         prescriptionsCount: Object.keys(matchingPrescriptionMap).length,
         analyzedPrescriptionsCount: analyzedCount,

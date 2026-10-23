@@ -176,9 +176,26 @@ export interface CheckMedicationOccurrence {
   }
 }
 
+export interface CheckMedicationCandidate {
+  id: string
+  name: string
+  document?: string
+  registration_number?: string
+  birth_date?: string
+  health_insurance_name?: string
+  active?: boolean
+}
+
 export interface CheckMedicationResult {
   success: boolean
   found: boolean
+  hasHomonyms?: boolean
+  homonymWarning?: string
+  candidates?: CheckMedicationCandidate[]
+  resolvedPatient?: {
+    id: string
+    name: string
+  } | null
   totalOccurrences: number
   prescriptionsCount: number
   analyzedPrescriptionsCount: number
