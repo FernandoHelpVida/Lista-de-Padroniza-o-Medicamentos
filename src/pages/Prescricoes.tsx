@@ -306,48 +306,39 @@ export default function Prescricoes() {
     const matchingPrescriptionIds = new Set<string>()
 
     allPrescriptions.forEach((p) => {
-      // 1. Filtro estrito de paciente (se informado)
+      // 1. Filtro estrito de paciente (se informado) - todas as palavras do paciente devem estar presentes
       if (patWords.length > 0) {
         const pNome = normalize(p.pacienteNome)
         const matchWords = patWords.every((w) => pNome.includes(w))
-        const matchFull = pNome.includes(qPatient) || qPatient.includes(pNome)
-        if (!matchWords && !matchFull) {
+        if (!matchWords) {
           return
         }
       }
 
       // 2. Filtro de período por datas de prescrição OU vigência cruzada
+      // Vigência com prioridade: sobreposição do intervalo [dataInicial, dataFinal] com [startComp, endComp]
       const pDatePresc = parseDateToComparable(p.dataPrescricao)
       const pDateInit = parseDateToComparable(p.dataInicial)
       const pDateFinal = parseDateToComparable(p.dataFinal)
 
       let inPeriod = false
-      if (pDatePresc !== null) {
-        if (
-          (startComp === null || pDatePresc >= startComp) &&
-          (endComp === null || pDatePresc <= endComp)
-        ) {
-          inPeriod = true
-        }
-      }
-      if (!inPeriod && pDateInit !== null && pDateFinal !== null) {
-        // Sobreposição de intervalos
+
+      // A: Se tem datas de vigência inicial e final, verifica sobreposição de intervalos
+      if (pDateInit !== null && pDateFinal !== null) {
         if (
           (endComp === null || pDateInit <= endComp) &&
           (startComp === null || pDateFinal >= startComp)
         ) {
           inPeriod = true
         }
-      }
-      if (!inPeriod && pDateInit !== null) {
+      } else if (pDateInit !== null) {
         if (
           (startComp === null || pDateInit >= startComp) &&
           (endComp === null || pDateInit <= endComp)
         ) {
           inPeriod = true
         }
-      }
-      if (!inPeriod && pDateFinal !== null) {
+      } else if (pDateFinal !== null) {
         if (
           (startComp === null || pDateFinal >= startComp) &&
           (endComp === null || pDateFinal <= endComp)
@@ -355,11 +346,18 @@ export default function Prescricoes() {
           inPeriod = true
         }
       }
-      if (pDatePresc === null && pDateInit === null && pDateFinal === null) {
-        inPeriod = true
+
+      // B: Data de prescrição/emissão dentro do período
+      if (!inPeriod && pDatePresc !== null) {
+        if (
+          (startComp === null || pDatePresc >= startComp) &&
+          (endComp === null || pDatePresc <= endComp)
+        ) {
+          inPeriod = true
+        }
       }
 
-      if (!inPeriod) {
+      if (!inPeriod && (startComp !== null || endComp !== null)) {
         return
       }
 
@@ -761,11 +759,25 @@ export default function Prescricoes() {
 
                                 <div>
                                   <span className="text-slate-400 block text-[10px]">
-                                    Data da Prescrição:
+                                    Data / Vigência:
                                   </span>
-                                  <strong className="text-slate-800">
-                                    {occ.presc.dataPrescricao}
+                                  <strong className="text-slate-800 block">
+                                    {occ.presc.dataInicial &&
+                                    occ.presc.dataFinal &&
+                                    occ.presc.dataInicial !== '—' ? (
+                                      <span>
+                                        Vigência: {occ.presc.dataInicial} até {occ.presc.dataFinal}
+                                      </span>
+                                    ) : (
+                                      <span>Data: {occ.presc.dataPrescricao}</span>
+                                    )}
                                   </strong>
+                                  {occ.presc.dataPrescricao &&
+                                    occ.presc.dataPrescricao !== occ.presc.dataInicial && (
+                                      <span className="text-[10px] text-slate-500 block">
+                                        Emissão: {occ.presc.dataPrescricao}
+                                      </span>
+                                    )}
                                 </div>
 
                                 <div>

@@ -194,13 +194,12 @@ routerAdd(
       const medication = (body.medication || body.medicamento || '').trim()
       const patientName = (body.patient_name || body.paciente || '').trim()
       const patientIdParam = (body.patient_id || '').trim()
-      const rawStartDate = (body.start_date || body.data_inicial || '2026-09-01').trim()
-      const rawEndDate = (body.end_date || body.data_final || '2026-09-30').trim()
+      const rawStartDate = (body.start_date || body.data_inicial || '').trim()
+      const rawEndDate = (body.end_date || body.data_final || '').trim()
 
       if (!medication) {
         return e.badRequestError('O nome do medicamento é obrigatório para a consulta.')
       }
-
       // Normalizador tolerante: remove acentos, trim, lowercase
       const norm = (str) => {
         if (!str) return ''
@@ -237,8 +236,8 @@ routerAdd(
         return ''
       }
 
-      const isoStart = toIsoYmd(rawStartDate) || '2026-01-01'
-      const isoEnd = toIsoYmd(rawEndDate) || '2026-12-31'
+      const isoStart = toIsoYmd(rawStartDate) || (rawStartDate ? '' : '2026-01-01')
+      const isoEnd = toIsoYmd(rawEndDate) || (rawEndDate ? '' : '2026-12-31')
 
       // Se foi fornecido um nome de paciente, podemos tentar descobrir seu patient_id
       // consultando a lista de pacientes no SpinCare caso ajude ou para validação cruzada
@@ -266,24 +265,58 @@ routerAdd(
             },
             timeout: 15,
           })
+          console.log('[check-medication] Busca paciente HTTP status:', patRes.statusCode)
+          let patList = []
           if (patRes.statusCode === 200) {
-            let patList = []
             try {
               const pj = patRes.json || JSON.parse(patRes.raw || '[]')
               if (Array.isArray(pj)) patList = pj
               else if (pj && Array.isArray(pj.items)) patList = pj.items
             } catch (_) {}
+          }
 
-            const normTargetPat = norm(patientName)
-            const targetWords = normTargetPat.split(' ').filter(Boolean)
-            const matchPat = patList.find((p) => {
-              const pNorm = norm(p.name || p.nome || '')
-              return targetWords.every((w) => pNorm.includes(w))
+          // Se busca por '?name=' não retornou nada, tenta '?search='
+          if (patList.length === 0) {
+            const patSearchUrl2 =
+              baseUrl +
+              pPath +
+              '?search=' +
+              encodeURIComponent(patientName) +
+              '&page_number=1&page_size=50' +
+              (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+            const patRes2 = $http.send({
+              url: patSearchUrl2,
+              method: 'GET',
+              headers: { Accept: 'application/json', Authorization: 'Bearer ' + apiToken },
+              timeout: 15,
             })
-            if (matchPat && matchPat.id) {
-              resolvedPatientId = String(matchPat.id)
-              resolvedPatientNameFromApi = String(matchPat.name || matchPat.nome || '')
+            if (patRes2.statusCode === 200) {
+              try {
+                const pj = patRes2.json || JSON.parse(patRes2.raw || '[]')
+                if (Array.isArray(pj)) patList = pj
+                else if (pj && Array.isArray(pj.items)) patList = pj.items
+              } catch (_) {}
             }
+          }
+
+          const normTargetPat = norm(patientName)
+          const targetWords = normTargetPat.split(' ').filter(Boolean)
+          console.log('[check-medication] Pacientes retornados da API:', patList.length)
+          const matchPat = patList.find((p) => {
+            const pNorm = norm(p.name || p.nome || '')
+            return targetWords.every((w) => pNorm.includes(w))
+          })
+          if (matchPat && matchPat.id) {
+            resolvedPatientId = String(matchPat.id)
+            resolvedPatientNameFromApi = String(matchPat.name || matchPat.nome || '')
+            console.log(
+              '[check-medication] Paciente resolvido com sucesso:',
+              resolvedPatientNameFromApi,
+              'ID:',
+              resolvedPatientId,
+            )
+          } else {
+            console.log('[check-medication] Paciente não correspondido na lista de pacientes')
           }
         } catch (patErr) {
           console.warn('Erro ao tentar pré-resolver paciente no check-medication:', patErr)
@@ -449,69 +482,46 @@ routerAdd(
       let allRawPrescriptions = []
       let analyzedCount = 0
 
-      // Fase 1: se temos patient_id resolvido previamente, busca específica deste paciente
+      // ESTRATÉGIA DE VARREDURA EXAUSTIVA:
+      // O objetivo é encontrar com 100% de precisão as prescrições médicas na SpinCare.
+      // 1) Se conseguimos resolver o patient_id, buscamos primeiramente as prescrições dele direto na API
+      //    (com janela ampla desde 2026-01-01 para capturar prescrições criadas em meses anteriores mas vigentes no período).
       if (resolvedPatientId) {
         console.log(
           '[check-medication] Fase 1: buscando prescrições para patient_id:',
           resolvedPatientId,
-        )
-        for (let p = 1; p <= 10; p++) {
-          const resP = fetchPrescriptionsPage(p, 100, true)
-          if (resP.error || !resP.items || resP.items.length === 0) break
-          allRawPrescriptions = allRawPrescriptions.concat(resP.items)
-          if (resP.items.length < 100) break
-        }
-        if (allRawPrescriptions.length === 0) {
-          console.log(
-            '[check-medication] Fase 1B: buscando prescrições para patient_id com initial_dt ampla (2026-01-01)',
-          )
-          for (let p = 1; p <= 10; p++) {
-            const resP = fetchPrescriptionsPage(p, 100, true, '2026-01-01 00:00:00', '')
-            if (resP.error || !resP.items || resP.items.length === 0) break
-            allRawPrescriptions = allRawPrescriptions.concat(resP.items)
-            if (resP.items.length < 100) break
-          }
-        }
-      }
-
-      // Fase 2: varredura ampla das páginas no período
-      if (allRawPrescriptions.length === 0) {
-        console.log(
-          '[check-medication] Fase 2: busca geral de todas as páginas no período:',
-          isoStart,
-          'a',
-          isoEnd,
+          'com janela ampla de vigência desde 2026-01-01',
         )
         for (let p = 1; p <= 25; p++) {
-          const resP = fetchPrescriptionsPage(p, 100, false)
+          const resP = fetchPrescriptionsPage(p, 100, true, '2026-01-01 00:00:00', '')
           if (resP.error || !resP.items || resP.items.length === 0) break
           allRawPrescriptions = allRawPrescriptions.concat(resP.items)
           if (resP.items.length < 100) break
         }
       }
 
-      // Fase 3: Se foi informado paciente mas ele não apareceu na varredura com corte estrito de initial_dt
-      // (pois a prescrição pode ter sido criada antes, ex: em 24/07/2026, com vigência em setembro),
-      // ampliamos a varredura para 2026-01-01 em diante
-      if (patientName && allRawPrescriptions.length > 0) {
-        const normTargetPatCheck = norm(patientName)
-        const patWordsCheck = normTargetPatCheck.split(' ').filter(Boolean)
-        const hasTargetPat = allRawPrescriptions.some((raw) => {
-          const pName = norm(extractPatientName(raw))
-          return patWordsCheck.every((w) => pName.includes(w))
-        })
-        if (!hasTargetPat) {
-          console.log(
-            '[check-medication] Fase 3: paciente alvo (' +
-              patientName +
-              ') não encontrado na varredura com corte estrito; ampliando busca desde 2026-01-01',
-          )
-          for (let p = 1; p <= 25; p++) {
-            const resP = fetchPrescriptionsPage(p, 100, false, '2026-01-01 00:00:00', '')
-            if (resP.error || !resP.items || resP.items.length === 0) break
-            allRawPrescriptions = allRawPrescriptions.concat(resP.items)
-            if (resP.items.length < 100) break
-          }
+      // 2) Se não resolveu patient_id OU se a busca com patient_id na API não trouxe nenhuma prescrição,
+      //    executa a varredura ampla de todas as páginas da API (lotes de 100)
+      if (allRawPrescriptions.length === 0) {
+        // Para cobrir prescrições criadas antes do período (ex: criadas em 24/07/2026 com vigência em setembro),
+        // se o usuário buscou um paciente específico iniciamos a varredura desde 2026-01-01.
+        // Se não especificou paciente, varre no período informado (ou desde 2026-01-01 se for no ano de 2026).
+        const sweepInitialDt =
+          patientName && isoStart > '2026-01-01'
+            ? '2026-01-01 00:00:00'
+            : isoStart
+              ? isoStart + ' 00:00:00'
+              : '2026-01-01 00:00:00'
+
+        console.log(
+          '[check-medication] Fase 2: varredura exaustiva de prescrições em lotes de 100 a partir de:',
+          sweepInitialDt,
+        )
+        for (let p = 1; p <= 35; p++) {
+          const resP = fetchPrescriptionsPage(p, 100, false, sweepInitialDt, '')
+          if (resP.error || !resP.items || resP.items.length === 0) break
+          allRawPrescriptions = allRawPrescriptions.concat(resP.items)
+          if (resP.items.length < 100) break
         }
       }
 
@@ -602,61 +612,75 @@ routerAdd(
         }
 
         // 1. FILTRO DE PACIENTE (se informado): NOME TOLERANTE OU ID
+        // Regra estrita de saúde: se o usuário digitou o paciente (ex: "Ademir Rostirolla"),
+        // TODAS as palavras significativas do nome do paciente devem estar presentes no nome retornado,
+        // OU se o ID do paciente foi resolvido, o ID deve bater.
         let patientMatches = true
         if (patWords.length > 0) {
+          // Todas as palavras do paciente procurado devem estar contidas no nome do paciente da prescrição
           const matchesAllWords = patWords.every((w) => normPnome.includes(w))
-          const matchesReverse =
-            normPnome.includes(normPatTarget) || normPatTarget.includes(normPnome)
-          const matchesId = Boolean(resolvedPatientId && pid && pid === resolvedPatientId)
+          const matchesId = Boolean(
+            resolvedPatientId && pid && String(pid).trim() === String(resolvedPatientId).trim(),
+          )
 
-          patientMatches = matchesAllWords || matchesReverse || matchesId
+          patientMatches = matchesAllWords || matchesId
         }
 
-        // 2. FILTRO DE PERÍODO (se informado): data da prescrição OU vigência [initial_dt, final_dt] cruzando com [isoStart, isoEnd]
+        // 2. FILTRO DE PERÍODO:
+        // Regra de vigência de saúde:
+        // Uma prescrição cuja DATA DE CRIAÇÃO esteja fora do período mas cuja VIGÊNCIA intersecte o período DEVE aparecer.
+        // Se ambos estiverem fora do período, a prescrição NÃO DEVE aparecer.
         let periodMatches = true
-        const dtPrescIso = toIsoYmd(
-          raw.prescription_date || raw.creation_dt || raw.initial_dt || raw.dt_prescricao,
-        )
+        const dtCreationIso = toIsoYmd(raw.creation_dt || raw.dt_criacao || raw.created_at)
+        const dtPrescOnlyIso = toIsoYmd(raw.prescription_date || raw.dt_prescricao)
         const dtInitIso = toIsoYmd(raw.initial_dt)
         const dtFinalIso = toIsoYmd(raw.final_dt)
 
+        // Data de emissão/criação direta
+        const dtPrescIso = dtPrescOnlyIso || dtCreationIso
+
         if (hasPeriodFilter) {
           let inPeriod = false
-          // A: Data de emissão/prescrição dentro do período
-          if (dtPrescIso && dtPrescIso >= isoStart && dtPrescIso <= isoEnd) {
-            inPeriod = true
-          }
-          // B: Vigência cruzando o período (sobreposição de intervalos [dtInit, dtFinal] e [isoStart, isoEnd])
-          if (!inPeriod && dtInitIso && dtFinalIso) {
+
+          // Regra A: Se há vigência (initial_dt e/ou final_dt)
+          // Sobreposição clássica de intervalos entre vigência [dtInitIso, dtFinalIso] e período [isoStart, isoEnd]
+          if (dtInitIso && dtFinalIso) {
+            // Interseção: max(dtInitIso, isoStart) <= min(dtFinalIso, isoEnd)
+            // Equivalente a: dtInitIso <= isoEnd && dtFinalIso >= isoStart
             if (dtInitIso <= isoEnd && dtFinalIso >= isoStart) {
               inPeriod = true
             }
+          } else if (dtInitIso) {
+            if (dtInitIso <= isoEnd) {
+              inPeriod = true
+            }
+          } else if (dtFinalIso) {
+            if (dtFinalIso >= isoStart) {
+              inPeriod = true
+            }
           }
-          // C: Apenas data inicial da vigência dentro do período
-          if (!inPeriod && dtInitIso && dtInitIso >= isoStart && dtInitIso <= isoEnd) {
-            inPeriod = true
-          }
-          // D: Apenas data final da vigência dentro do período
-          if (!inPeriod && dtFinalIso && dtFinalIso >= isoStart && dtFinalIso <= isoEnd) {
-            inPeriod = true
-          }
-          // E: Se não tem nenhuma data identificável
-          if (!dtPrescIso && !dtInitIso && !dtFinalIso) {
-            inPeriod = false
+
+          // Regra B: Se a data de emissão/criação está dentro do período
+          if (!inPeriod && dtPrescIso) {
+            if (dtPrescIso >= isoStart && dtPrescIso <= isoEnd) {
+              inPeriod = true
+            }
           }
 
           periodMatches = inPeriod
         }
 
-        // LOG DE DEPURAÇÃO NO SERVIDOR (mostra primeiras prescrições com match de medicamento)
-        if (debugLogCount < 10) {
+        // LOG DE DEPURAÇÃO NO SERVIDOR (mostra prescrições que deram match no medicamento)
+        if (debugLogCount < 15) {
           debugLogCount++
           console.log(
-            '[check-medication DEBUG] Prescrição #' +
+            '[check-medication DIAG] Prescrição #' +
               (raw.prescription_number || raw.id || i) +
               ' | Paciente: "' +
               pnome +
-              '" | DtPresc: ' +
+              '" (ID: ' +
+              pid +
+              ') | DtPresc: ' +
               (dtPrescIso || '—') +
               ' | Vigência: ' +
               (dtInitIso || '—') +
@@ -667,7 +691,9 @@ routerAdd(
               ' | PeriodMatch: ' +
               periodMatches +
               ' => ACEITA: ' +
-              (patientMatches && periodMatches),
+              (patientMatches && periodMatches) +
+              ' | MatchedItems: ' +
+              matchedItems.map((m) => m.desc).join(' ; '),
           )
         }
 
@@ -696,7 +722,11 @@ routerAdd(
         }
 
         const dataPrescFormatada = formatDtBr(
-          raw.prescription_date || raw.creation_dt || raw.initial_dt || raw.dt_prescricao,
+          raw.prescription_date ||
+            raw.creation_dt ||
+            raw.dt_prescricao ||
+            raw.dt_criacao ||
+            raw.initial_dt,
         )
         const dataInitFormatada = formatDtBr(raw.initial_dt)
         const dataFinalFormatada = formatDtBr(raw.final_dt)
