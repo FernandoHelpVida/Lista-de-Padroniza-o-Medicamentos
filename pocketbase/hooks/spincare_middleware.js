@@ -539,134 +539,184 @@ routerAdd(
       const body = e.requestInfo().body || {}
       const query = (body.query || '').trim()
       const documento = (body.documento || '').trim()
-      const limit = Math.min(Math.max(parseInt(body.limit, 10) || 50, 1), 100)
-      const page = Math.max(parseInt(body.page, 10) || 1, 1)
+      const convenioFilter = (body.convenio || '').trim()
+      const fetchAllPages = body.fetchAll !== false // padrão: busca todas as páginas até esgotar o censo (~539 pacientes)
+      const requestedLimit = parseInt(body.limit, 10) || 100
+      const requestedPage = Math.max(parseInt(body.page, 10) || 1, 1)
 
       const normalizedPath = endpointPatients.startsWith('/')
         ? endpointPatients
         : '/' + endpointPatients
-      let fullUrl =
-        baseUrl +
-        normalizedPath +
-        '?page_number=' +
-        page +
-        '&page_size=' +
-        limit +
-        (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
 
-      if (query) {
-        fullUrl += '&name=' + encodeURIComponent(query)
-      }
-      if (documento) {
-        const cleanDoc = documento.replace(/[^\d]/g, '')
-        fullUrl += '&registration_number=' + encodeURIComponent(cleanDoc || documento)
-      }
+      const fetchPatientsPage = (pageNumber, pageSize) => {
+        let fullUrl =
+          baseUrl +
+          normalizedPath +
+          '?page_number=' +
+          pageNumber +
+          '&page_size=' +
+          pageSize +
+          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
 
-      const reqHeaders = {
-        Accept: 'application/json',
-        'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
-      }
-      if (apiToken) {
-        reqHeaders['Authorization'] = 'Bearer ' + apiToken
-      }
+        if (query) {
+          fullUrl += '&name=' + encodeURIComponent(query)
+        }
+        if (documento) {
+          const cleanDoc = documento.replace(/[^\d]/g, '')
+          fullUrl += '&registration_number=' + encodeURIComponent(cleanDoc || documento)
+        }
 
-      let res
-      try {
-        res = $http.send({
-          url: fullUrl,
-          method: 'GET',
-          headers: reqHeaders,
-          timeout: 20,
-        })
-      } catch (callErr) {
-        console.error('Erro de rede ao chamar SpinCare (patients/search):', callErr)
-        return e.json(502, {
-          message:
-            'Não foi possível consultar o SpinCare agora. Verifique a configuração da integração ou tente novamente em instantes.',
-        })
-      }
+        const reqHeaders = {
+          Accept: 'application/json',
+          'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+        }
+        if (apiToken) {
+          reqHeaders['Authorization'] = 'Bearer ' + apiToken
+        }
 
-      // Se retornou 401, tenta re-autenticar uma vez
-      if (res.statusCode === 401 && login && password) {
+        let resp
         try {
-          const tokenUrl =
-            baseUrl +
-            '/token/v1?login=' +
-            encodeURIComponent(login) +
-            '&password=' +
-            encodeURIComponent(password)
-          const resToken = $http.send({
-            url: tokenUrl,
+          resp = $http.send({
+            url: fullUrl,
             method: 'GET',
-            headers: { Accept: '*/*' },
-            timeout: 15,
+            headers: reqHeaders,
+            timeout: 25,
           })
-          if (resToken.statusCode === 200) {
-            let t = ''
-            if (typeof resToken.json === 'string') t = resToken.json
-            else if (resToken.json && typeof resToken.json === 'object') {
-              t = resToken.json.token || resToken.json.access_token || ''
+        } catch (callErr) {
+          console.error(
+            'Erro de rede ao chamar SpinCare (patients/search page ' + pageNumber + '):',
+            callErr,
+          )
+          return { error: 'call_failed', statusCode: 0, items: [] }
+        }
+
+        // Se der 401 e tivermos credenciais, tenta renovar uma vez
+        if (resp.statusCode === 401 && login && password) {
+          try {
+            const tokenUrl =
+              baseUrl +
+              '/token/v1?login=' +
+              encodeURIComponent(login) +
+              '&password=' +
+              encodeURIComponent(password)
+            const resToken = $http.send({
+              url: tokenUrl,
+              method: 'GET',
+              headers: { Accept: '*/*' },
+              timeout: 15,
+            })
+            if (resToken.statusCode === 200) {
+              let t = ''
+              if (typeof resToken.json === 'string') t = resToken.json
+              else if (resToken.json && typeof resToken.json === 'object') {
+                t = resToken.json.token || resToken.json.access_token || ''
+              }
+              if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+              if (t) {
+                apiToken = t
+                cfgRec.set('api_token', t)
+                e.app.save(cfgRec)
+
+                let retryUrl =
+                  baseUrl +
+                  normalizedPath +
+                  '?page_number=' +
+                  pageNumber +
+                  '&page_size=' +
+                  pageSize +
+                  '&token=' +
+                  encodeURIComponent(apiToken)
+                if (query) retryUrl += '&name=' + encodeURIComponent(query)
+                if (documento) retryUrl += '&registration_number=' + encodeURIComponent(documento)
+
+                resp = $http.send({
+                  url: retryUrl,
+                  method: 'GET',
+                  headers: {
+                    Accept: 'application/json',
+                    Authorization: 'Bearer ' + apiToken,
+                    'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+                  },
+                  timeout: 25,
+                })
+              }
             }
-            if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
-            if (t) {
-              apiToken = t
-              cfgRec.set('api_token', t)
-              e.app.save(cfgRec)
+          } catch (_) {}
+        }
 
-              let retryUrl =
-                baseUrl +
-                normalizedPath +
-                '?page_number=' +
-                page +
-                '&page_size=' +
-                limit +
-                '&token=' +
-                encodeURIComponent(apiToken)
-              if (query) retryUrl += '&name=' + encodeURIComponent(query)
-              if (documento) retryUrl += '&registration_number=' + encodeURIComponent(documento)
+        if (resp.statusCode < 200 || resp.statusCode >= 300) {
+          console.error(
+            'SpinCare retornou status ' + resp.statusCode + ' em get/patients page ' + pageNumber,
+          )
+          return { error: 'bad_status', statusCode: resp.statusCode, items: [] }
+        }
 
-              res = $http.send({
-                url: retryUrl,
-                method: 'GET',
-                headers: {
-                  Accept: 'application/json',
-                  Authorization: 'Bearer ' + apiToken,
-                  'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
-                },
-                timeout: 20,
+        let rawData = []
+        try {
+          rawData = resp.json || JSON.parse(resp.raw || '[]')
+        } catch (_) {
+          rawData = []
+        }
+
+        let list = []
+        if (Array.isArray(rawData)) list = rawData
+        else if (rawData && Array.isArray(rawData.items)) list = rawData.items
+        else if (rawData && Array.isArray(rawData.data)) list = rawData.data
+        else if (rawData && typeof rawData === 'object') list = [rawData]
+
+        return { statusCode: resp.statusCode, items: list }
+      }
+
+      let allRawPatients = []
+      if (fetchAllPages) {
+        // Busca progressiva em loop no servidor até esgotar todas as páginas
+        // Página padrão da API: 100 registros por chamada; limite seguro de 15 páginas (até 1500 pacientes)
+        const pageSize = 100
+        const maxPages = 15
+        for (let p = 1; p <= maxPages; p++) {
+          const pageRes = fetchPatientsPage(p, pageSize)
+          if (pageRes.error) {
+            // Se falhou na primeira página, retorna 502
+            if (p === 1) {
+              return e.json(502, {
+                message:
+                  'Não foi possível consultar o SpinCare agora. Verifique a conexão com a API externa.',
               })
             }
+            // Se já obteve páginas anteriores, interrompe o loop e usa o acumulado
+            break
           }
-        } catch (_) {}
+          if (!pageRes.items || pageRes.items.length === 0) {
+            break
+          }
+          allRawPatients = allRawPatients.concat(pageRes.items)
+          // Se a quantidade retornada for menor que pageSize, chegou na última página
+          if (pageRes.items.length < pageSize) {
+            break
+          }
+        }
+      } else {
+        const singlePage = fetchPatientsPage(requestedPage, requestedLimit)
+        if (singlePage.error) {
+          return e.json(502, {
+            message:
+              'Não foi possível consultar o SpinCare agora. O sistema externo respondeu com erro.',
+          })
+        }
+        allRawPatients = singlePage.items
       }
 
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        console.error('SpinCare retornou status ' + res.statusCode + ' em get/patients')
-        return e.json(502, {
-          message:
-            'Não foi possível consultar o SpinCare agora. O sistema externo respondeu com erro (' +
-            res.statusCode +
-            '). Tente novamente em instantes.',
-        })
-      }
-
-      let rawData = []
-      try {
-        rawData = res.json || JSON.parse(res.raw || '[]')
-      } catch (_) {
-        rawData = []
-      }
-
-      let rawList = []
-      if (Array.isArray(rawData)) rawList = rawData
-      else if (rawData && Array.isArray(rawData.items)) rawList = rawData.items
-      else if (rawData && Array.isArray(rawData.data)) rawList = rawData.data
-      else if (rawData && typeof rawData === 'object') rawList = [rawData]
-
-      // Mapeamento tolerante dos pacientes
-      let normalizedList = rawList
+      // Mapeamento tolerante dos pacientes E FILTRO DE SOMENTE ATIVOS (active === true)
+      let normalizedList = allRawPatients
         .map((raw) => {
           if (!raw || typeof raw !== 'object') return null
+
+          // REGRA 4: Somente pacientes ATIVOS no servidor
+          // Campo `active` da SpinCare é booleano (true/false)
+          const isActive = raw.active === true || raw.active === 1 || raw.active === 'true'
+          if (!isActive) {
+            return null
+          }
 
           const id = String(raw.id || raw.patient_id || raw.patientId || '')
           const nome = String(raw.name || raw.nome || raw.patient_name || '—').trim()
@@ -706,9 +756,14 @@ routerAdd(
 
           const endereco = enderecoParts.length > 0 ? enderecoParts.join(', ') : '—'
 
-          const convenio = String(
-            raw.insurance_name || raw.insurance || raw.convenio || raw.operadora || '—',
-          ).trim()
+          const rawConvenio =
+            raw.insurance_name ||
+            raw.insurance ||
+            raw.convenio ||
+            raw.operadora ||
+            raw.insurance_plan_name ||
+            '—'
+          const convenio = String(rawConvenio).trim()
 
           const modalidade = String(
             raw.modality ||
@@ -718,16 +773,8 @@ routerAdd(
               raw.regime ||
               raw.tipo_atendimento ||
               raw.plano ||
-              raw.insurance_plan_name ||
               '—',
           ).trim()
-
-          let statusAtendimento = 'Ativo'
-          if (raw.active === false || raw.status === 'Inativo' || raw.status === 'inativo') {
-            statusAtendimento = 'Inativo'
-          } else if (raw.status) {
-            statusAtendimento = String(raw.status)
-          }
 
           return {
             id: id || Math.random().toString(36).substring(2, 9),
@@ -739,21 +786,60 @@ routerAdd(
             endereco: endereco,
             convenio: convenio,
             modalidade: modalidade,
-            statusAtendimento: statusAtendimento,
+            statusAtendimento: 'Ativo',
+            active: true,
           }
         })
         .filter(Boolean)
 
-      // Filtro local complementar
+      // Deduplicação tolerante por ID de paciente (para evitar duplicações de paginação)
+      const seenIds = {}
+      normalizedList = normalizedList.filter((p) => {
+        if (!p.id) return true
+        if (seenIds[p.id]) return false
+        seenIds[p.id] = true
+        return true
+      })
+
+      // Extração de TODOS os convênios distintos presentes no censo ativo completo
+      // antes de aplicar filtros de texto/convênio (para alimentar dropdown com perfeição)
+      const allDistinctConvenios = Array.from(
+        new Set(
+          normalizedList
+            .map((p) => (p.convenio || '').trim())
+            .filter((c) => Boolean(c) && c !== '—'),
+        ),
+      ).sort((a, b) => a.localeCompare(b))
+
+      const allDistinctModalidades = Array.from(
+        new Set(
+          normalizedList
+            .map((p) => (p.modalidade || '').trim())
+            .filter((m) => Boolean(m) && m !== '—'),
+        ),
+      ).sort((a, b) => a.localeCompare(b))
+
+      // Filtro local complementar tolerante (nome)
       if (query) {
         const qUpper = query.toUpperCase()
         normalizedList = normalizedList.filter((p) => p.nome.toUpperCase().includes(qUpper))
       }
+
+      // Filtro local complementar tolerante (documento)
       if (documento) {
         const docClean = documento.replace(/[^\d]/g, '')
         normalizedList = normalizedList.filter((p) => {
           const pClean = p.documento.replace(/[^\d]/g, '')
           return (pClean && pClean.includes(docClean)) || p.documento.includes(documento)
+        })
+      }
+
+      // Filtro de convênio opcional no servidor (tolerante a maiúsculas/minúsculas e trim)
+      if (convenioFilter && convenioFilter !== 'todos') {
+        const convUpper = convenioFilter.trim().toUpperCase()
+        normalizedList = normalizedList.filter((p) => {
+          const c = (p.convenio || '').trim().toUpperCase()
+          return c === convUpper || c.includes(convUpper)
         })
       }
 
@@ -781,9 +867,11 @@ routerAdd(
 
       return e.json(200, {
         total: normalizedList.length,
-        page: page,
-        limit: limit,
+        page: requestedPage,
+        limit: requestedLimit,
         items: normalizedList,
+        convenios: allDistinctConvenios,
+        modalidades: allDistinctModalidades,
       })
     } catch (err) {
       console.error('Erro na rota POST /spincare/patients/search:', err)
@@ -1044,29 +1132,49 @@ routerAdd(
               }
 
               let itens = []
-              const rawIt = raw.items || raw.itens || []
+              const rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []
               if (Array.isArray(rawIt)) {
                 itens = rawIt.map((it) => {
-                  if (typeof it === 'string') return { descricao: it, quantidade: 1, valor: 0 }
+                  if (typeof it === 'string') {
+                    return {
+                      descricao: it,
+                      quantidade: 1,
+                      valorUnitario: 0,
+                      valorTotal: 0,
+                      unidade: '',
+                      codigo: '',
+                    }
+                  }
+                  const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+                  const valUnit = Number(
+                    it.unitary_value ||
+                      it.unit_value ||
+                      it.valor_unitario ||
+                      it.valorUnitario ||
+                      it.price ||
+                      0,
+                  )
+                  const valTot = Number(
+                    it.total || it.total_value || it.valor_total || it.cost || qtd * valUnit,
+                  )
                   return {
+                    id: String(it.id || it.item_id || ''),
+                    codigo: String(it.code || it.codigo || it.product_code || '').trim(),
                     descricao: String(
                       it.description ||
                         it.product_description ||
                         it.descricao ||
+                        it.name ||
                         it.item ||
                         'Item de Orçamento',
-                    ),
-                    quantidade: Number(it.quantity || it.qtd || 1),
-                    valorUnitario: Number(it.unitary_value || it.valorUnitario || 0),
-                    valorTotal: Number(
-                      it.total ||
-                        it.cost ||
-                        Number(it.quantity || 1) * Number(it.unitary_value || 0),
-                    ),
+                    ).trim(),
+                    unidade: String(it.unit || it.unidade || it.measure_unit || '').trim(),
+                    quantidade: qtd,
+                    valorUnitario: valUnit,
+                    valorTotal: valTot,
                   }
                 })
               }
-
               return {
                 id: bid || Math.random().toString(36).substring(2, 9),
                 numero: bnum,
@@ -1201,76 +1309,166 @@ routerAdd(
       const statusFilter = (queryParams.status || 'Aprovado').trim()
       const search = (queryParams.search || '').trim()
       const patientId = (queryParams.patient_id || '').trim()
-      const limit = Math.min(Math.max(parseInt(queryParams.limit, 10) || 100, 1), 200)
-      const page = Math.max(parseInt(queryParams.page, 10) || 1, 1)
+      const fetchAllPages = queryParams.fetchAll !== 'false'
+      const requestedLimit = Math.min(Math.max(parseInt(queryParams.limit, 10) || 100, 1), 200)
+      const requestedPage = Math.max(parseInt(queryParams.page, 10) || 1, 1)
 
       const normalizedPath = endpointBudgets.startsWith('/')
         ? endpointBudgets
         : '/' + endpointBudgets
-      let fullUrl =
-        baseUrl +
-        normalizedPath +
-        '?page_number=' +
-        page +
-        '&page_size=' +
-        limit +
-        '&initial_dt=' +
-        encodeURIComponent(startDate) +
-        (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
 
-      if (endDate) {
-        fullUrl += '&final_dt=' + encodeURIComponent(endDate)
-      }
-      if (patientId) {
-        fullUrl += '&patient_id=' + encodeURIComponent(patientId)
-      }
+      const fetchBudgetsPage = (pageNumber, pageSize) => {
+        let fullUrl =
+          baseUrl +
+          normalizedPath +
+          '?page_number=' +
+          pageNumber +
+          '&page_size=' +
+          pageSize +
+          '&initial_dt=' +
+          encodeURIComponent(startDate) +
+          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
 
-      const reqHeaders = {
-        Accept: 'application/json',
-        'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
-      }
-      if (apiToken) {
-        reqHeaders['Authorization'] = 'Bearer ' + apiToken
-      }
+        if (endDate) {
+          fullUrl += '&final_dt=' + encodeURIComponent(endDate)
+        }
+        if (patientId) {
+          fullUrl += '&patient_id=' + encodeURIComponent(patientId)
+        }
 
-      let res
-      try {
-        res = $http.send({
-          url: fullUrl,
-          method: 'GET',
-          headers: reqHeaders,
-          timeout: 20,
-        })
-      } catch (callErr) {
-        console.error('Erro ao chamar SpinCare (budgets):', callErr)
-        return e.json(502, {
-          message:
-            'Não foi possível consultar o SpinCare agora. Verifique a configuração da integração ou tente novamente em instantes.',
-        })
-      }
+        const reqHeaders = {
+          Accept: 'application/json',
+          'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+        }
+        if (apiToken) {
+          reqHeaders['Authorization'] = 'Bearer ' + apiToken
+        }
 
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        console.error('SpinCare retornou status ' + res.statusCode + ' em budgets')
-        return e.json(502, {
-          message:
-            'Não foi possível consultar o SpinCare agora. O sistema externo respondeu com status ' +
-            res.statusCode +
-            '.',
-        })
-      }
+        let resp
+        try {
+          resp = $http.send({
+            url: fullUrl,
+            method: 'GET',
+            headers: reqHeaders,
+            timeout: 25,
+          })
+        } catch (callErr) {
+          console.error('Erro ao chamar SpinCare (budgets page ' + pageNumber + '):', callErr)
+          return { error: 'call_failed', statusCode: 0, items: [] }
+        }
 
-      let rawData = []
-      try {
-        rawData = res.json || JSON.parse(res.raw || '[]')
-      } catch (_) {
-        rawData = []
+        if (resp.statusCode === 401 && login && password) {
+          try {
+            const tokenUrl =
+              baseUrl +
+              '/token/v1?login=' +
+              encodeURIComponent(login) +
+              '&password=' +
+              encodeURIComponent(password)
+            const resToken = $http.send({
+              url: tokenUrl,
+              method: 'GET',
+              headers: { Accept: '*/*' },
+              timeout: 15,
+            })
+            if (resToken.statusCode === 200) {
+              let t = ''
+              if (typeof resToken.json === 'string') t = resToken.json
+              else if (resToken.json && typeof resToken.json === 'object') {
+                t = resToken.json.token || resToken.json.access_token || ''
+              }
+              if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+              if (t) {
+                apiToken = t
+                cfgRec.set('api_token', t)
+                e.app.save(cfgRec)
+
+                let retryUrl =
+                  baseUrl +
+                  normalizedPath +
+                  '?page_number=' +
+                  pageNumber +
+                  '&page_size=' +
+                  pageSize +
+                  '&initial_dt=' +
+                  encodeURIComponent(startDate) +
+                  '&token=' +
+                  encodeURIComponent(apiToken)
+                if (endDate) retryUrl += '&final_dt=' + encodeURIComponent(endDate)
+                if (patientId) retryUrl += '&patient_id=' + encodeURIComponent(patientId)
+
+                resp = $http.send({
+                  url: retryUrl,
+                  method: 'GET',
+                  headers: {
+                    Accept: 'application/json',
+                    Authorization: 'Bearer ' + apiToken,
+                    'User-Agent': 'HelpVida-SpinCare-Middleware/1.0',
+                  },
+                  timeout: 25,
+                })
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (resp.statusCode < 200 || resp.statusCode >= 300) {
+          console.error(
+            'SpinCare retornou status ' + resp.statusCode + ' em budgets page ' + pageNumber,
+          )
+          return { error: 'bad_status', statusCode: resp.statusCode, items: [] }
+        }
+
+        let rawData = []
+        try {
+          rawData = resp.json || JSON.parse(resp.raw || '[]')
+        } catch (_) {
+          rawData = []
+        }
+
+        let list = []
+        if (Array.isArray(rawData)) list = rawData
+        else if (rawData && Array.isArray(rawData.items)) list = rawData.items
+        else if (rawData && typeof rawData === 'object') list = [rawData]
+
+        return { statusCode: resp.statusCode, items: list }
       }
 
       let rawList = []
-      if (Array.isArray(rawData)) rawList = rawData
-      else if (rawData && Array.isArray(rawData.items)) rawList = rawData.items
-      else if (rawData && typeof rawData === 'object') rawList = [rawData]
-
+      if (fetchAllPages) {
+        const pageSize = 100
+        const maxPages = 15
+        for (let p = 1; p <= maxPages; p++) {
+          const pageRes = fetchBudgetsPage(p, pageSize)
+          if (pageRes.error) {
+            if (p === 1) {
+              return e.json(502, {
+                message:
+                  'Não foi possível consultar o SpinCare agora. Verifique a configuração da integração ou tente novamente em instantes.',
+              })
+            }
+            break
+          }
+          if (!pageRes.items || pageRes.items.length === 0) {
+            break
+          }
+          rawList = rawList.concat(pageRes.items)
+          if (pageRes.items.length < pageSize) {
+            break
+          }
+        }
+      } else {
+        const singlePage = fetchBudgetsPage(requestedPage, requestedLimit)
+        if (singlePage.error) {
+          return e.json(502, {
+            message:
+              'Não foi possível consultar o SpinCare agora. O sistema externo respondeu com status ' +
+              singlePage.statusCode +
+              '.',
+          })
+        }
+        rawList = singlePage.items
+      }
       let normalizedList = rawList
         .map((raw) => {
           if (!raw || typeof raw !== 'object') return null
@@ -1318,27 +1516,49 @@ routerAdd(
             : raw.observacao || '—'
 
           let itens = []
-          const rawIt = raw.items || raw.itens || []
+          const rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []
           if (Array.isArray(rawIt)) {
             itens = rawIt.map((it) => {
-              if (typeof it === 'string') return { descricao: it, quantidade: 1, valor: 0 }
+              if (typeof it === 'string') {
+                return {
+                  descricao: it,
+                  quantidade: 1,
+                  valorUnitario: 0,
+                  valorTotal: 0,
+                  unidade: '',
+                  codigo: '',
+                }
+              }
+              const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+              const valUnit = Number(
+                it.unitary_value ||
+                  it.unit_value ||
+                  it.valor_unitario ||
+                  it.valorUnitario ||
+                  it.price ||
+                  0,
+              )
+              const valTot = Number(
+                it.total || it.total_value || it.valor_total || it.cost || qtd * valUnit,
+              )
               return {
+                id: String(it.id || it.item_id || ''),
+                codigo: String(it.code || it.codigo || it.product_code || '').trim(),
                 descricao: String(
                   it.description ||
                     it.product_description ||
                     it.descricao ||
+                    it.name ||
                     it.item ||
                     'Item de Orçamento',
-                ),
-                quantidade: Number(it.quantity || it.qtd || 1),
-                valorUnitario: Number(it.unitary_value || it.valorUnitario || 0),
-                valorTotal: Number(
-                  it.total || it.cost || Number(it.quantity || 1) * Number(it.unitary_value || 0),
-                ),
+                ).trim(),
+                unidade: String(it.unit || it.unidade || it.measure_unit || '').trim(),
+                quantidade: qtd,
+                valorUnitario: valUnit,
+                valorTotal: valTot,
               }
             })
           }
-
           return {
             id: id || Math.random().toString(36).substring(2, 9),
             numero: numero,
@@ -1399,8 +1619,8 @@ routerAdd(
         startDate: startDate,
         endDate: endDate,
         statusFilter: statusFilter,
-        page: page,
-        limit: limit,
+        page: requestedPage,
+        limit: requestedLimit,
         items: normalizedList,
       })
     } catch (err) {

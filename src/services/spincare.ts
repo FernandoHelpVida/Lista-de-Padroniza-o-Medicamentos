@@ -57,10 +57,14 @@ export interface SpincarePatient {
   convenio: string
   modalidade: string
   statusAtendimento: string
+  active?: boolean
 }
 
 export interface SpincareBudgetItem {
+  id?: string
+  codigo?: string
   descricao: string
+  unidade?: string
   quantidade: number
   valorUnitario: number
   valorTotal: number
@@ -84,6 +88,8 @@ export interface SpincarePatientsSearchResult {
   page: number
   limit: number
   items: SpincarePatient[]
+  convenios?: string[]
+  modalidades?: string[]
 }
 
 export interface SpincarePatientDetailResult {
@@ -140,6 +146,8 @@ export async function testSpincareConnection(
 export async function searchSpincarePatients(params: {
   query?: string
   documento?: string
+  convenio?: string
+  fetchAll?: boolean
   limit?: number
   page?: number
 }): Promise<SpincarePatientsSearchResult> {
@@ -172,6 +180,7 @@ export async function getSpincareBudgets(params?: {
   status?: string
   search?: string
   patientId?: string
+  fetchAll?: boolean
   limit?: number
   page?: number
 }): Promise<SpincareBudgetsResult> {
@@ -181,6 +190,7 @@ export async function getSpincareBudgets(params?: {
   if (params?.status) query.set('status', params.status)
   if (params?.search) query.set('search', params.search)
   if (params?.patientId) query.set('patient_id', params.patientId)
+  if (params?.fetchAll !== undefined) query.set('fetchAll', String(params.fetchAll))
   if (params?.limit) query.set('limit', String(params.limit))
   if (params?.page) query.set('page', String(params.page))
 

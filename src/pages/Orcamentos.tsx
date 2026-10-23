@@ -57,6 +57,9 @@ export default function Orcamentos() {
   const [totalCount, setTotalCount] = useState(0)
   const [unconfigured, setUnconfigured] = useState(false)
 
+  // Paginação progressiva na exibição de orçamentos
+  const [displayLimit, setDisplayLimit] = useState(50)
+
   // Modal detalhe do orçamento
   const [selectedBudget, setSelectedBudget] = useState<SpincareBudget | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -65,16 +68,17 @@ export default function Orcamentos() {
     if (e) e.preventDefault()
     setLoading(true)
     setUnconfigured(false)
+    setDisplayLimit(50)
     try {
       const res = await getSpincareBudgets({
         startDate: startDate.trim(),
         endDate: endDate.trim(),
         search: search.trim(),
         status: statusFilter,
-        limit: 100,
+        fetchAll: true,
       })
       setBudgets(res.items || [])
-      setTotalCount(res.total || 0)
+      setTotalCount(res.total || (res.items ? res.items.length : 0))
     } catch (err: unknown) {
       console.error('Erro ao consultar orçamentos no SpinCare:', err)
       const msg = getErrorMessage(err, 'Não foi possível consultar os orçamentos no SpinCare.')
@@ -101,6 +105,21 @@ export default function Orcamentos() {
 
   // Totalizador de valores
   const valorTotalAprovado = budgets.reduce((acc, b) => acc + (b.valor || 0), 0)
+
+  // Totalizador de itens somados em todos os orçamentos
+  const totalItensAprovados = budgets.reduce((acc, b) => acc + (b.itens ? b.itens.length : 0), 0)
+
+  // Orçamentos visíveis na tela
+  const visibleBudgets = budgets.slice(0, displayLimit)
+  const hasMoreBudgets = displayLimit < budgets.length
+
+  const handleLoadMore = () => {
+    setDisplayLimit((prev) => prev + 50)
+  }
+
+  const handleShowAll = () => {
+    setDisplayLimit(budgets.length)
+  }
 
   // Bloqueio do médico visitador (abaixo dos hooks para cumprir rules-of-hooks)
   if (isMedicoVisitador) {
@@ -315,7 +334,7 @@ export default function Orcamentos() {
       ) : (
         <div className="space-y-3">
           {/* Card Resumo do Período */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div className="p-3.5 rounded-2xl bg-white border border-emerald-950/10 flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -350,7 +369,19 @@ export default function Orcamentos() {
             <div className="p-3.5 rounded-2xl bg-white border border-emerald-950/10 flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Período de Análise
+                  Itens Cadastrados
+                </p>
+                <p className="text-lg font-bold text-[#0C4336] mt-0.5">{totalItensAprovados}</p>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-[#F4FAF8] text-[#0D8272] flex items-center justify-center font-bold">
+                <Package size={18} />
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-white border border-emerald-950/10 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Período
                 </p>
                 <p className="text-xs font-semibold text-slate-800 mt-1">
                   A partir de {startDate.split('-').reverse().join('/')}
@@ -364,7 +395,7 @@ export default function Orcamentos() {
 
           {/* Lista de Orçamentos em Cards */}
           <div className="space-y-2.5">
-            {budgets.map((b) => (
+            {visibleBudgets.map((b) => (
               <Card
                 key={b.id}
                 onClick={() => {
@@ -390,11 +421,23 @@ export default function Orcamentos() {
                       <p className="text-sm font-semibold text-[#0C4336] truncate mt-0.5">
                         Paciente: {b.pacienteNome}
                       </p>
-                      <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
-                        <Calendar size={11} />
-                        Data de Aprovação:{' '}
-                        <strong className="text-slate-600">{b.dataAprovacao}</strong>
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500">
+                        <span className="flex items-center gap-1">
+                          <Calendar size={11} />
+                          Data: <strong className="text-slate-700">{b.dataAprovacao}</strong>
+                        </span>
+                        {b.itens && b.itens.length > 0 && (
+                          <Badge className="bg-slate-100 text-slate-700 border-slate-200 text-[10px] font-normal">
+                            <Package size={10} className="mr-1 text-[#0D8272]" />
+                            {b.itens.length} {b.itens.length === 1 ? 'item' : 'itens'}
+                          </Badge>
+                        )}
+                        {b.observacao && b.observacao !== '—' && (
+                          <span className="text-slate-400 truncate max-w-[200px]">
+                            • {b.observacao}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -421,6 +464,33 @@ export default function Orcamentos() {
               </Card>
             ))}
           </div>
+
+          {/* Barra de carregamento progressivo de orçamentos */}
+          {hasMoreBudgets && (
+            <div className="p-4 rounded-2xl bg-[#F4FAF8] border border-emerald-950/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <span className="text-slate-600">
+                Mostrando <strong>{visibleBudgets.length}</strong> de{' '}
+                <strong>{budgets.length}</strong> orçamentos aprovados
+              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  type="button"
+                  onClick={handleLoadMore}
+                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl h-9 px-4 flex-1 sm:flex-initial"
+                >
+                  Carregar Mais 50
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleShowAll}
+                  className="text-xs border-emerald-950/15 rounded-xl h-9 px-3 shrink-0"
+                >
+                  Exibir Todos ({budgets.length})
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -486,32 +556,79 @@ export default function Orcamentos() {
               </div>
             )}
 
-            {selectedBudget?.itens && selectedBudget.itens.length > 0 && (
+            {selectedBudget?.itens && selectedBudget.itens.length > 0 ? (
               <div className="space-y-2 pt-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Itens & Medicamentos do Orçamento ({selectedBudget.itens.length}):
-                </span>
-                <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                    Lista Completa de Itens & Insumos ({selectedBudget.itens.length}):
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Soma dos itens:{' '}
+                    <strong className="text-emerald-800 font-mono">
+                      {selectedBudget.itens
+                        .reduce((acc, i) => acc + (i.valorTotal || 0), 0)
+                        .toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </strong>
+                  </span>
+                </div>
+                <div className="space-y-2">
                   {selectedBudget.itens.map((it, idx) => (
                     <div
                       key={idx}
-                      className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center justify-between text-xs"
+                      className="p-3 rounded-xl border border-emerald-950/10 bg-white hover:bg-slate-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
                     >
-                      <div className="min-w-0 pr-2">
-                        <p className="font-semibold text-slate-800 truncate">{it.descricao}</p>
-                        <p className="text-[10px] text-slate-400 font-mono">Qtd: {it.quantidade}</p>
+                      <div className="min-w-0 pr-2 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="h-5 w-5 rounded-md bg-[#E6F5F2] text-[#0D8272] flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
+                            {idx + 1}
+                          </span>
+                          <p className="font-bold text-slate-900 leading-snug">{it.descricao}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 pl-7 text-[11px] text-slate-500">
+                          {it.codigo && (
+                            <span className="font-mono text-slate-400">Cód: {it.codigo}</span>
+                          )}
+                          <span className="font-mono">
+                            Qtd: <strong>{it.quantidade}</strong> {it.unidade || ''}
+                          </span>
+                          {it.valorUnitario > 0 && (
+                            <span className="text-slate-400">
+                              • Unit:{' '}
+                              {it.valorUnitario.toLocaleString('pt-BR', {
+                                style: 'currency',
+                                currency: 'BRL',
+                              })}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      {it.valorTotal > 0 && (
-                        <span className="text-xs font-bold text-emerald-800 shrink-0">
-                          {it.valorTotal.toLocaleString('pt-BR', {
-                            style: 'currency',
-                            currency: 'BRL',
-                          })}
+
+                      <div className="text-right shrink-0 pl-7 sm:pl-0">
+                        <span className="text-[10px] uppercase text-slate-400 block font-bold">
+                          Subtotal
                         </span>
-                      )}
+                        <span className="text-sm font-bold text-[#0C4336] font-mono">
+                          {it.valorTotal > 0
+                            ? it.valorTotal.toLocaleString('pt-BR', {
+                                style: 'currency',
+                                currency: 'BRL',
+                              })
+                            : '—'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center text-slate-400 space-y-1">
+                <Package className="h-6 w-6 mx-auto text-slate-300" />
+                <p className="text-xs font-semibold text-slate-600">
+                  Nenhum item discriminado no orçamento
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  O orçamento consta apenas com o valor consolidado na API SpinCare.
+                </p>
               </div>
             )}
           </ScrollArea>

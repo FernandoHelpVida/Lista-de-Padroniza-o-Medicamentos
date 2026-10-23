@@ -62,11 +62,17 @@ export default function Pacientes() {
   const [selectedConvenio, setSelectedConvenio] = useState<string>('todos')
   const [selectedModalidade, setSelectedModalidade] = useState<string>('todas')
 
+  const [serverConvenios, setServerConvenios] = useState<string[]>([])
+  const [serverModalidades, setServerModalidades] = useState<string[]>([])
+
   const [loading, setLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [patients, setPatients] = useState<SpincarePatient[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [unconfigured, setUnconfigured] = useState(false)
+
+  // Paginação no cliente para suportar 539+ pacientes com fluidez
+  const [displayLimit, setDisplayLimit] = useState(50)
 
   // Ficha detalhada do paciente
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
@@ -80,14 +86,22 @@ export default function Pacientes() {
     setLoading(true)
     setHasSearched(true)
     setUnconfigured(false)
+    setDisplayLimit(50)
     try {
       const res = await searchSpincarePatients({
         query: searchNome.trim(),
         documento: searchDoc.trim(),
-        limit: 100,
+        fetchAll: true,
       })
-      setPatients(res.items || [])
-      setTotalCount(res.total || 0)
+      const items = res.items || []
+      setPatients(items)
+      setTotalCount(res.total || items.length)
+      if (res.convenios && res.convenios.length > 0) {
+        setServerConvenios(res.convenios)
+      }
+      if (res.modalidades && res.modalidades.length > 0) {
+        setServerModalidades(res.modalidades)
+      }
     } catch (err: unknown) {
       console.error('Erro ao buscar pacientes no SpinCare:', err)
       const msg = getErrorMessage(err, 'Não foi possível consultar os pacientes no SpinCare.')
@@ -133,9 +147,15 @@ export default function Pacientes() {
     }
   }, [isMedicoVisitador])
 
-  // Lista dinâmica de convênios distintos encontrados nos resultados
+  // Lista unificada e normalizada de convênios distintos encontrados nos resultados ou no servidor
   const conveniosOptions = useMemo(() => {
     const set = new Set<string>()
+    // Prioriza lista completa enviada pelo backend
+    serverConvenios.forEach((c) => {
+      const clean = (c || '').trim()
+      if (clean && clean !== '—') set.add(clean)
+    })
+    // Complementa com pacientes carregados
     patients.forEach((p) => {
       const conv = (p.convenio || '').trim()
       if (conv && conv !== '—') {
@@ -143,11 +163,15 @@ export default function Pacientes() {
       }
     })
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
-  }, [patients])
+  }, [serverConvenios, patients])
 
-  // Lista dinâmica de modalidades distintas encontradas nos resultados
+  // Lista unificada de modalidades distintas
   const modalidadesOptions = useMemo(() => {
     const set = new Set<string>()
+    serverModalidades.forEach((m) => {
+      const clean = (m || '').trim()
+      if (clean && clean !== '—') set.add(clean)
+    })
     patients.forEach((p) => {
       const mod = (p.modalidade || '').trim()
       if (mod && mod !== '—') {
@@ -155,22 +179,45 @@ export default function Pacientes() {
       }
     })
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
-  }, [patients])
+  }, [serverModalidades, patients])
 
-  // Pacientes filtrados pelos filtros ativos de convênio e modalidade
+  // Normalizador auxiliar para comparação insensível a acentos, espaços e maiúsculas
+  const normalizeCompare = (str: string) =>
+    (str || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toUpperCase()
+
+  // Pacientes filtrados pelos filtros ativos de convênio e modalidade (com correspondência tolerante)
   const filteredPatients = useMemo(() => {
+    const targetConv = selectedConvenio !== 'todos' ? normalizeCompare(selectedConvenio) : ''
+    const targetMod = selectedModalidade !== 'todas' ? normalizeCompare(selectedModalidade) : ''
+
     return patients.filter((p) => {
-      if (selectedConvenio !== 'todos') {
-        const conv = (p.convenio || '').trim()
-        if (conv !== selectedConvenio) return false
+      if (targetConv) {
+        const pConv = normalizeCompare(p.convenio)
+        // Comparação exata ou por inclusão mútua caso haja sufixos
+        if (pConv !== targetConv && !pConv.includes(targetConv) && !targetConv.includes(pConv)) {
+          return false
+        }
       }
-      if (selectedModalidade !== 'todas') {
-        const mod = (p.modalidade || '').trim()
-        if (mod !== selectedModalidade) return false
+      if (targetMod) {
+        const pMod = normalizeCompare(p.modalidade)
+        if (pMod !== targetMod && !pMod.includes(targetMod) && !targetMod.includes(pMod)) {
+          return false
+        }
       }
       return true
     })
   }, [patients, selectedConvenio, selectedModalidade])
+
+  // Itens atualmente visíveis (com paginação progressiva)
+  const visiblePatients = useMemo(() => {
+    return filteredPatients.slice(0, displayLimit)
+  }, [filteredPatients, displayLimit])
+
+  const hasMorePatients = displayLimit < filteredPatients.length
 
   const hasActiveFilters =
     Boolean(searchNome) ||
@@ -183,6 +230,15 @@ export default function Pacientes() {
     setSearchDoc('')
     setSelectedConvenio('todos')
     setSelectedModalidade('todas')
+    setDisplayLimit(50)
+  }
+
+  const handleLoadMore = () => {
+    setDisplayLimit((prev) => prev + 50)
+  }
+
+  const handleShowAll = () => {
+    setDisplayLimit(filteredPatients.length)
   }
 
   // Redirecionar / bloquear médico visitador (abaixo dos hooks para cumprir rules-of-hooks)
@@ -338,19 +394,33 @@ export default function Pacientes() {
                     <span className="h-1.5 w-1.5 rounded-full bg-[#0D8272]" />
                   )}
                 </label>
-                <Select value={selectedConvenio} onValueChange={setSelectedConvenio}>
+                <Select
+                  value={selectedConvenio}
+                  onValueChange={(val) => {
+                    setSelectedConvenio(val)
+                    setDisplayLimit(50)
+                  }}
+                >
                   <SelectTrigger className="h-9 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl">
                     <SelectValue placeholder="Todos os convênios" />
                   </SelectTrigger>
                   <SelectContent className="max-h-64">
                     <SelectItem value="todos" className="text-xs font-semibold">
-                      Todos os Convênios ({patients.length})
+                      Todos os Convênios (
+                      {conveniosOptions.length > 0 ? conveniosOptions.length : 'todos'})
                     </SelectItem>
-                    {conveniosOptions.map((conv) => (
-                      <SelectItem key={conv} value={conv} className="text-xs">
-                        {conv}
-                      </SelectItem>
-                    ))}
+                    {conveniosOptions.map((conv) => {
+                      const count = patients.filter((p) => {
+                        const c = normalizeCompare(p.convenio)
+                        const t = normalizeCompare(conv)
+                        return c === t || c.includes(t) || t.includes(c)
+                      }).length
+                      return (
+                        <SelectItem key={conv} value={conv} className="text-xs">
+                          {conv} {count > 0 ? `(${count})` : ''}
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -364,19 +434,33 @@ export default function Pacientes() {
                     <span className="h-1.5 w-1.5 rounded-full bg-[#0D8272]" />
                   )}
                 </label>
-                <Select value={selectedModalidade} onValueChange={setSelectedModalidade}>
+                <Select
+                  value={selectedModalidade}
+                  onValueChange={(val) => {
+                    setSelectedModalidade(val)
+                    setDisplayLimit(50)
+                  }}
+                >
                   <SelectTrigger className="h-9 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl">
                     <SelectValue placeholder="Todas as modalidades" />
                   </SelectTrigger>
                   <SelectContent className="max-h-64">
                     <SelectItem value="todas" className="text-xs font-semibold">
-                      Todas as Modalidades
+                      Todas as Modalidades (
+                      {modalidadesOptions.length > 0 ? modalidadesOptions.length : 'todas'})
                     </SelectItem>
-                    {modalidadesOptions.map((mod) => (
-                      <SelectItem key={mod} value={mod} className="text-xs">
-                        {mod}
-                      </SelectItem>
-                    ))}
+                    {modalidadesOptions.map((mod) => {
+                      const count = patients.filter((p) => {
+                        const m = normalizeCompare(p.modalidade)
+                        const t = normalizeCompare(mod)
+                        return m === t || m.includes(t) || t.includes(m)
+                      }).length
+                      return (
+                        <SelectItem key={mod} value={mod} className="text-xs">
+                          {mod} {count > 0 ? `(${count})` : ''}
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -385,8 +469,13 @@ export default function Pacientes() {
               <div className="flex items-center gap-2 pt-1 sm:pt-4 text-xs text-slate-500">
                 <Filter size={14} className="text-[#0D8272] shrink-0" />
                 <span>
-                  Exibindo <strong>{filteredPatients.length}</strong> de{' '}
-                  <strong>{patients.length}</strong> pacientes carregados
+                  Exibindo <strong>{visiblePatients.length}</strong> de{' '}
+                  <strong>{filteredPatients.length}</strong> pacientes{' '}
+                  {totalCount > 0 && totalCount !== filteredPatients.length && (
+                    <>
+                      (censo total: <strong>{totalCount}</strong> ativos)
+                    </>
+                  )}
                 </span>
               </div>
             </div>
@@ -468,7 +557,7 @@ export default function Pacientes() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {filteredPatients.map((p) => (
+            {visiblePatients.map((p) => (
               <Card
                 key={p.id}
                 onClick={() => handleOpenPatient(p)}
@@ -564,6 +653,33 @@ export default function Pacientes() {
               </Card>
             ))}
           </div>
+
+          {/* BARRA DE CARREGAMENTO PROGRESSIVO / PAGINAÇÃO */}
+          {hasMorePatients && (
+            <div className="p-4 rounded-2xl bg-[#F4FAF8] border border-emerald-950/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <span className="text-slate-600">
+                Mostrando <strong>{visiblePatients.length}</strong> de{' '}
+                <strong>{filteredPatients.length}</strong> pacientes encontrados
+              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  type="button"
+                  onClick={handleLoadMore}
+                  className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-bold rounded-xl h-9 px-4 flex-1 sm:flex-initial"
+                >
+                  Carregar Mais 50 Pacientes
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleShowAll}
+                  className="text-xs border-emerald-950/15 rounded-xl h-9 px-3 shrink-0"
+                >
+                  Exibir Todos ({filteredPatients.length})
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -718,33 +834,54 @@ export default function Pacientes() {
                           </Badge>
                         </div>
                       </div>
-
                       {b.observacao && b.observacao !== '—' && (
                         <p className="text-[11px] text-slate-600 italic bg-[#F4FAF8] p-2 rounded-lg">
                           "{b.observacao}"
                         </p>
                       )}
-
                       {b.itens && b.itens.length > 0 && (
-                        <div className="pt-1.5 border-t border-slate-100">
-                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                            Itens / Medicamentos:
-                          </span>
-                          <div className="space-y-1">
+                        <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                            <span>Itens & Medicamentos do Orçamento ({b.itens.length}):</span>
+                            <span>Qtd / Valor</span>
+                          </div>
+                          <div className="space-y-1.5">
                             {b.itens.map((it, idx) => (
                               <div
                                 key={idx}
-                                className="flex items-center justify-between text-[11px] text-slate-700 bg-slate-50 px-2 py-1 rounded"
+                                className="p-2 rounded-lg bg-slate-50 border border-slate-150 flex items-center justify-between gap-2 text-[11px]"
                               >
-                                <span>{it.descricao}</span>
-                                <span className="font-mono text-slate-500">
-                                  Qtd: {it.quantidade}
-                                </span>
+                                <div className="min-w-0 pr-1">
+                                  <p
+                                    className="font-medium text-slate-800 truncate"
+                                    title={it.descricao}
+                                  >
+                                    {it.descricao}
+                                  </p>
+                                  {it.codigo && (
+                                    <span className="text-[10px] text-slate-400 font-mono">
+                                      Cód: {it.codigo}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-mono text-slate-600 block">
+                                    Qtd: <strong>{it.quantidade}</strong> {it.unidade || ''}
+                                  </span>
+                                  {it.valorTotal > 0 && (
+                                    <span className="text-[11px] font-bold text-emerald-800">
+                                      {it.valorTotal.toLocaleString('pt-BR', {
+                                        style: 'currency',
+                                        currency: 'BRL',
+                                      })}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>
                         </div>
-                      )}
+                      )}{' '}
                     </div>
                   ))}
                 </div>
