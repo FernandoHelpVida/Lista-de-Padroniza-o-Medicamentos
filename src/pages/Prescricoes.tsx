@@ -306,7 +306,7 @@ export default function Prescricoes() {
     const matchingPrescriptionIds = new Set<string>()
 
     allPrescriptions.forEach((p) => {
-      // 1. Filtro por paciente (tolerante, aceita qualquer combinação de palavras)
+      // 1. Filtro estrito de paciente (se informado)
       if (patWords.length > 0) {
         const pNome = normalize(p.pacienteNome)
         const matchWords = patWords.every((w) => pNome.includes(w))
@@ -316,16 +316,51 @@ export default function Prescricoes() {
         }
       }
 
-      // 2. Filtro por data da prescrição dentro do período
-      const pDateComp =
-        parseDateToComparable(p.dataPrescricao) || parseDateToComparable(p.dataInicial)
-      if (pDateComp !== null) {
-        if (startComp !== null && pDateComp < startComp) {
-          return
+      // 2. Filtro de período por datas de prescrição OU vigência cruzada
+      const pDatePresc = parseDateToComparable(p.dataPrescricao)
+      const pDateInit = parseDateToComparable(p.dataInicial)
+      const pDateFinal = parseDateToComparable(p.dataFinal)
+
+      let inPeriod = false
+      if (pDatePresc !== null) {
+        if (
+          (startComp === null || pDatePresc >= startComp) &&
+          (endComp === null || pDatePresc <= endComp)
+        ) {
+          inPeriod = true
         }
-        if (endComp !== null && pDateComp > endComp) {
-          return
+      }
+      if (!inPeriod && pDateInit !== null && pDateFinal !== null) {
+        // Sobreposição de intervalos
+        if (
+          (endComp === null || pDateInit <= endComp) &&
+          (startComp === null || pDateFinal >= startComp)
+        ) {
+          inPeriod = true
         }
+      }
+      if (!inPeriod && pDateInit !== null) {
+        if (
+          (startComp === null || pDateInit >= startComp) &&
+          (endComp === null || pDateInit <= endComp)
+        ) {
+          inPeriod = true
+        }
+      }
+      if (!inPeriod && pDateFinal !== null) {
+        if (
+          (startComp === null || pDateFinal >= startComp) &&
+          (endComp === null || pDateFinal <= endComp)
+        ) {
+          inPeriod = true
+        }
+      }
+      if (pDatePresc === null && pDateInit === null && pDateFinal === null) {
+        inPeriod = true
+      }
+
+      if (!inPeriod) {
+        return
       }
 
       // 3. Verificação dos itens da prescrição com o medicamento
