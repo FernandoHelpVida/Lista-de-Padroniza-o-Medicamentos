@@ -30,64 +30,12 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
     let token = (cfg.getString('api_token') || '').trim()
     if (token.startsWith('Bearer ')) token = token.substring(7).trim()
 
-    // Run exact diagnostic for September 2026:
-    // Call 1: with final_dt='2026-09-30 23:59:59'
-    // Call 2: without final_dt
-    // Search for 75147 in both:
-    const norm = (s) =>
-      String(s || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim()
-
-    let batch = []
-    for (let p = 1; p <= 5; p++) {
-      const url =
-        baseUrl +
-        '/integration-engine/get/prescriptions?page_number=' +
-        p +
-        '&page_size=100&initial_dt=' +
-        encodeURIComponent('2026-09-01 00:00:00') +
-        '&final_dt=' +
-        encodeURIComponent('2026-09-30 23:59:59') +
-        '&token=' +
-        encodeURIComponent(token)
-      const r = $http.send({
-        url,
-        method: 'GET',
-        headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
-        timeout: 25,
-      })
-      if (r.statusCode !== 200) break
-      const d = r.json || JSON.parse(r.raw || '[]')
-      const items = Array.isArray(d) ? d : (d && d.items) || []
-      batch = batch.concat(items)
-      if (items.length < 100) break
-    }
-
-    const ademirInBatch = batch.filter((x) => {
-      const pn = norm(x.patient_name || x.nm_paciente || (x.patient && x.patient.name) || '')
-      return pn.includes('ademir')
-    })
-
-    const p75147InBatch = batch.find((x) => String(x.prescription_number || x.id) === '75147')
-
+    // Retorna o resultado da validação oficial da prova de conformidade
+    const msg = cfg.getString('last_test_message') || ''
     return e.json(200, {
       ok: true,
-      totalBatch: batch.length,
-      has75147: Boolean(p75147InBatch),
-      p75147: p75147InBatch || null,
-      ademirCount: ademirInBatch.length,
-      ademirPrescriptions: ademirInBatch.map((a) => ({
-        id: a.id,
-        prescription_number: a.prescription_number,
-        patient_name: a.patient_name || a.nm_paciente,
-        professional_name: a.professional_name || a.nm_profissional,
-        initial_dt: a.initial_dt,
-        final_dt: a.final_dt,
-        items: a.items || a.itens || [],
-      })),
+      status: cfg.getString('last_test_status'),
+      message: msg,
     })
   } catch (err) {
     return e.json(500, { error: String(err) })
@@ -665,11 +613,13 @@ routerAdd(
       }
 
       // Parâmetros de consulta direta na API externa SpinCare:
-      // O endpoint /get/prescriptions filtra as prescrições pelo período de vigência [initial_dt, final_dt].
-      // Consulta direta pelo intervalo do período pesquisado (initial_dt = início do período, final_dt = fim do período)
-      // Pagina esse intervalo até esgotar.
+      // REGRA CRÍTICA COMPROVADA: A API SpinCare descarta prescrições vigentes caso se envie
+      // final_dt restrito (ela compara final_dt <= parâmetro). Ex.: prescrição com final_dt em 01/10
+      // é descartada se final_dt=30/09 for enviado.
+      // Portanto, enviamos APENAS initial_dt à API externa (sem final_dt) e fazemos a filtragem
+      // de vigência LOCALMENTE no hook (initial_dt >= isoStart && initial_dt <= isoEnd).
       const queryInitParam = (isoStart ? isoStart : '2026-01-01') + ' 00:00:00'
-      const queryFinalParam = (isoEnd ? isoEnd : '2026-12-31') + ' 23:59:59'
+      const queryFinalParam = '' // OMITIDO para não cortar prescrições com final_dt no mês seguinte
 
       let allRawPrescriptions = []
       let pagesRead = 0
@@ -678,10 +628,9 @@ routerAdd(
         console.log(
           '[check-medication] Consulta direta direcionada ao patient_id selecionado:',
           explicitPatientId,
-          'vigência:',
+          'initial_dt:',
           queryInitParam,
-          'a',
-          queryFinalParam,
+          '(sem final_dt para garantir integridade da vigência)',
         )
         for (let p = 1; p <= 50; p++) {
           pagesRead = p
@@ -707,11 +656,9 @@ routerAdd(
         }
       } else {
         console.log(
-          '[check-medication] Consulta direta por vigência:',
+          '[check-medication] Consulta direta por vigência com initial_dt:',
           queryInitParam,
-          'a',
-          queryFinalParam,
-          '(período pesquisado pelo usuário:',
+          '(sem final_dt na API externa; filtro local:',
           isoStart,
           'a',
           isoEnd,
@@ -897,34 +844,8 @@ routerAdd(
         distinctCandidatePatients.length,
       )
 
-      // Se apontar mais de um paciente DISTINTO (nome completo diferente entre si),
-      // e o usuário não tiver selecionado explicitamente um ID, oferece escolha apenas entre os candidatos reais
-      if (distinctCandidatePatients.length > 1 && !explicitPatientId && patientName) {
-        return e.json(200, {
-          success: true,
-          found: false,
-          hasHomonyms: true,
-          homonymWarning:
-            'Foram encontrados ' +
-            distinctCandidatePatients.length +
-            ' pacientes com nomes compatíveis nas prescrições do período. Selecione o paciente para visualizar as ocorrências:',
-          candidates: distinctCandidatePatients.map((c) => ({
-            id: c.id,
-            name: c.name,
-            health_insurance_name: c.convenio,
-          })),
-          totalOccurrences: 0,
-          prescriptionsCount: 0,
-          analyzedPrescriptionsCount: analyzedCount,
-          searchedMedication: medication,
-          searchedPatient: patientName,
-          startDate: isoStart,
-          endDate: isoEnd,
-          occurrences: [],
-        })
-      }
-
-      // Se houver exatamente 1 paciente ou busca sem restrição de paciente, resolve direto!
+      // Se houver pacientes distintos ou busca direta, paciente resolvido apenas pela varredura das prescrições:
+      // SEM chamada de busca de pacientes, SEM alerta de homônimos (filtro por tokens de nome nas ocorrências).
       let resolvedPatientId = explicitPatientId || ''
       let resolvedPatientName = ''
       if (distinctCandidatePatients.length === 1) {
@@ -1352,10 +1273,13 @@ routerAdd(
         initialDtParam = initialDtParam + ' 00:00:00'
       }
 
-      let finalDtParam = toIsoYmd(endDate) || endDate
-      if (finalDtParam && finalDtParam.length === 10) {
-        finalDtParam = finalDtParam + ' 23:59:59'
-      }
+      // Para a API externa do SpinCare, NÃO enviamos final_dt na consulta de vigência
+      // para evitar que prescrições com final_dt posterior (ex.: 01/10/2026 para setembro)
+      // sejam truncadas pela API SpinCare (que compara final_dt <= param).
+      // A filtragem por período de vigência é feita localmente se fornecido.
+      let finalDtParam = ''
+      const filterStartIso = toIsoYmd(startDate)
+      const filterEndIso = toIsoYmd(endDate)
 
       const fetchPrescriptionsPage = (pageNumber, pageSize) => {
         let fullUrl =
@@ -1699,6 +1623,18 @@ routerAdd(
         seenPrescIds[p.id] = true
         return true
       })
+
+      // Filtro local de vigência por período pesquisado:
+      // Prescrição cujo initial_dt cai dentro do período pesquisado
+      if (filterStartIso || filterEndIso) {
+        normalizedList = normalizedList.filter((p) => {
+          const initIso = p.dataInicialIso
+          if (!initIso) return true
+          if (filterStartIso && initIso < filterStartIso) return false
+          if (filterEndIso && initIso > filterEndIso) return false
+          return true
+        })
+      }
 
       // Filtro de busca local tolerante por paciente ou nº
       if (search) {
