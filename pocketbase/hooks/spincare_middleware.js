@@ -602,57 +602,72 @@ routerAdd(
         return ''
       }
 
-      // Parâmetros de busca na API externa SpinCare:
-      // A API SpinCare filtra seu endpoint get/prescriptions pela DATA DE CRIAÇÃO (creation_dt).
-      // Porém, uma prescrição criada meses antes (ex: criada em 24/07/2026) pode ter vigência
-      // para o período pesquisado (ex: setembro/2026: 01/09/2026 a 30/09/2026).
-      // Por isso, para garantir que prescrições vigentes não sejam descartadas precocemente
-      // pela API externa, a busca no SpinCare deve cobrir desde o início do ano da consulta
-      // (2026-01-01) até a data final pesquisada (ou final do ano correspondente).
-      // Em seguida, o filtro rigoroso de interseção de vigência [initial_dt, final_dt] é aplicado.
-      let scanStartYear = '2026'
-      if (isoStart && isoStart.length >= 4) {
-        scanStartYear = isoStart.substring(0, 4)
-      }
-      const scanQueryInitParam = scanStartYear + '-01-01 00:00:00'
-      const scanQueryFinalParam = (isoEnd ? isoEnd : scanStartYear + '-12-31') + ' 23:59:59'
+      // Parâmetros de consulta direta na API externa SpinCare:
+      // O endpoint /get/prescriptions filtra as prescrições pelo período de vigência [initial_dt, final_dt].
+      // Consulta direta pelo intervalo do período pesquisado (initial_dt = início do período, final_dt = fim do período)
+      // Pagina esse intervalo até esgotar.
+      const queryInitParam = (isoStart ? isoStart : '2026-01-01') + ' 00:00:00'
+      const queryFinalParam = (isoEnd ? isoEnd : '2026-12-31') + ' 23:59:59'
 
       let allRawPrescriptions = []
+      let pagesRead = 0
 
-      // Se o usuário selecionou expressamente um ID de paciente em desambiguação anterior:
       if (explicitPatientId) {
         console.log(
-          '[check-medication] Consulta direcionada ao patient_id selecionado:',
+          '[check-medication] Consulta direta direcionada ao patient_id selecionado:',
           explicitPatientId,
+          'vigência:',
+          queryInitParam,
+          'a',
+          queryFinalParam,
         )
-        for (let p = 1; p <= 35; p++) {
+        for (let p = 1; p <= 50; p++) {
+          pagesRead = p
           const resP = fetchPrescriptionsPage(
             p,
             100,
-            scanQueryInitParam,
-            scanQueryFinalParam,
+            queryInitParam,
+            queryFinalParam,
             explicitPatientId,
           )
-          if (resP.error || !resP.items || resP.items.length === 0) break
+          if (resP.error || !resP.items || resP.items.length === 0) {
+            if (p === 1 && resP.error) {
+              console.log(
+                '[check-medication] Erro na consulta direta (página 1):',
+                resP.error,
+                resP.statusCode,
+              )
+            }
+            break
+          }
           allRawPrescriptions = allRawPrescriptions.concat(resP.items)
           if (resP.items.length < 100) break
         }
       } else {
-        // Varredura ampla de prescrições no SpinCare para captura por vigência
         console.log(
-          '[check-medication] Varredura ampla de prescrições para vigência:',
-          scanQueryInitParam,
-          'até',
-          scanQueryFinalParam,
+          '[check-medication] Consulta direta por vigência:',
+          queryInitParam,
+          'a',
+          queryFinalParam,
           '(período pesquisado pelo usuário:',
           isoStart,
           'a',
           isoEnd,
           ')',
         )
-        for (let p = 1; p <= 35; p++) {
-          const resP = fetchPrescriptionsPage(p, 100, scanQueryInitParam, scanQueryFinalParam, '')
-          if (resP.error || !resP.items || resP.items.length === 0) break
+        for (let p = 1; p <= 50; p++) {
+          pagesRead = p
+          const resP = fetchPrescriptionsPage(p, 100, queryInitParam, queryFinalParam, '')
+          if (resP.error || !resP.items || resP.items.length === 0) {
+            if (p === 1 && resP.error) {
+              console.log(
+                '[check-medication] Erro na consulta direta (página 1):',
+                resP.error,
+                resP.statusCode,
+              )
+            }
+            break
+          }
           allRawPrescriptions = allRawPrescriptions.concat(resP.items)
           if (resP.items.length < 100) break
         }
@@ -672,7 +687,16 @@ routerAdd(
       }
 
       const analyzedCount = dedupedPrescriptions.length
-      console.log('[check-medication] Prescrições lidas na varredura:', analyzedCount)
+      console.log(
+        '[check-medication] Consulta direta por vigência:',
+        isoStart,
+        'a',
+        isoEnd + ';',
+        'páginas lidas:',
+        pagesRead + ';',
+        'prescrições lidas:',
+        analyzedCount,
+      )
 
       // Critérios de filtro: Medicamento, Paciente (tokens) e Período (intervalo inclusivo)
       const normMedTarget = norm(medication)
@@ -1079,6 +1103,14 @@ routerAdd(
         }
       }
 
+      console.log(
+        '[check-medication] Resultado final da consulta combinada:',
+        'ocorrências encontradas:',
+        matchingOccurrences.length,
+        'prescrições distintas:',
+        Object.keys(matchingPrescriptionMap).length,
+      )
+
       // Trilha de auditoria LGPD (sem dados sensíveis no log)
       try {
         const auditCol = e.app.findCollectionByNameOrId('audit_logs')
@@ -1097,7 +1129,7 @@ routerAdd(
         )
         auditRecord.set(
           'detalhes',
-          'Consulta combinada realizada: ' +
+          'Consulta combinada direta realizada: ' +
             analyzedCount +
             ' prescrições analisadas no período ' +
             isoStart +
