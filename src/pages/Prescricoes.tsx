@@ -361,43 +361,17 @@ export default function Prescricoes() {
         }
       }
 
-      // 2. Filtro de período por datas de prescrição OU vigência cruzada
-      // Vigência com prioridade: sobreposição do intervalo [dataInicial, dataFinal] com [startComp, endComp]
-      const pDatePresc = parseDateToComparable(p.dataPrescricao)
+      // 2. Filtro de período por VIGÊNCIA da prescrição:
+      // Regra oficial SpinCare: a prescrição pertence ao período se e somente se
+      // a DATA DE INÍCIO DA VIGÊNCIA (dataInicial / initial_dt) estiver DENTRO do período pesquisado:
+      // pDateInit >= startComp && pDateInit <= endComp.
       const pDateInit = parseDateToComparable(p.dataInicial)
-      const pDateFinal = parseDateToComparable(p.dataFinal)
 
       let inPeriod = false
-
-      // A: Se tem datas de vigência inicial e final, verifica sobreposição de intervalos
-      if (pDateInit !== null && pDateFinal !== null) {
-        if (
-          (endComp === null || pDateInit <= endComp) &&
-          (startComp === null || pDateFinal >= startComp)
-        ) {
-          inPeriod = true
-        }
-      } else if (pDateInit !== null) {
+      if (pDateInit !== null) {
         if (
           (startComp === null || pDateInit >= startComp) &&
           (endComp === null || pDateInit <= endComp)
-        ) {
-          inPeriod = true
-        }
-      } else if (pDateFinal !== null) {
-        if (
-          (startComp === null || pDateFinal >= startComp) &&
-          (endComp === null || pDateFinal <= endComp)
-        ) {
-          inPeriod = true
-        }
-      }
-
-      // B: Data de prescrição/emissão dentro do período
-      if (!inPeriod && pDatePresc !== null) {
-        if (
-          (startComp === null || pDatePresc >= startComp) &&
-          (endComp === null || pDatePresc <= endComp)
         ) {
           inPeriod = true
         }

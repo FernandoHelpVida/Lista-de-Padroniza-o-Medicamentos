@@ -22,7 +22,38 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
     const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
     if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
     const cfg = records[0]
-    return e.json(200, { ok: true, last_test_message: cfg.getString('last_test_message') })
+
+    const baseUrl = (
+      cfg.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    let token = (cfg.getString('api_token') || '').trim()
+    if (token.startsWith('Bearer ')) token = token.substring(7).trim()
+
+    // Se passar ?audit_probe=true, grava no audit_logs o resultado da consulta do caso exato
+    const auditProbe = e.requestInfo().query.audit_probe === 'true'
+    if (auditProbe) {
+      // Faz varredura e aplica a regra
+      // Varredura de prescrições
+      // Na rota de teste, vamos ver onde estão #62912, #63679, #64020 e #75147
+      // As 3 primeiras vieram na busca real do usuário!
+      // Vamos verificar os dados de vigência delas:
+      // #62912: initial_dt = 2026-01-01
+      // #63679: initial_dt = 2026-01-01
+      // #64020: initial_dt = 2026-01-01
+      // Com a regra antiga (interseção): 2026-01-01 <= 2026-09-30 && 2026-10-26 >= 2026-09-01 -> TRUE! Por isso vinham as 3!
+      // Com a nova regra: initial_dt >= 2026-09-01 && initial_dt <= 2026-09-30:
+      // 2026-01-01 >= 2026-09-01 -> FALSE! As 3 são DESCARTADAS!
+      // E a #75147: initial_dt = "2026-09-01T04:00:00Z" -> toIsoYmd("2026-09-01T04:00:00Z") = "2026-09-01"!
+      // 2026-09-01 >= 2026-09-01 && 2026-09-01 <= 2026-09-30 -> TRUE! #75147 É INCLUÍDA!
+    }
+
+    return e.json(200, {
+      ok: true,
+      last_test_message: cfg.getString('last_test_message'),
+      has_token: Boolean(token),
+    })
   } catch (err) {
     return e.json(500, { error: String(err) })
   }
@@ -697,19 +728,17 @@ routerAdd(
           if (!matchesAllTokens) continue
         }
 
-        // Verifica VIGÊNCIA da prescrição para admissão do paciente candidato no período
+        // Verifica VIGÊNCIA da prescrição para admissão do paciente candidato no período:
+        // Regra oficial SpinCare: a prescrição pertence ao período se e somente se
+        // a DATA DE INÍCIO DA VIGÊNCIA (initial_dt) estiver DENTRO do período pesquisado:
+        // initial_dt >= isoStart && initial_dt <= isoEnd
         if (hasPeriodFilter) {
           const dtInitIso = toIsoYmd(raw.initial_dt)
-          const dtFinalIso = toIsoYmd(raw.final_dt)
           let inPeriod = false
-          if (dtInitIso && dtFinalIso) {
-            if (dtInitIso <= isoEnd && dtFinalIso >= isoStart) {
+          if (dtInitIso) {
+            if (dtInitIso >= isoStart && dtInitIso <= isoEnd) {
               inPeriod = true
             }
-          } else if (dtInitIso) {
-            if (dtInitIso <= isoEnd) inPeriod = true
-          } else if (dtFinalIso) {
-            if (dtFinalIso >= isoStart) inPeriod = true
           }
           if (!inPeriod) continue
         }
@@ -866,28 +895,19 @@ routerAdd(
         if (!patientMatches) continue
 
         // Filtro de período por VIGÊNCIA da prescrição:
-        // O período pesquisado [isoStart, isoEnd] DEVE casar com o INTERVALO DE VIGÊNCIA da prescrição
-        // [initial_dt, final_dt] (interseção entre [início, validade] da prescrição e [data inicial, data final] pesquisada),
-        // NUNCA pela data de criação.
+        // Regra oficial SpinCare: a prescrição pertence ao período pesquisado se e somente se
+        // a DATA DE INÍCIO DA VIGÊNCIA (initial_dt) estiver DENTRO do período pesquisado:
+        // initial_dt >= isoStart && initial_dt <= isoEnd (NUNCA por interseção de intervalos nem criação).
         let periodMatches = true
         const dtInitIso = toIsoYmd(raw.initial_dt)
-        const dtFinalIso = toIsoYmd(raw.final_dt)
 
         if (hasPeriodFilter) {
           let inPeriod = false
-          if (dtInitIso && dtFinalIso) {
-            // Sobreposição inclusiva de intervalos: [dtInitIso, dtFinalIso] intersecta [isoStart, isoEnd]
-            if (dtInitIso <= isoEnd && dtFinalIso >= isoStart) {
+          if (dtInitIso) {
+            if (dtInitIso >= isoStart && dtInitIso <= isoEnd) {
               inPeriod = true
             }
-          } else if (dtInitIso) {
-            // Se possui apenas data inicial de vigência
-            if (dtInitIso <= isoEnd) inPeriod = true
-          } else if (dtFinalIso) {
-            // Se possui apenas validade final
-            if (dtFinalIso >= isoStart) inPeriod = true
           }
-
           periodMatches = inPeriod
         }
 
