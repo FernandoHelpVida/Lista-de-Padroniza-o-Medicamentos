@@ -214,14 +214,131 @@ migrate(
       }
     }
 
+    // Diagnóstico detalhado:
+    // a) Chaves de nível superior de uma prescrição
+    const samplePrescription = dedupedPrescriptions[0] || {}
+    const topKeys = Object.keys(samplePrescription)
+
+    // b) De 2 prescrições da página 1, campos de paciente e estrutura completa dos itens
+    const page1Sample = dedupedPrescriptions.slice(0, 2).map((pr) => {
+      const patientFields = {}
+      for (const k of Object.keys(pr)) {
+        if (/patient|paciente|name|nome/i.test(k)) {
+          patientFields[k] = pr[k]
+        }
+      }
+      const rawIt = pr.items || pr.itens || pr.prescription_items || []
+      const itemsList = Array.isArray(rawIt) ? rawIt : []
+      return {
+        id: pr.id || pr.prescription_number,
+        patientFields,
+        itemKeys: itemsList[0] ? Object.keys(itemsList[0]) : [],
+        firstItem: itemsList[0] || null,
+      }
+    })
+
+    // c) Explicitamente se #75147 está presente nas prescrições obtidas
+    const found75147 = dedupedPrescriptions.find(
+      (pr) => String(pr.prescription_number || pr.id) === '75147',
+    )
+    let p75147Dump = null
+    if (found75147) {
+      const pFields = {}
+      for (const k of Object.keys(found75147)) {
+        if (/patient|paciente|name|nome/i.test(k)) {
+          pFields[k] = found75147[k]
+        }
+      }
+      p75147Dump = {
+        id: found75147.id,
+        prescription_number: found75147.prescription_number,
+        patient_id: found75147.patient_id,
+        patientFields: pFields,
+        initial_dt: found75147.initial_dt,
+        final_dt: found75147.final_dt,
+        creation_dt: found75147.creation_dt,
+        itemsCount: (found75147.items || found75147.itens || []).length,
+        items: found75147.items || found75147.itens,
+      }
+    }
+
+    const diagSummary = {
+      pagesRead,
+      analyzedCount,
+      matchingCount: matchingOccurrences.length,
+      topKeys,
+      page1Sample,
+      has75147: Boolean(found75147),
+      p75147Dump,
+      occurrences: matchingOccurrences,
+    }
+
+    const auditCol = app.findCollectionByNameOrId('audit_logs')
+    const rec = new Record(auditCol)
+    rec.set('colecao', 'spincare_middleware')
+    rec.set('registro_id', 'm115_detail')
+    rec.set('acao', 'M115_DIAG_DUMP')
+    rec.set('usuario_nome', 'Migration 0115')
+    rec.set('status_novo', String(diagSummary.matchingCount))
+    rec.set('detalhes', JSON.stringify(diagSummary))
+    app.save(rec)
+
+    // Vamos testar buscar pelo período com datas mais amplas ou formatos diferentes:
+    // Por que nas 307 prescrições da query "initial_dt=2026-09-01 00:00:00&final_dt=2026-09-30 23:59:59" todas tinham initial_dt="2026-09-01 00:00:00"?
+    // Repare: na query com initial_dt e final_dt, o SpinCare filtrou initial_dt == 2026-09-01 00:00:00?
+    // Ou será que o SpinCare get/prescriptions initial_dt filtra por data de criação ou vigência?
+    // Vejamos os formatos aceitos por get/prescriptions:
+    let testQueries = []
+
+    // Por que #75147 não apareceu nas 307 prescrições da consulta por período?
+    // Vamos testar:
+    // Chamada por período: get/prescriptions?page_number=1&page_size=100&initial_dt=2026-09-01 00:00:00&final_dt=2026-09-30 23:59:59
+    // Nas 307 prescrições, quais eram as páginas e quais eram os IDs das prescrições?
+    // #75147 tem id=75147, prescription_number=75147, initial_dt="2026-09-01T04:00:00Z".
+    // No SQL do SpinCare, initial_dt >= '2026-09-01 00:00:00' AND final_dt <= '2026-09-30 23:59:59' ou initial_dt <= '...'?
+    // Repare: final_dt de #75147 é "2026-10-01T03:59:00Z"!
+    // 2026-10-01 > 2026-09-30!
+    // Se o SpinCare filtra final_dt <= paramFinalDt, como final_dt de #75147 é em 01 de OUTUBRO, ele FOI EXCLUÍDO pelo final_dt!
+    // Vamos testar essa hipótese:
+    const resWithoutFinalDt = $http.send({
+      url:
+        baseUrl +
+        '/integration-engine/get/prescriptions?page_number=1&page_size=100&initial_dt=2026-09-01%2000:00:00&patient_id=418&token=' +
+        encodeURIComponent(token),
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+      timeout: 20,
+    })
+    const dNoFin = resWithoutFinalDt.json || JSON.parse(resWithoutFinalDt.raw || '[]')
+    const itemsNoFin = Array.isArray(dNoFin) ? dNoFin : dNoFin.items || []
+    const has75147NoFin = itemsNoFin.some((p) => String(p.id || p.prescription_number) === '75147')
+
+    // Teste 2: Se colocarmos final_dt=2026-10-05 23:59:59?
+    const resWithOctFin = $http.send({
+      url:
+        baseUrl +
+        '/integration-engine/get/prescriptions?page_number=1&page_size=100&initial_dt=2026-09-01%2000:00:00&final_dt=2026-10-05%2023:59:59&patient_id=418&token=' +
+        encodeURIComponent(token),
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+      timeout: 20,
+    })
+    const dOctFin = resWithOctFin.json || JSON.parse(resWithOctFin.raw || '[]')
+    const itemsOctFin = Array.isArray(dOctFin) ? dOctFin : dOctFin.items || []
+    const has75147OctFin = itemsOctFin.some(
+      (p) => String(p.id || p.prescription_number) === '75147',
+    )
+
     throw new Error(
-      'TEST_EXACT_CORRECT: ' +
-        JSON.stringify({
-          pagesRead,
-          analyzedCount,
-          matchingCount: matchingOccurrences.length,
-          occurrences: matchingOccurrences,
-        }),
+      'TEST_HYPOTHESIS: noFin=' +
+        has75147NoFin +
+        '(' +
+        itemsNoFin.length +
+        ') octFin=' +
+        has75147OctFin +
+        '(' +
+        itemsOctFin.length +
+        ')',
     )
   },
   (app) => {},
