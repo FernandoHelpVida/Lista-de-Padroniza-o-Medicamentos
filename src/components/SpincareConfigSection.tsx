@@ -122,7 +122,8 @@ export function SpincareConfigSection() {
     } catch (err: unknown) {
       toast({
         title: 'Falha ao salvar',
-        description: getErrorMessage(err, 'Não foi possível salvar as configurações do SpinCare.'),
+        description:
+          getErrorMessage(err) || 'Não foi possível salvar as configurações do SpinCare.',
         variant: 'destructive',
       })
     } finally {
@@ -161,10 +162,9 @@ export function SpincareConfigSection() {
         })
       }
     } catch (err: unknown) {
-      const msg = getErrorMessage(
-        err,
-        'Não foi possível consultar o SpinCare agora. Verifique a URL ou o token.',
-      )
+      const msg =
+        getErrorMessage(err) ||
+        'Não foi possível consultar o SpinCare agora. Verifique a URL ou o token.'
       setTestResult({
         tested: true,
         success: false,

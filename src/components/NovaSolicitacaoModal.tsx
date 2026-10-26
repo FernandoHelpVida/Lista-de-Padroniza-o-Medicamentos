@@ -130,10 +130,7 @@ export function NovaSolicitacaoModal({
       console.error('Erro ao submeter solicitação:', err)
       toast({
         title: 'Erro ao cadastrar solicitação',
-        description: getErrorMessage(
-          err,
-          'Não foi possível registrar a solicitação. Tente novamente.',
-        ),
+        description: getErrorMessage(err),
         variant: 'destructive',
       })
     } finally {
