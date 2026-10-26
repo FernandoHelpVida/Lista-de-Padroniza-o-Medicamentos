@@ -16,72 +16,13 @@
 // ROTA 1: GET /backend/v1/spincare/config
 // ----------------------------------------------------------------------------
 
-// Endpoint direto para validação e testes
-// Endpoint direto para validação e testes
+// Endpoint direto para testes e auditoria interna do diagnóstico
 routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
   try {
     const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
     if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
     const cfg = records[0]
-    const baseUrl = (
-      cfg.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
-    )
-      .trim()
-      .replace(/\/+$/, '')
-    let token = (cfg.getString('api_token') || '').trim()
-    if (token.startsWith('Bearer ')) token = token.substring(7).trim()
-
-    // Testa busca global por período:
-    // O SpinCare aceita initial_dt=2026-09-01T00:00:00Z ou initial_dt=2026-09-01 00:00:00?
-    // E o que retorna get/prescriptions sem patient_id?
-    const q1 = $http.send({
-      url:
-        baseUrl +
-        '/integration-engine/get/prescriptions?initial_dt=2026-09-01T00%3A00%3A00Z&final_dt=2026-09-30T23%3A59%3A59Z&page_number=1&page_size=10&token=' +
-        encodeURIComponent(token),
-      method: 'GET',
-      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
-      timeout: 25,
-    })
-    const d1 = q1.json || JSON.parse(q1.raw || '[]')
-
-    // Testa também se aceita patient_name ou name na query string de get/prescriptions:
-    const q2 = $http.send({
-      url:
-        baseUrl +
-        '/integration-engine/get/prescriptions?patient_name=ADEMIR&page_number=1&page_size=10&token=' +
-        encodeURIComponent(token),
-      method: 'GET',
-      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
-      timeout: 25,
-    })
-    const d2 = q2.json || JSON.parse(q2.raw || '[]')
-
-    const q3 = $http.send({
-      url:
-        baseUrl +
-        '/integration-engine/get/prescriptions?name=ADEMIR&page_number=1&page_size=10&token=' +
-        encodeURIComponent(token),
-      method: 'GET',
-      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
-      timeout: 25,
-    })
-    const d3 = q3.json || JSON.parse(q3.raw || '[]')
-
-    return e.json(200, {
-      d1Count: (d1 && (d1.items || d1)).length,
-      d1SampleDates: ((d1 && (d1.items || d1)) || []).slice(0, 3).map((x) => ({
-        num: x.prescription_number,
-        pat: x.patient_name,
-        init: x.initial_dt,
-        final: x.final_dt,
-        created: x.creation_dt,
-      })),
-      d2FilteredByName: Boolean(d2 && (d2.items || d2).length > 0),
-      d2Sample: ((d2 && (d2.items || d2)) || []).slice(0, 2).map((x) => x.patient_name),
-      d3FilteredByName: Boolean(d3 && (d3.items || d3).length > 0),
-      d3Sample: ((d3 && (d3.items || d3)) || []).slice(0, 2).map((x) => x.patient_name),
-    })
+    return e.json(200, { ok: true, last_test_message: cfg.getString('last_test_message') })
   } catch (err) {
     return e.json(500, { error: String(err) })
   }
@@ -658,9 +599,20 @@ routerAdd(
         return ''
       }
 
-      // Parâmetros de data para envio à API SpinCare
-      const queryInitParam = (isoStart ? isoStart : '2026-01-01') + ' 00:00:00'
-      const queryFinalParam = (isoEnd ? isoEnd : '2026-12-31') + ' 23:59:59'
+      // Parâmetros de busca na API externa SpinCare:
+      // A API SpinCare filtra seu endpoint get/prescriptions pela DATA DE CRIAÇÃO (creation_dt).
+      // Porém, uma prescrição criada meses antes (ex: criada em 24/07/2026) pode ter vigência
+      // para o período pesquisado (ex: setembro/2026: 01/09/2026 a 30/09/2026).
+      // Por isso, para garantir que prescrições vigentes não sejam descartadas precocemente
+      // pela API externa, a busca no SpinCare deve cobrir desde o início do ano da consulta
+      // (2026-01-01) até a data final pesquisada (ou final do ano correspondente).
+      // Em seguida, o filtro rigoroso de interseção de vigência [initial_dt, final_dt] é aplicado.
+      let scanStartYear = '2026'
+      if (isoStart && isoStart.length >= 4) {
+        scanStartYear = isoStart.substring(0, 4)
+      }
+      const scanQueryInitParam = scanStartYear + '-01-01 00:00:00'
+      const scanQueryFinalParam = (isoEnd ? isoEnd : scanStartYear + '-12-31') + ' 23:59:59'
 
       let allRawPrescriptions = []
 
@@ -670,12 +622,12 @@ routerAdd(
           '[check-medication] Consulta direcionada ao patient_id selecionado:',
           explicitPatientId,
         )
-        for (let p = 1; p <= 15; p++) {
+        for (let p = 1; p <= 35; p++) {
           const resP = fetchPrescriptionsPage(
             p,
             100,
-            queryInitParam,
-            queryFinalParam,
+            scanQueryInitParam,
+            scanQueryFinalParam,
             explicitPatientId,
           )
           if (resP.error || !resP.items || resP.items.length === 0) break
@@ -683,15 +635,20 @@ routerAdd(
           if (resP.items.length < 100) break
         }
       } else {
-        // Varredura de prescrições no período informado (lotes de 100 até esgotar)
+        // Varredura ampla de prescrições no SpinCare para captura por vigência
         console.log(
-          '[check-medication] Varredura no período SpinCare:',
-          queryInitParam,
+          '[check-medication] Varredura ampla de prescrições para vigência:',
+          scanQueryInitParam,
           'até',
-          queryFinalParam,
+          scanQueryFinalParam,
+          '(período pesquisado pelo usuário:',
+          isoStart,
+          'a',
+          isoEnd,
+          ')',
         )
         for (let p = 1; p <= 35; p++) {
-          const resP = fetchPrescriptionsPage(p, 100, queryInitParam, queryFinalParam, '')
+          const resP = fetchPrescriptionsPage(p, 100, scanQueryInitParam, scanQueryFinalParam, '')
           if (resP.error || !resP.items || resP.items.length === 0) break
           allRawPrescriptions = allRawPrescriptions.concat(resP.items)
           if (resP.items.length < 100) break
@@ -738,6 +695,23 @@ routerAdd(
         if (patWords.length > 0) {
           const matchesAllTokens = patWords.every((w) => normPnome.includes(w))
           if (!matchesAllTokens) continue
+        }
+
+        // Verifica VIGÊNCIA da prescrição para admissão do paciente candidato no período
+        if (hasPeriodFilter) {
+          const dtInitIso = toIsoYmd(raw.initial_dt)
+          const dtFinalIso = toIsoYmd(raw.final_dt)
+          let inPeriod = false
+          if (dtInitIso && dtFinalIso) {
+            if (dtInitIso <= isoEnd && dtFinalIso >= isoStart) {
+              inPeriod = true
+            }
+          } else if (dtInitIso) {
+            if (dtInitIso <= isoEnd) inPeriod = true
+          } else if (dtFinalIso) {
+            if (dtFinalIso >= isoStart) inPeriod = true
+          }
+          if (!inPeriod) continue
         }
 
         // Verifica itens da prescrição para o medicamento buscado
@@ -891,13 +865,13 @@ routerAdd(
 
         if (!patientMatches) continue
 
-        // Filtro de período
+        // Filtro de período por VIGÊNCIA da prescrição:
+        // O período pesquisado [isoStart, isoEnd] DEVE casar com o INTERVALO DE VIGÊNCIA da prescrição
+        // [initial_dt, final_dt] (interseção entre [início, validade] da prescrição e [data inicial, data final] pesquisada),
+        // NUNCA pela data de criação.
         let periodMatches = true
-        const dtCreationIso = toIsoYmd(raw.creation_dt || raw.dt_criacao || raw.created_at)
-        const dtPrescOnlyIso = toIsoYmd(raw.prescription_date || raw.dt_prescricao)
         const dtInitIso = toIsoYmd(raw.initial_dt)
         const dtFinalIso = toIsoYmd(raw.final_dt)
-        const dtPrescIso = dtPrescOnlyIso || dtCreationIso
 
         if (hasPeriodFilter) {
           let inPeriod = false
@@ -907,15 +881,11 @@ routerAdd(
               inPeriod = true
             }
           } else if (dtInitIso) {
+            // Se possui apenas data inicial de vigência
             if (dtInitIso <= isoEnd) inPeriod = true
           } else if (dtFinalIso) {
+            // Se possui apenas validade final
             if (dtFinalIso >= isoStart) inPeriod = true
-          }
-
-          if (!inPeriod && dtPrescIso) {
-            if (dtPrescIso >= isoStart && dtPrescIso <= isoEnd) {
-              inPeriod = true
-            }
           }
 
           periodMatches = inPeriod
@@ -1007,7 +977,12 @@ routerAdd(
           raw.prescription_number || raw.numero || raw.attendance_id || prescId,
         )
         const prescMed = String(
-          raw.professional_name || raw.nm_profissional || raw.prescritor || 'Médico Prescritor',
+          raw.professional_name ||
+            raw.nm_profissional ||
+            raw.prescritor ||
+            raw.professional ||
+            raw.creation_user_name ||
+            'Médico Prescritor',
         ).trim()
 
         const formatDtBr = (s) => {
@@ -1019,7 +994,6 @@ routerAdd(
           }
           return String(s).trim()
         }
-
         const dataPrescFormatada = formatDtBr(
           raw.prescription_date ||
             raw.creation_dt ||
@@ -1067,6 +1041,7 @@ routerAdd(
               it.f_p ||
               it.source ||
               it.tipo_fornecimento ||
+              it.tp_fornecimento ||
               '',
           ).trim()
           const fp =
@@ -1074,7 +1049,7 @@ routerAdd(
               ? 'Empresa'
               : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
                 ? 'Operadora'
-                : rawFp
+                : rawFp || 'Empresa'
 
           const itemId = String(it.id || it.item_id || it.itemId || it.recordId || desc)
 
