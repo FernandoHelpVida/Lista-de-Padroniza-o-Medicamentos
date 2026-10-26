@@ -23,42 +23,14 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
     if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
     const cfg = records[0]
 
-    const baseUrl = (
-      cfg.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
-    )
-      .trim()
-      .replace(/\/+$/, '')
-    let token = (cfg.getString('api_token') || '').trim()
-    if (token.startsWith('Bearer ')) token = token.substring(7).trim()
-
-    // Se passar ?audit_probe=true, grava no audit_logs o resultado da consulta do caso exato
-    const auditProbe = e.requestInfo().query.audit_probe === 'true'
-    if (auditProbe) {
-      // Faz varredura e aplica a regra
-      // Varredura de prescrições
-      // Na rota de teste, vamos ver onde estão #62912, #63679, #64020 e #75147
-      // As 3 primeiras vieram na busca real do usuário!
-      // Vamos verificar os dados de vigência delas:
-      // #62912: initial_dt = 2026-01-01
-      // #63679: initial_dt = 2026-01-01
-      // #64020: initial_dt = 2026-01-01
-      // Com a regra antiga (interseção): 2026-01-01 <= 2026-09-30 && 2026-10-26 >= 2026-09-01 -> TRUE! Por isso vinham as 3!
-      // Com a nova regra: initial_dt >= 2026-09-01 && initial_dt <= 2026-09-30:
-      // 2026-01-01 >= 2026-09-01 -> FALSE! As 3 são DESCARTADAS!
-      // E a #75147: initial_dt = "2026-09-01T04:00:00Z" -> toIsoYmd("2026-09-01T04:00:00Z") = "2026-09-01"!
-      // 2026-09-01 >= 2026-09-01 && 2026-09-01 <= 2026-09-30 -> TRUE! #75147 É INCLUÍDA!
-    }
-
     return e.json(200, {
       ok: true,
       last_test_message: cfg.getString('last_test_message'),
-      has_token: Boolean(token),
     })
   } catch (err) {
     return e.json(500, { error: String(err) })
   }
 })
-
 routerAdd(
   'GET',
   '/backend/v1/spincare/config',
