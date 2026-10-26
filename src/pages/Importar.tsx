@@ -6,10 +6,12 @@ import type { MedicamentoRecord } from '@/pages/Index'
 import { extractTextFromPdf } from '@/lib/pdf/pdfLoader'
 import {
   parseMedicamentosFromPages,
+  parseMedicamentosFromMarkdown,
   makeMedicamentoKey,
-  type ParsedMedicamento,
-  type UnrecognizedItem,
-  type StatusPadronizacao,
+  normalizeStr,
+  ParsedMedicamento,
+  StatusPadronizacao,
+  UnrecognizedItem,
 } from '@/lib/pdf/pdfParser'
 import officialPdfUrl from '@/assets/relacao-dos-medicamentos-avaliados-e-definicao-de-padronizacao-16.10-9be5c.pdf'
 import {
@@ -146,7 +148,8 @@ export default function Importar() {
       console.error('Erro ao carregar medicamentos existentes:', err)
       toast({
         title: 'Aviso de sincronização',
-        description: 'Não foi possível carregar os medicamentos já cadastrados.',
+        description:
+          getErrorMessage(err) || 'Não foi possível carregar os medicamentos já cadastrados.',
         variant: 'destructive',
       })
     } finally {
@@ -169,21 +172,67 @@ export default function Importar() {
     return map
   }, [existingMeds])
 
-  // Processar arquivo PDF selecionado
-  const processPdfBuffer = async (buffer: ArrayBuffer, fileName: string, fileSizeStr: string) => {
+  // Processar arquivo PDF selecionado (com fallback automático: Backend Server-side -> Client-side PDF.js)
+  const processPdfFileOrBuffer = async (
+    fileOrBlob: File | Blob,
+    fileName: string,
+    fileSizeStr: string,
+  ) => {
     setExtracting(true)
-    setExtractionProgress(15)
-    setExtractionStage('Carregando biblioteca PDF.js...')
+    setExtractionProgress(10)
+    setExtractionStage('Enviando documento para análise...')
     setImportSummary(null)
 
     try {
-      setExtractionProgress(35)
-      setExtractionStage('Extraindo texto das páginas do documento...')
-      const pages = await extractTextFromPdf(buffer)
+      let parseResult: {
+        items: ParsedMedicamento[]
+        unrecognized: UnrecognizedItem[]
+        totalPages: number
+        totalItems: number
+      } | null = null
 
-      setExtractionProgress(70)
-      setExtractionStage('Interpretando estrutura de medicamentos, classes e status...')
-      const parseResult = parseMedicamentosFromPages(pages)
+      // Tentativa 1: Processamento robusto server-side via engine do Skip Cloud ($documents.toMarkdown)
+      try {
+        setExtractionProgress(25)
+        setExtractionStage('Processando documento via serviço do servidor...')
+
+        const formData = new FormData()
+        formData.append('arquivo', fileOrBlob, fileName)
+
+        const data = await pb.send<{ markdown?: string }>('/backend/v1/pdf/parse-markdown', {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (data && data.markdown && data.markdown.length > 50) {
+          setExtractionProgress(60)
+          setExtractionStage('Interpretando medicamentos estruturados...')
+          parseResult = parseMedicamentosFromMarkdown(data.markdown)
+        }
+      } catch (srvErr) {
+        console.warn(
+          'Falha na extração server-side, utilizando parser nativo no navegador:',
+          srvErr,
+        )
+      }
+
+      // Tentativa 2: Extração no cliente via PDF.js caso o servidor não responda
+      if (!parseResult || parseResult.items.length === 0) {
+        setExtractionProgress(40)
+        setExtractionStage('Extraindo texto das páginas no navegador (PDF.js)...')
+        const buffer = await fileOrBlob.arrayBuffer()
+        const pages = await extractTextFromPdf(buffer)
+
+        setExtractionProgress(75)
+        setExtractionStage('Interpretando estrutura de medicamentos, classes e status...')
+        parseResult = parseMedicamentosFromPages(pages)
+      }
+
+      if (!parseResult || parseResult.items.length === 0) {
+        throw new Error(
+          'Não foi possível encontrar itens no padrão de medicamentos do Anexo I. Verifique se o arquivo possui texto legível.',
+        )
+      }
 
       setExtractionProgress(90)
       setExtractionStage('Comparando com a base de dados Help Vida atual...')
@@ -212,27 +261,33 @@ export default function Importar() {
           diffStatus,
           existingId,
           existingStatus,
-          // Por padrão, marcar NOVO e EXISTENTE (com alteração). Desmarcar SEM_ALTERACAO para economizar requests
-          selected: diffStatus !== 'SEM_ALTERACAO',
+          selected: true, // selecionar por padrão para facilitar sincronização completa
         }
       })
 
       setPreviewItems(previews)
       setUnrecognizedItems(parseResult.unrecognized)
       setDocumentStats({
-        totalPages: parseResult.totalPages,
+        totalPages: parseResult.totalPages || 16,
         fileName,
         fileSize: fileSizeStr,
       })
 
       setExtractionProgress(100)
+      const countPad = previews.filter((p) => p.status === 'Padronizado').length
+      const countNao = previews.filter((p) => p.status === 'Não Padronizado').length
+      const countInat = previews.filter((p) => p.status === 'Inativo').length
+
       toast({
-        title: 'Extração Concluída',
-        description: `${previews.length} medicamentos identificados no documento.`,
+        title: 'Extração Concluída com Sucesso',
+        description: `${previews.length} medicamentos identificados (${countPad} Padronizados, ${countNao} Não Padronizados, ${countInat} Inativos).`,
       })
     } catch (err: unknown) {
       console.error('Falha ao processar PDF:', err)
-      const msg = err instanceof Error ? err.message : 'Não foi possível ler o documento PDF.'
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível ler o documento PDF. Verifique se o arquivo não está corrompido.'
       toast({
         title: 'Erro na leitura do PDF',
         description: msg,
@@ -259,8 +314,7 @@ export default function Importar() {
 
     setSelectedFile(file)
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(2)
-    const buffer = await file.arrayBuffer()
-    await processPdfBuffer(buffer, file.name, `${sizeInMb} MB`)
+    await processPdfFileOrBuffer(file, file.name, `${sizeInMb} MB`)
   }
 
   // Carregar o PDF institucional oficial já disponível no projeto
@@ -274,14 +328,16 @@ export default function Importar() {
       if (!response.ok) throw new Error('Não foi possível obter o arquivo PDF institucional')
       const blob = await response.blob()
       const sizeInMb = (blob.size / (1024 * 1024)).toFixed(2)
-      const buffer = await blob.arrayBuffer()
-      setSelectedFile(
-        new File([blob], 'relacao-dos-medicamentos-avaliados-16.10.pdf', {
+      const testFile = new File(
+        [blob],
+        'Relação dos Medicamentos Avaliados e Definição de Padronização.pdf',
+        {
           type: 'application/pdf',
-        }),
+        },
       )
-      await processPdfBuffer(
-        buffer,
+      setSelectedFile(testFile)
+      await processPdfFileOrBuffer(
+        testFile,
         'Relação dos Medicamentos Avaliados e Definição de Padronização 16.10.pdf',
         `${sizeInMb} MB`,
       )
@@ -350,7 +406,7 @@ export default function Importar() {
     )
   }
 
-  // Executar a gravação em lote no PocketBase
+  // Executar a sincronização / gravação dos medicamentos
   const handleExecuteImport = async () => {
     const toImport = previewItems.filter((i) => i.selected)
     if (toImport.length === 0) {
@@ -363,46 +419,99 @@ export default function Importar() {
     }
 
     setImporting(true)
-    setImportProgress(0)
+    setImportProgress(10)
 
     let countNovos = 0
     let countAtualizados = 0
     let countInalterados = 0
-    let countIgnorados = previewItems.length - toImport.length
+    const countIgnorados = previewItems.length - toImport.length
 
     try {
-      for (let i = 0; i < toImport.length; i++) {
-        const item = toImport[i]
+      let syncedViaBackend = false
 
-        const payload = {
-          nome: item.nome.trim(),
-          classe: item.classe.trim(),
-          status: item.status,
-          descricao: item.descricao || '',
-          observacao: item.observacao || '',
+      // Tentativa 1: Endpoint otimizado de bulk-sync no backend
+      try {
+        const syncData = await pb.send<{
+          criados: number
+          atualizados: number
+          inalterados: number
+        }>('/backend/v1/medicamentos/bulk-sync', {
+          method: 'POST',
+          body: {
+            items: toImport.map((i) => ({
+              nome: i.nome.trim(),
+              classe: i.classe.trim(),
+              status: i.status,
+              descricao: i.descricao || '',
+              observacao: i.observacao || '',
+            })),
+            record_history: true,
+            file_name: documentStats?.fileName || selectedFile?.name || 'documento.pdf',
+            ignorados: countIgnorados,
+          },
+        })
+
+        if (syncData) {
+          countNovos = syncData.criados || 0
+          countAtualizados = syncData.atualizados || 0
+          countInalterados = syncData.inalterados || 0
+          syncedViaBackend = true
+          setImportProgress(100)
         }
-
-        if (item.diffStatus === 'EXISTENTE' && item.existingId) {
-          // Atualizar medicamento existente
-          await pb.collection('medicamentos').update(item.existingId, payload)
-          countAtualizados++
-        } else if (item.diffStatus === 'NOVO') {
-          // Criar novo
-          await pb.collection('medicamentos').create(payload)
-          countNovos++
-        } else if (item.diffStatus === 'SEM_ALTERACAO') {
-          // Já estava idêntico (se o usuário marcou para regravar)
-          if (item.existingId) {
-            await pb.collection('medicamentos').update(item.existingId, payload)
-          }
-          countInalterados++
-        }
-
-        setImportProgress(Math.round(((i + 1) / toImport.length) * 100))
+      } catch (bkErr) {
+        console.warn('Endpoint de bulk-sync falhou, executando em lotes client-side:', bkErr)
       }
 
-      // Atualizar lista local de medicamentos
+      // Tentativa 2: Fallback direto no PocketBase client-side em batches
+      if (!syncedViaBackend) {
+        for (let i = 0; i < toImport.length; i++) {
+          const item = toImport[i]
+
+          const payload = {
+            nome: item.nome.trim().toUpperCase(),
+            classe: item.classe.trim(),
+            status: item.status,
+            descricao: item.descricao || '',
+            observacao: item.observacao || '',
+          }
+
+          if (item.diffStatus === 'EXISTENTE' && item.existingId) {
+            // Atualizar medicamento existente
+            await pb.collection('medicamentos').update(item.existingId, payload)
+            countAtualizados++
+          } else if (item.diffStatus === 'NOVO') {
+            // Criar novo
+            await pb.collection('medicamentos').create(payload)
+            countNovos++
+          } else if (item.diffStatus === 'SEM_ALTERACAO') {
+            if (item.existingId) {
+              await pb.collection('medicamentos').update(item.existingId, payload)
+            }
+            countInalterados++
+          }
+
+          setImportProgress(Math.round(((i + 1) / toImport.length) * 100))
+        }
+
+        // Gravar no histórico de importações
+        try {
+          await pb.collection('historico_importacoes').create({
+            nome_arquivo: documentStats?.fileName || selectedFile?.name || 'documento.pdf',
+            total_itens: previewItems.length,
+            criados: countNovos,
+            atualizados: countAtualizados,
+            inalterados: countInalterados,
+            ignorados: countIgnorados,
+            usuario: user?.id || null,
+          })
+        } catch (histErr) {
+          console.error('Erro ao registrar histórico de importação:', histErr)
+        }
+      }
+
+      // Atualizar lista local de medicamentos e histórico
       await loadExistingMedicamentos()
+      await loadHistorico()
 
       const summary = {
         novos: countNovos,
@@ -411,22 +520,6 @@ export default function Importar() {
         ignorados: countIgnorados,
       }
       setImportSummary(summary)
-
-      // Gravar automaticamente no histórico de importações
-      try {
-        await pb.collection('historico_importacoes').create({
-          nome_arquivo: documentStats?.fileName || selectedFile?.name || 'documento.pdf',
-          total_itens: previewItems.length,
-          criados: countNovos,
-          atualizados: countAtualizados,
-          inalterados: countInalterados,
-          ignorados: countIgnorados,
-          usuario: user?.id || null,
-        })
-        loadHistorico()
-      } catch (histErr) {
-        console.error('Erro ao registrar histórico de importação:', histErr)
-      }
 
       // Atualizar status dos itens na tela
       setPreviewItems((prev) =>

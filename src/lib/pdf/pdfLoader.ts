@@ -45,46 +45,62 @@ export function loadPdfJs(): Promise<typeof window.pdfjsLib> {
   }
 
   pdfjsLoadingPromise = new Promise((resolve, reject) => {
-    // Tentar carregar de CDNs confiáveis (cdnjs com fallback unpkg)
-    const cdnUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
-    const workerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-    const fallbackCdnUrl = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js'
-    const fallbackWorkerUrl = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+    // Lista de CDNs em cascata com versão estável e compatível
+    const cdnSources = [
+      {
+        lib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+        worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+      },
+      {
+        lib: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+        worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+      },
+      {
+        lib: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
+        worker: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+      },
+      {
+        lib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js',
+        worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js',
+      },
+    ]
 
-    const script = document.createElement('script')
-    script.src = cdnUrl
-    script.async = true
+    let currentIndex = 0
 
-    script.onload = () => {
-      if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
-        resolve(window.pdfjsLib)
-      } else {
-        reject(new Error('PDF.js carregado mas global pdfjsLib não encontrado.'))
+    const tryNextCdn = () => {
+      if (currentIndex >= cdnSources.length) {
+        reject(
+          new Error(
+            'Não foi possível inicializar o módulo de PDF no navegador. Verifique a conexão com a internet ou utilize a extração via servidor.',
+          ),
+        )
+        return
       }
-    }
 
-    script.onerror = () => {
-      // Fallback
-      console.warn('Falha ao carregar PDF.js de cdnjs, tentando unpkg...')
-      const fallbackScript = document.createElement('script')
-      fallbackScript.src = fallbackCdnUrl
-      fallbackScript.async = true
-      fallbackScript.onload = () => {
+      const source = cdnSources[currentIndex]
+      currentIndex++
+
+      const script = document.createElement('script')
+      script.src = source.lib
+      script.async = true
+
+      script.onload = () => {
         if (window.pdfjsLib) {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = fallbackWorkerUrl
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = source.worker
           resolve(window.pdfjsLib)
         } else {
-          reject(new Error('PDF.js unpkg carregado mas global pdfjsLib não encontrado.'))
+          tryNextCdn()
         }
       }
-      fallbackScript.onerror = () => {
-        reject(new Error('Não foi possível carregar a biblioteca PDF.js de nenhum CDN.'))
+
+      script.onerror = () => {
+        tryNextCdn()
       }
-      document.head.appendChild(fallbackScript)
+
+      document.head.appendChild(script)
     }
 
-    document.head.appendChild(script)
+    tryNextCdn()
   })
 
   return pdfjsLoadingPromise
