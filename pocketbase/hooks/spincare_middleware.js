@@ -22,10 +22,72 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
     const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
     if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
     const cfg = records[0]
+    const baseUrl = (
+      cfg.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    let token = (cfg.getString('api_token') || '').trim()
+    if (token.startsWith('Bearer ')) token = token.substring(7).trim()
+
+    // Run exact diagnostic for September 2026:
+    // Call 1: with final_dt='2026-09-30 23:59:59'
+    // Call 2: without final_dt
+    // Search for 75147 in both:
+    const norm = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+
+    let batch = []
+    for (let p = 1; p <= 5; p++) {
+      const url =
+        baseUrl +
+        '/integration-engine/get/prescriptions?page_number=' +
+        p +
+        '&page_size=100&initial_dt=' +
+        encodeURIComponent('2026-09-01 00:00:00') +
+        '&final_dt=' +
+        encodeURIComponent('2026-09-30 23:59:59') +
+        '&token=' +
+        encodeURIComponent(token)
+      const r = $http.send({
+        url,
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+        timeout: 25,
+      })
+      if (r.statusCode !== 200) break
+      const d = r.json || JSON.parse(r.raw || '[]')
+      const items = Array.isArray(d) ? d : (d && d.items) || []
+      batch = batch.concat(items)
+      if (items.length < 100) break
+    }
+
+    const ademirInBatch = batch.filter((x) => {
+      const pn = norm(x.patient_name || x.nm_paciente || (x.patient && x.patient.name) || '')
+      return pn.includes('ademir')
+    })
+
+    const p75147InBatch = batch.find((x) => String(x.prescription_number || x.id) === '75147')
 
     return e.json(200, {
       ok: true,
-      last_test_message: cfg.getString('last_test_message'),
+      totalBatch: batch.length,
+      has75147: Boolean(p75147InBatch),
+      p75147: p75147InBatch || null,
+      ademirCount: ademirInBatch.length,
+      ademirPrescriptions: ademirInBatch.map((a) => ({
+        id: a.id,
+        prescription_number: a.prescription_number,
+        patient_name: a.patient_name || a.nm_paciente,
+        professional_name: a.professional_name || a.nm_profissional,
+        initial_dt: a.initial_dt,
+        final_dt: a.final_dt,
+        items: a.items || a.itens || [],
+      })),
     })
   } catch (err) {
     return e.json(500, { error: String(err) })
