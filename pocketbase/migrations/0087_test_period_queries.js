@@ -17,7 +17,7 @@ migrate(
       // T1: get/prescriptions?initial_dt=2026-09-01 00:00:00&final_dt=2026-09-30 23:59:59 (período do usuário!)
       // T2: get/prescriptions?initial_dt=2026-07-01 00:00:00&final_dt=2026-07-31 23:59:59
       // Quantas páginas têm em cada um? 75147 aparece em qual?
-      
+
       const scanPeriod = (initDt, finDt, maxP) => {
         let found = false
         let fPage = -1
@@ -26,10 +26,14 @@ migrate(
           const res = $http.send({
             url:
               baseUrl +
-              '/integration-engine/get/prescriptions?initial_dt=' + encodeURIComponent(initDt) +
-              '&final_dt=' + encodeURIComponent(finDt) +
-              '&page_number=' + p +
-              '&page_size=100&token=' + encodeURIComponent(token),
+              '/integration-engine/get/prescriptions?initial_dt=' +
+              encodeURIComponent(initDt) +
+              '&final_dt=' +
+              encodeURIComponent(finDt) +
+              '&page_number=' +
+              p +
+              '&page_size=100&token=' +
+              encodeURIComponent(token),
             method: 'GET',
             headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
             timeout: 25,
@@ -53,7 +57,10 @@ migrate(
       // T2: O mês de criação da 75147: 2026-07-01 a 2026-07-31
       const t2 = scanPeriod('2026-07-01 00:00:00', '2026-07-31 23:59:59', 15)
 
-      cfg.set('last_test_message', 'M87_PERIODS: T1(sept)=' + JSON.stringify(t1) + ' | T2(july)=' + JSON.stringify(t2))
+      cfg.set(
+        'last_test_message',
+        'M87_PERIODS: T1(sept)=' + JSON.stringify(t1) + ' | T2(july)=' + JSON.stringify(t2),
+      )
       app.save(cfg)
     } catch (err) {
       console.error(err)

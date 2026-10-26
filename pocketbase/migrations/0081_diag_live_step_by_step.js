@@ -62,7 +62,8 @@ migrate(
       const resPat = $http.send({
         url:
           baseUrl +
-          '/integration-engine/get/patients?search=' + encodeURIComponent('Ademir Rostirolla') +
+          '/integration-engine/get/patients?search=' +
+          encodeURIComponent('Ademir Rostirolla') +
           '&page_number=1&page_size=10&token=' +
           encodeURIComponent(token),
         method: 'GET',
@@ -76,24 +77,31 @@ migrate(
         p75147_found_in_418: Boolean(p75147),
         p75147_keys: p75147 ? Object.keys(p75147) : [],
         p75147_patient_id: p75147 ? p75147.patient_id : null,
-        p75147_patient_name: p75147 ? (p75147.patient_name || p75147.nm_paciente) : null,
+        p75147_patient_name: p75147 ? p75147.patient_name || p75147.nm_paciente : null,
         p75147_initial_dt: p75147 ? p75147.initial_dt : null,
         p75147_final_dt: p75147 ? p75147.final_dt : null,
         p75147_creation_dt: p75147 ? p75147.creation_dt : null,
         p75147_prescription_date: p75147 ? p75147.prescription_date : null,
-        p75147_professional_name: p75147 ? (p75147.professional_name || p75147.nm_profissional) : null,
+        p75147_professional_name: p75147
+          ? p75147.professional_name || p75147.nm_profissional
+          : null,
         p75147_items_count: p75147 && p75147.items ? p75147.items.length : 0,
-        p75147_first_item: p75147 && p75147.items && p75147.items[0] ? {
-          description: p75147.items[0].description,
-          dose_qt: p75147.items[0].dose_qt,
-          admin_route: p75147.items[0].admin_route,
-          supplied_type: p75147.items[0].supplied_type,
-        } : null,
+        p75147_first_item:
+          p75147 && p75147.items && p75147.items[0]
+            ? {
+                description: p75147.items[0].description,
+                dose_qt: p75147.items[0].dose_qt,
+                admin_route: p75147.items[0].admin_route,
+                supplied_type: p75147.items[0].supplied_type,
+              }
+            : null,
         wideScan_found: foundInWideScan,
         wideScan_page: wideScanPage,
         wideScan_total: wideScanTotal,
         patients_search_count: patItems.length,
-        patients_search_first: patItems[0] ? { id: patItems[0].id, name: patItems[0].name || patItems[0].nome } : null,
+        patients_search_first: patItems[0]
+          ? { id: patItems[0].id, name: patItems[0].name || patItems[0].nome }
+          : null,
       }
 
       cfg.set('last_test_message', 'M81_DIAG: ' + JSON.stringify(diagOutput))

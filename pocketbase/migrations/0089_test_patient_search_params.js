@@ -23,14 +23,19 @@ migrate(
 
       const testPatParam = (paramStr) => {
         const res = $http.send({
-          url: baseUrl + '/integration-engine/get/patients?token=' + encodeURIComponent(token) + '&page_number=1&page_size=5&' + paramStr,
+          url:
+            baseUrl +
+            '/integration-engine/get/patients?token=' +
+            encodeURIComponent(token) +
+            '&page_number=1&page_size=5&' +
+            paramStr,
           method: 'GET',
           headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
           timeout: 15,
         })
         const d = res.json || JSON.parse(res.raw || '[]')
         const items = Array.isArray(d) ? d : d && d.items ? d.items : []
-        return items.map(p => ({ id: p.id, name: p.name || p.nome }))
+        return items.map((p) => ({ id: p.id, name: p.name || p.nome }))
       }
 
       const p_name = testPatParam('name=' + encodeURIComponent('Ademir'))
@@ -39,7 +44,17 @@ migrate(
       const p_filter = testPatParam('filter=' + encodeURIComponent('Rostirolla'))
       const p_q = testPatParam('q=' + encodeURIComponent('Rostirolla'))
 
-      cfg.set('last_test_message', 'M89_PAT_PARAMS: name=' + JSON.stringify(p_name) + ' | name_full=' + JSON.stringify(p_name_full) + ' | search_rost=' + JSON.stringify(p_search) + ' | q_rost=' + JSON.stringify(p_q))
+      cfg.set(
+        'last_test_message',
+        'M89_PAT_PARAMS: name=' +
+          JSON.stringify(p_name) +
+          ' | name_full=' +
+          JSON.stringify(p_name_full) +
+          ' | search_rost=' +
+          JSON.stringify(p_search) +
+          ' | q_rost=' +
+          JSON.stringify(p_q),
+      )
       app.save(cfg)
     } catch (err) {
       console.error(err)

@@ -35,11 +35,27 @@ migrate(
 
       const info = {
         p1_len: p1.length,
-        p1_first: p1[0] ? { id: p1[0].id, creation_dt: p1[0].creation_dt, initial_dt: p1[0].initial_dt } : null,
-        p1_last: p1[p1.length - 1] ? { id: p1[p1.length - 1].id, creation_dt: p1[p1.length - 1].creation_dt, initial_dt: p1[p1.length - 1].initial_dt } : null,
+        p1_first: p1[0]
+          ? { id: p1[0].id, creation_dt: p1[0].creation_dt, initial_dt: p1[0].initial_dt }
+          : null,
+        p1_last: p1[p1.length - 1]
+          ? {
+              id: p1[p1.length - 1].id,
+              creation_dt: p1[p1.length - 1].creation_dt,
+              initial_dt: p1[p1.length - 1].initial_dt,
+            }
+          : null,
         p35_len: p35.length,
-        p35_first: p35[0] ? { id: p35[0].id, creation_dt: p35[0].creation_dt, initial_dt: p35[0].initial_dt } : null,
-        p35_last: p35[p35.length - 1] ? { id: p35[p35.length - 1].id, creation_dt: p35[p35.length - 1].creation_dt, initial_dt: p35[p35.length - 1].initial_dt } : null,
+        p35_first: p35[0]
+          ? { id: p35[0].id, creation_dt: p35[0].creation_dt, initial_dt: p35[0].initial_dt }
+          : null,
+        p35_last: p35[p35.length - 1]
+          ? {
+              id: p35[p35.length - 1].id,
+              creation_dt: p35[p35.length - 1].creation_dt,
+              initial_dt: p35[p35.length - 1].initial_dt,
+            }
+          : null,
       }
 
       cfg.set('last_test_message', 'M85_PAGES: ' + JSON.stringify(info))

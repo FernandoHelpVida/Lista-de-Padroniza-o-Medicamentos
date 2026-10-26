@@ -25,7 +25,12 @@ migrate(
 
       const testPresc = (paramStr) => {
         const res = $http.send({
-          url: baseUrl + '/integration-engine/get/prescriptions?token=' + encodeURIComponent(token) + '&page_number=1&page_size=5&' + paramStr,
+          url:
+            baseUrl +
+            '/integration-engine/get/prescriptions?token=' +
+            encodeURIComponent(token) +
+            '&page_number=1&page_size=5&' +
+            paramStr,
           method: 'GET',
           headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
           timeout: 15,
@@ -33,7 +38,13 @@ migrate(
         const d = res.json || JSON.parse(res.raw || '[]')
         const items = Array.isArray(d) ? d : d && d.items ? d.items : []
         const match = items.find((x) => String(x.prescription_number || x.id) === '75147')
-        return { total: items.length, has75147: Boolean(match), sample: items[0] ? { id: items[0].id, num: items[0].prescription_number, pat: items[0].patient_name } : null }
+        return {
+          total: items.length,
+          has75147: Boolean(match),
+          sample: items[0]
+            ? { id: items[0].id, num: items[0].prescription_number, pat: items[0].patient_name }
+            : null,
+        }
       }
 
       const t_num = testPresc('prescription_number=75147')
@@ -42,7 +53,19 @@ migrate(
       const t_search_name = testPresc('search=' + encodeURIComponent('Ademir'))
       const t_pat_name = testPresc('patient_name=' + encodeURIComponent('Ademir'))
 
-      cfg.set('last_test_message', 'M90: num=' + JSON.stringify(t_num) + ' | id=' + JSON.stringify(t_id) + ' | s_75147=' + JSON.stringify(t_search) + ' | s_name=' + JSON.stringify(t_search_name) + ' | pat_name=' + JSON.stringify(t_pat_name))
+      cfg.set(
+        'last_test_message',
+        'M90: num=' +
+          JSON.stringify(t_num) +
+          ' | id=' +
+          JSON.stringify(t_id) +
+          ' | s_75147=' +
+          JSON.stringify(t_search) +
+          ' | s_name=' +
+          JSON.stringify(t_search_name) +
+          ' | pat_name=' +
+          JSON.stringify(t_pat_name),
+      )
       app.save(cfg)
     } catch (err) {
       console.error(err)
