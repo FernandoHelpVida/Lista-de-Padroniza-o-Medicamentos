@@ -343,7 +343,7 @@ export default function Medicamentos() {
       console.error('Erro ao salvar medicamento:', err)
       toast({
         title: 'Erro ao salvar medicamento',
-        description: getErrorMessage(err, 'Falha ao salvar medicamento na base de dados.'),
+        description: getErrorMessage(err) || 'Falha ao salvar medicamento na base de dados.',
         variant: 'destructive',
       })
     } finally {
@@ -369,7 +369,7 @@ export default function Medicamentos() {
       console.error('Erro ao excluir medicamento:', err)
       toast({
         title: 'Erro ao excluir medicamento',
-        description: getErrorMessage(err, 'Não foi possível excluir o medicamento selecionado.'),
+        description: getErrorMessage(err) || 'Não foi possível excluir o medicamento selecionado.',
         variant: 'destructive',
       })
     } finally {

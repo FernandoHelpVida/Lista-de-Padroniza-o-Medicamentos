@@ -125,10 +125,8 @@ export default function Cadastro() {
         })
       }, 3500)
     } catch (err: unknown) {
-      const friendlyMsg = getErrorMessage(
-        err,
-        'Falha ao realizar cadastro. Verifique se o e-mail já existe.',
-      )
+      const friendlyMsg =
+        getErrorMessage(err) || 'Falha ao realizar cadastro. Verifique se o e-mail já existe.'
       setError(friendlyMsg)
     } finally {
       setLoading(false)

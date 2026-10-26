@@ -265,10 +265,8 @@ export default function Equipe() {
         setModalRevisarUser(null)
         await loadMembros()
       } catch (errFallback: unknown) {
-        const friendly = getErrorMessage(
-          errFallback,
-          'Falha ao atualizar status de aprovação do usuário.',
-        )
+        const friendly =
+          getErrorMessage(errFallback) || 'Falha ao atualizar status de aprovação do usuário.'
         setApprovalRoleError(friendly)
         toast({
           title: 'Erro ao avaliar',
@@ -426,10 +424,9 @@ export default function Equipe() {
       }
     } catch (err: unknown) {
       console.error('Erro ao cadastrar colega:', err)
-      const friendlyMsg = getErrorMessage(
-        err,
-        'Não foi possível concluir o cadastro. Verifique se o e-mail já existe ou se a senha atende aos requisitos.',
-      )
+      const friendlyMsg =
+        getErrorMessage(err) ||
+        'Não foi possível concluir o cadastro. Verifique se o e-mail já existe ou se a senha atende aos requisitos.'
       setModalFormError(friendlyMsg)
       toast({
         title: 'Erro no cadastro',
@@ -471,10 +468,8 @@ export default function Equipe() {
       setMembroParaReset(null)
     } catch (err: unknown) {
       console.error('Erro ao solicitar reset:', err)
-      const friendlyMsg = getErrorMessage(
-        err,
-        'Falha ao enviar instruções de redefinição para o e-mail informado.',
-      )
+      const friendlyMsg =
+        getErrorMessage(err) || 'Falha ao enviar instruções de redefinição para o e-mail informado.'
       toast({
         title: 'Erro ao enviar instruções',
         description: friendlyMsg,

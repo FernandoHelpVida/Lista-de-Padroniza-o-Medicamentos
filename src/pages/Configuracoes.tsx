@@ -90,7 +90,7 @@ export default function Configuracoes() {
         description: 'Seu nome institucional foi atualizado com sucesso.',
       })
     } catch (err: unknown) {
-      const msg = getErrorMessage(err, 'Falha ao atualizar nome.')
+      const msg = getErrorMessage(err) || 'Falha ao atualizar nome.'
       toast({
         title: 'Erro ao atualizar',
         description: msg,
@@ -158,7 +158,7 @@ export default function Configuracoes() {
       console.error('Erro ao exportar dados LGPD:', err)
       toast({
         title: 'Erro na exportação',
-        description: getErrorMessage(err, 'Falha ao reunir seus dados para exportação.'),
+        description: getErrorMessage(err) || 'Falha ao reunir seus dados para exportação.',
         variant: 'destructive',
       })
     } finally {
@@ -205,10 +205,9 @@ export default function Configuracoes() {
       } catch (errFallback: unknown) {
         toast({
           title: 'Erro ao excluir conta',
-          description: getErrorMessage(
-            err || errFallback,
+          description:
+            getErrorMessage(err || errFallback) ||
             'Não foi possível processar a exclusão da sua conta.',
-          ),
           variant: 'destructive',
         })
       }
@@ -238,7 +237,7 @@ export default function Configuracoes() {
         description: `Enviamos uma mensagem de confirmação para ${emailLimpo}.`,
       })
     } catch (err: unknown) {
-      const msg = getErrorMessage(err, 'Falha ao solicitar troca de e-mail.')
+      const msg = getErrorMessage(err) || 'Falha ao solicitar troca de e-mail.'
       toast({
         title: 'Erro na alteração',
         description: msg,
@@ -286,10 +285,9 @@ export default function Configuracoes() {
         description: 'Sua nova senha já está ativa para os próximos acessos.',
       })
     } catch (err: unknown) {
-      const msg = getErrorMessage(
-        err,
-        'Não foi possível alterar a senha. Verifique se a senha atual está correta.',
-      )
+      const msg =
+        getErrorMessage(err) ||
+        'Não foi possível alterar a senha. Verifique se a senha atual está correta.'
       toast({
         title: 'Erro ao alterar senha',
         description: msg,

@@ -108,7 +108,7 @@ export default function Prescricoes() {
       setTotalCount(res.total || items.length)
     } catch (err: unknown) {
       console.error('Erro ao consultar prescrições no SpinCare:', err)
-      const msg = getErrorMessage(err, 'Não foi possível consultar as prescrições no SpinCare.')
+      const msg = getErrorMessage(err) || 'Não foi possível consultar as prescrições no SpinCare.'
       if (msg.includes('ainda não foi configurada') || msg.includes('503')) {
         setUnconfigured(true)
       } else {

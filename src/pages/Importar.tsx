@@ -451,7 +451,7 @@ export default function Importar() {
       console.error('Erro na gravação:', err)
       toast({
         title: 'Erro na importação',
-        description: getErrorMessage(err, 'Falha ao sincronizar registros com o banco de dados.'),
+        description: getErrorMessage(err) || 'Falha ao sincronizar registros com o banco de dados.',
         variant: 'destructive',
       })
     } finally {

@@ -134,7 +134,7 @@ export default function Solicitacoes() {
       console.error('Erro ao carregar solicitações:', err)
       toast({
         title: 'Falha ao buscar solicitações',
-        description: getErrorMessage(err, 'Não foi possível sincronizar o histórico de pedidos.'),
+        description: getErrorMessage(err) || 'Não foi possível sincronizar o histórico de pedidos.',
         variant: 'destructive',
       })
     } finally {
@@ -345,10 +345,8 @@ export default function Solicitacoes() {
       console.error('Erro ao atualizar solicitação:', err)
       toast({
         title: 'Erro ao registrar avaliação',
-        description: getErrorMessage(
-          err,
-          'Não foi possível registrar a decisão da farmácia clínica.',
-        ),
+        description:
+          getErrorMessage(err) || 'Não foi possível registrar a decisão da farmácia clínica.',
         variant: 'destructive',
       })
     } finally {
