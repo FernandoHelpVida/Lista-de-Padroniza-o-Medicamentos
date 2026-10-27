@@ -37,6 +37,7 @@ import {
   History,
   User as UserIcon,
   Calendar,
+  Trash2,
 } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -45,6 +46,14 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
@@ -118,6 +127,11 @@ export default function Importar() {
     inalterados: number
     ignorados: number
   } | null>(null)
+
+  // Estados para o diálogo de zerar catálogo de medicamentos
+  const [zerarModalOpen, setZerarModalOpen] = useState(false)
+  const [zerarConfirmationText, setZerarConfirmationText] = useState('')
+  const [zerandoCatalogo, setZerandoCatalogo] = useState(false)
 
   // Carregar histórico de importações
   const loadHistorico = async () => {
@@ -558,6 +572,63 @@ export default function Importar() {
     }
   }
 
+  // Ação administrativa: Zerar completamente o catálogo de medicamentos
+  const handleZerarCatalogo = async () => {
+    if (zerarConfirmationText.trim() !== 'ZERAR') {
+      toast({
+        title: 'Confirmação necessária',
+        description: 'Digite exatamente a palavra ZERAR para autorizar a limpeza permanente.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setZerandoCatalogo(true)
+    try {
+      const response = await pb.send<{
+        success: boolean
+        message: string
+        itens_apagados: number
+        timestamp: string
+      }>('/backend/v1/medicamentos/zerar-catalogo', {
+        method: 'POST',
+      })
+
+      toast({
+        title: 'Catálogo de medicamentos zerado',
+        description:
+          response.message ||
+          `${response.itens_apagados} medicamento(s) foram apagados do banco de dados com sucesso.`,
+      })
+
+      // Fechar modal e resetar estado
+      setZerarModalOpen(false)
+      setZerarConfirmationText('')
+
+      // Limpar estados locais de pré-visualização e recarregar dados do banco
+      setPreviewItems([])
+      setUnrecognizedItems([])
+      setSelectedFile(null)
+      setDocumentStats(null)
+      setImportSummary(null)
+
+      // Atualizar lista de medicamentos existentes (deve vir 0) e o histórico de importações
+      await loadExistingMedicamentos()
+      await loadHistorico()
+    } catch (err: unknown) {
+      console.error('Erro ao zerar catálogo:', err)
+      toast({
+        title: 'Erro ao zerar catálogo',
+        description:
+          getErrorMessage(err) ||
+          'Não foi possível concluir o esvaziamento da coleção de medicamentos.',
+        variant: 'destructive',
+      })
+    } finally {
+      setZerandoCatalogo(false)
+    }
+  }
+
   // 4. Se não for admin, exibir aviso de acesso restrito
   if (!authLoading && !isAdmin) {
     return (
@@ -614,12 +685,30 @@ export default function Importar() {
             variant="outline"
             size="sm"
             onClick={handleLoadOfficialTestPdf}
-            disabled={extracting || importing}
-            className="h-9 border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
+            disabled={extracting || importing || zerandoCatalogo}
+            className="h-9 min-h-[44px] sm:min-h-[36px] border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
           >
             <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
             Carregar PDF Modelo
           </Button>
+
+          {/* Botão de Destaque: Zerar catálogo de medicamentos (Admin) */}
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setZerarConfirmationText('')
+                setZerarModalOpen(true)
+              }}
+              disabled={extracting || importing || zerandoCatalogo}
+              className="h-9 min-h-[44px] sm:min-h-[36px] border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 text-xs font-bold"
+              title="Esvaziar completamente a tabela de medicamentos para subir nova importação"
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+              Zerar Catálogo
+            </Button>
+          )}
         </div>
       </div>
 
@@ -683,6 +772,46 @@ export default function Importar() {
                   className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs font-semibold shrink-0"
                 >
                   Ver no Catálogo &rarr;
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Alerta / Banner de Limpeza de Catálogo (Visível para Admins) */}
+          {isAdmin && (
+            <Card className="border-rose-200 bg-rose-50/50 shadow-xs">
+              <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="h-9 w-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 mt-0.5">
+                    <Trash2 size={18} />
+                  </div>
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs sm:text-sm font-bold text-rose-950 flex items-center gap-2">
+                      Zerar Catálogo Atual para Nova Tabela
+                      <Badge className="bg-rose-200/80 text-rose-900 border-rose-300 text-[10px] font-bold">
+                        {existingMeds.length} medicamento{existingMeds.length === 1 ? '' : 's'} no
+                        banco
+                      </Badge>
+                    </h4>
+                    <p className="text-[11px] sm:text-xs text-rose-800/90 leading-relaxed">
+                      Se você precisa subir uma nova tabela do zero e limpar registros antigos ou
+                      corrompidos, esvazie a coleção antes de iniciar a nova importação. O histórico
+                      de importações será preservado.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    setZerarConfirmationText('')
+                    setZerarModalOpen(true)
+                  }}
+                  disabled={extracting || importing || zerandoCatalogo}
+                  className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 min-h-[44px] sm:min-h-[36px] px-4 rounded-xl shadow-xs"
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Zerar Catálogo de Medicamentos
                 </Button>
               </CardContent>
             </Card>
@@ -1216,6 +1345,94 @@ export default function Importar() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Diálogo de Confirmação Dupla: Zerar Catálogo de Medicamentos */}
+      <Dialog open={zerarModalOpen} onOpenChange={setZerarModalOpen}>
+        <DialogContent className="max-w-md w-[92vw] sm:w-full p-5 sm:p-6 rounded-2xl bg-white border-rose-200 shadow-xl">
+          <DialogHeader className="text-left space-y-2">
+            <div className="h-11 w-11 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center">
+              <AlertTriangle size={24} className="text-rose-600" />
+            </div>
+            <DialogTitle className="text-base sm:text-lg font-bold text-rose-950">
+              Zerar Todo o Catálogo de Medicamentos?
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600 leading-relaxed space-y-2 pt-1">
+              <span className="block font-semibold text-rose-900">
+                Atenção: Esta ação é permanente e irreversível!
+              </span>
+              <span className="block">
+                Todos os medicamentos atualmente cadastrados no banco de dados (
+                <strong>{existingMeds.length} itens</strong>) serão apagados permanentemente da
+                coleção{' '}
+                <code className="px-1 py-0.5 rounded bg-slate-100 font-mono text-[11px] text-slate-800">
+                  medicamentos
+                </code>
+                .
+              </span>
+              <span className="block text-slate-500">
+                O histórico de importações anteriores e as solicitações não serão apagados. Um
+                registro de auditoria da limpeza será criado automaticamente no histórico.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 pt-2">
+            <label
+              htmlFor="confirm-zerar-input"
+              className="text-xs font-semibold text-slate-700 block"
+            >
+              Para confirmar, digite exatamente a palavra{' '}
+              <span className="font-mono font-bold text-rose-700 select-all">ZERAR</span> abaixo:
+            </label>
+            <Input
+              id="confirm-zerar-input"
+              type="text"
+              value={zerarConfirmationText}
+              onChange={(e) => setZerarConfirmationText(e.target.value)}
+              placeholder="Digite ZERAR"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              className="text-sm sm:text-base font-mono tracking-wider h-11 border-rose-300 focus-visible:ring-rose-500 uppercase"
+            />
+          </div>
+
+          <DialogFooter className="pt-3 flex flex-col-reverse sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setZerarModalOpen(false)
+                setZerarConfirmationText('')
+              }}
+              disabled={zerandoCatalogo}
+              className="w-full sm:w-auto h-11 sm:h-9 min-h-[44px] sm:min-h-[36px] text-xs font-medium text-slate-600 border-slate-300"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleZerarCatalogo}
+              disabled={zerandoCatalogo || zerarConfirmationText.trim() !== 'ZERAR'}
+              className="w-full sm:w-auto h-11 sm:h-9 min-h-[44px] sm:min-h-[36px] text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-xs"
+            >
+              {zerandoCatalogo ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Esvaziando catálogo...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Sim, Zerar Catálogo Permanentemente
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -210,3 +210,111 @@ routerAdd(
   },
   $apis.requireAuth(),
 )
+
+// Endpoint administrativo para esvaziar/zerar todo o catálogo de medicamentos
+routerAdd(
+  'POST',
+  '/backend/v1/medicamentos/zerar-catalogo',
+  (e) => {
+    try {
+      const authUser = e.auth
+      if (!authUser) {
+        return e.unauthorizedError('Acesso não autorizado. Faça login para continuar.')
+      }
+
+      // Verificação de permissão administrativa padrão do projeto
+      const isUserAdmin =
+        authUser.getString('role') === 'admin' ||
+        authUser.getString('email').toLowerCase() === 'fernandofernandes@helpvida.com.br'
+
+      if (!isUserAdmin) {
+        return e.forbiddenError(
+          'Apenas administradores da comissão Help Vida podem zerar o catálogo de medicamentos.',
+        )
+      }
+
+      // 1. Contar registros existentes na coleção de medicamentos antes de apagar
+      let totalApagados = 0
+      try {
+        const countRow = e.app.db().newQuery('SELECT COUNT(*) AS total FROM medicamentos').one()
+        if (countRow && countRow.total !== undefined) {
+          totalApagados = Number(countRow.total) || 0
+        }
+      } catch (countErr) {
+        // Fallback: se falhar o count via raw sql, tenta contar via busca
+        try {
+          const allMeds = e.app.findRecordsByFilter('medicamentos', "id != ''", '', 10000, 0)
+          totalApagados = allMeds.length
+        } catch (_) {}
+      }
+
+      // 2. Apagar TODOS os registros da coleção de medicamentos (idempotente)
+      // Usamos a exclusão direta no SQLite da tabela 'medicamentos'
+      if (totalApagados > 0) {
+        e.app.db().newQuery('DELETE FROM medicamentos').execute()
+      }
+
+      // 3. Registrar auditoria em historico_importacoes conforme os requisitos da tarefa:
+      // tipo "zerar catálogo" com contagem de itens apagados, data e usuário responsável (sem dados clínicos - LGPD)
+      try {
+        const histCol = e.app.findCollectionByNameOrId('historico_importacoes')
+        const histRec = new Record(histCol)
+        histRec.set('nome_arquivo', 'Zerar catálogo de medicamentos')
+        histRec.set('total_itens', totalApagados)
+        histRec.set('criados', 0)
+        histRec.set('atualizados', 0)
+        histRec.set('inalterados', 0)
+        histRec.set('ignorados', totalApagados)
+        if (authUser.id) {
+          histRec.set('usuario', authUser.id)
+        }
+        e.app.save(histRec)
+      } catch (hErr) {
+        console.error('Aviso ao registrar auditoria em historico_importacoes:', hErr)
+      }
+
+      // 4. Também registrar em audit_logs institucional para rastreabilidade completa
+      try {
+        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+        const auditRec = new Record(auditCol)
+        auditRec.set('colecao', 'medicamentos')
+        auditRec.set('registro_id', 'catalogo_completo')
+        auditRec.set('acao', 'ZERAR_CATALOGO_MEDICAMENTOS')
+        auditRec.set('usuario', authUser.id)
+        auditRec.set('usuario_nome', authUser.getString('name') || '')
+        auditRec.set('usuario_email', authUser.getString('email') || '')
+        auditRec.set('usuario_role', authUser.getString('role') || 'admin')
+        auditRec.set('status_anterior', totalApagados + ' medicamentos cadastrados')
+        auditRec.set('status_novo', '0 medicamentos (catálogo zerado)')
+        auditRec.set(
+          'detalhes',
+          'Catálogo de medicamentos completamente esvaziado pelo administrador para carga de nova tabela limpa. Total de itens excluídos: ' +
+            totalApagados,
+        )
+        e.app.save(auditRec)
+      } catch (aErr) {
+        console.error('Aviso ao registrar em audit_logs:', aErr)
+      }
+
+      return e.json(200, {
+        success: true,
+        message:
+          totalApagados === 0
+            ? 'O catálogo de medicamentos já se encontrava vazio. Nenhum registro foi apagado.'
+            : 'Catálogo de medicamentos zerado com sucesso! ' +
+              totalApagados +
+              ' medicamento(s) foram apagados permanentemente.',
+        itens_apagados: totalApagados,
+        timestamp: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('Erro ao zerar catálogo de medicamentos:', err)
+      return e.json(500, {
+        error:
+          'Falha interna ao tentar esvaziar o catálogo de medicamentos: ' +
+          (err?.message || String(err)),
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
