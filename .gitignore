@@ -48,3 +48,11 @@ screenshot.png
 
 # Linux kernel core dumps (e.g. when oxfmt or pnpm crash)
 core.[0-9]*
+
+# Ignored binary uploads and user-uploaded data files
+*.pdf
+*.xlsx
+*.xls
+src/assets/*.pdf
+src/assets/*.xlsx
+src/assets/*.xls
