@@ -39,6 +39,10 @@ import {
   User as UserIcon,
   Calendar,
   Trash2,
+  Copy,
+  Layers,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -111,6 +115,10 @@ export default function Importar() {
     fileName: string
     fileSize: string
   } | null>(null)
+
+  // Estado para expandir/colapsar tabela detalhada de duplicados
+  const [duplicatesTableExpanded, setDuplicatesTableExpanded] = useState(false)
+  const [duplicatesFilterSearch, setDuplicatesFilterSearch] = useState('')
 
   // Filtros da tabela de pré-visualização
   const [filterSearch, setFilterSearch] = useState('')
@@ -475,6 +483,116 @@ export default function Importar() {
     }
   }
 
+  // Estrutura para análise de itens duplicados entre os extraídos
+  const duplicateStats = useMemo(() => {
+    // Agrupar itens extraídos pelo nome normalizado exato
+    const nameMap = new Map<
+      string,
+      {
+        displayName: string
+        normalizedKey: string
+        items: PreviewItem[]
+        statuses: StatusPadronizacao[]
+        classes: string[]
+        hasConflict: boolean
+        resolvedStatus: StatusPadronizacao
+      }
+    >()
+
+    // Precedência estrita de status: Inativo > Não Padronizado > Padronizado
+    const resolvePrecedence = (statuses: StatusPadronizacao[]): StatusPadronizacao => {
+      if (statuses.includes('Inativo')) return 'Inativo'
+      if (statuses.includes('Não Padronizado')) return 'Não Padronizado'
+      return 'Padronizado'
+    }
+
+    for (const item of previewItems) {
+      const key = normalizeStr(item.nome)
+      if (!key) continue
+
+      if (!nameMap.has(key)) {
+        nameMap.set(key, {
+          displayName: item.nome,
+          normalizedKey: key,
+          items: [item],
+          statuses: [item.status],
+          classes: [item.classe],
+          hasConflict: false,
+          resolvedStatus: item.status,
+        })
+      } else {
+        const group = nameMap.get(key)!
+        group.items.push(item)
+        group.statuses.push(item.status)
+        if (item.classe && !group.classes.includes(item.classe)) {
+          group.classes.push(item.classe)
+        }
+        // Verificar se há status diferentes (conflito)
+        const uniqueStatuses = new Set(group.statuses)
+        group.hasConflict = uniqueStatuses.size > 1
+        group.resolvedStatus = resolvePrecedence(group.statuses)
+      }
+    }
+
+    // Filtrar apenas medicamentos com 2 ou mais ocorrências
+    const duplicateList = Array.from(nameMap.values())
+      .filter((g) => g.items.length >= 2)
+      .map((g) => {
+        // Formatar origens/seções (ex: "Padronizado + Não Padronizado" ou "Padronizado (2x)")
+        const statusCounts = new Map<StatusPadronizacao, number>()
+        for (const st of g.statuses) {
+          statusCounts.set(st, (statusCounts.get(st) || 0) + 1)
+        }
+
+        const sectionsDesc = Array.from(statusCounts.entries())
+          .map(([st, count]) => (count > 1 ? `${st} (${count}x)` : st))
+          .join(' + ')
+
+        return {
+          nome: g.displayName,
+          normalizedKey: g.normalizedKey,
+          count: g.items.length,
+          statuses: g.statuses,
+          sectionsDesc,
+          hasConflict: g.hasConflict,
+          resolvedStatus: g.resolvedStatus,
+          classes: g.classes,
+          items: g.items,
+        }
+      })
+      .sort((a, b) => b.count - a.count || a.nome.localeCompare(b.nome))
+
+    // Total de nomes únicos previstos para o catálogo final (considerando itens selecionados)
+    const uniqueKeysSelected = new Set(
+      previewItems.filter((i) => i.selected).map((i) => normalizeStr(i.nome)).filter(Boolean),
+    )
+    const catalogoFinalPrevisto = uniqueKeysSelected.size
+
+    // Quantidade de duplicados idênticos unificados e duplicados com conflito de status
+    let totalIdenticosUnificados = 0
+    let totalConflitosStatus = 0
+
+    for (const dup of duplicateList) {
+      if (dup.hasConflict) {
+        totalConflitosStatus++
+        // As ocorrências excedentes são absorvidas na resolução
+        totalIdenticosUnificados += dup.count - 1
+      } else {
+        // Mesmo status
+        totalIdenticosUnificados += dup.count - 1
+      }
+    }
+
+    return {
+      duplicates: duplicateList,
+      totalDuplicatesCount: duplicateList.length,
+      totalRepetitions: duplicateList.reduce((acc, d) => acc + (d.count - 1), 0),
+      catalogoFinalPrevisto,
+      totalIdenticosUnificados,
+      totalConflitosStatus,
+    }
+  }, [previewItems])
+
   // Contagens dos itens (por status de diff e por status de padronização)
   const counts = useMemo(() => {
     const total = previewItems.length
@@ -563,7 +681,12 @@ export default function Importar() {
     let countNovos = 0
     let countAtualizados = 0
     let countInalterados = 0
+    let countUnificados = 0
+    let countConflitosResolvidos = 0
     const countIgnorados = previewItems.length - toImport.length
+
+    // Número esperado no catálogo final com base nos itens selecionados
+    const catalogoFinalPrevisto = duplicateStats.catalogoFinalPrevisto
 
     try {
       let syncedViaBackend = false
@@ -574,6 +697,9 @@ export default function Importar() {
           criados: number
           atualizados: number
           inalterados: number
+          unificados?: number
+          conflitos_resolvidos?: number
+          total_catalogo_final?: number
         }>('/backend/v1/medicamentos/bulk-sync', {
           method: 'POST',
           body: {
@@ -594,6 +720,8 @@ export default function Importar() {
           countNovos = syncData.criados || 0
           countAtualizados = syncData.atualizados || 0
           countInalterados = syncData.inalterados || 0
+          countUnificados = syncData.unificados || 0
+          countConflitosResolvidos = syncData.conflitos_resolvidos || 0
           syncedViaBackend = true
           setImportProgress(100)
         }
@@ -601,35 +729,110 @@ export default function Importar() {
         console.warn('Endpoint de bulk-sync falhou, executando em lotes client-side:', bkErr)
       }
 
-      // Tentativa 2: Fallback direto no PocketBase client-side em batches
+      // Tentativa 2: Fallback direto no PocketBase client-side com resolução de duplicados e precedência
       if (!syncedViaBackend) {
-        for (let i = 0; i < toImport.length; i++) {
-          const item = toImport[i]
+        // Agrupar itens a importar por chave normalizada exata
+        const groupedMap = new Map<
+          string,
+          {
+            nome: string
+            classe: string
+            items: typeof toImport
+            resolvedStatus: StatusPadronizacao
+            hasConflict: boolean
+            descricao: string
+            observacao: string
+          }
+        >()
+
+        const resolvePrecedence = (statuses: StatusPadronizacao[]): StatusPadronizacao => {
+          if (statuses.includes('Inativo')) return 'Inativo'
+          if (statuses.includes('Não Padronizado')) return 'Não Padronizado'
+          return 'Padronizado'
+        }
+
+        for (const item of toImport) {
+          const key = normalizeStr(item.nome)
+          if (!key) continue
+
+          if (!groupedMap.has(key)) {
+            groupedMap.set(key, {
+              nome: item.nome.trim().toUpperCase(),
+              classe: item.classe.trim(),
+              items: [item],
+              resolvedStatus: item.status,
+              hasConflict: false,
+              descricao: item.descricao || '',
+              observacao: item.observacao || '',
+            })
+          } else {
+            const grp = groupedMap.get(key)!
+            grp.items.push(item)
+            const allStatuses = grp.items.map((it) => it.status)
+            const uniqueSt = new Set(allStatuses)
+            grp.hasConflict = uniqueSt.size > 1
+            grp.resolvedStatus = resolvePrecedence(allStatuses)
+
+            // Se ainda não tinha observação ou classe, unificar observações relevantes
+            if (item.observacao && !grp.observacao.includes(item.observacao)) {
+              grp.observacao = grp.observacao ? `${grp.observacao} | ${item.observacao}` : item.observacao
+            }
+          }
+        }
+
+        const consolidatedList = Array.from(groupedMap.values())
+        const totalConsolidated = consolidatedList.length
+
+        // Obter mapa atual de medicamentos no banco para saber quem atualizar vs quem criar
+        const currentDbMeds = await pb.collection('medicamentos').getFullList<{
+          id: string
+          nome: string
+          status: string
+          classe: string
+        }>({ fields: 'id,nome,status,classe' })
+
+        const dbMap = new Map<string, { id: string; status: string; classe: string }>()
+        for (const m of currentDbMeds) {
+          const k = normalizeStr(m.nome)
+          if (k) dbMap.set(k, { id: m.id, status: m.status, classe: m.classe })
+        }
+
+        let idx = 0
+        for (const grp of consolidatedList) {
+          const k = normalizeStr(grp.nome)
+          const existing = dbMap.get(k)
 
           const payload = {
-            nome: item.nome.trim().toUpperCase(),
-            classe: item.classe.trim(),
-            status: item.status,
-            descricao: item.descricao || '',
-            observacao: item.observacao || '',
+            nome: grp.nome,
+            classe: grp.classe,
+            status: grp.resolvedStatus,
+            descricao: grp.descricao,
+            observacao: grp.hasConflict
+              ? grp.observacao
+                ? `${grp.observacao} (Status unificado por precedência: ${grp.resolvedStatus})`
+                : `Status unificado por precedência: ${grp.resolvedStatus}`
+              : grp.observacao,
           }
 
-          if (item.diffStatus === 'EXISTENTE' && item.existingId) {
-            // Atualizar medicamento existente
-            await pb.collection('medicamentos').update(item.existingId, payload)
-            countAtualizados++
-          } else if (item.diffStatus === 'NOVO') {
-            // Criar novo
+          if (existing) {
+            if (existing.status !== grp.resolvedStatus || existing.classe !== grp.classe) {
+              await pb.collection('medicamentos').update(existing.id, payload)
+              countAtualizados++
+            } else {
+              countInalterados++
+            }
+          } else {
             await pb.collection('medicamentos').create(payload)
             countNovos++
-          } else if (item.diffStatus === 'SEM_ALTERACAO') {
-            if (item.existingId) {
-              await pb.collection('medicamentos').update(item.existingId, payload)
-            }
-            countInalterados++
           }
 
-          setImportProgress(Math.round(((i + 1) / toImport.length) * 100))
+          if (grp.items.length > 1) {
+            countUnificados += grp.items.length - 1
+            if (grp.hasConflict) countConflitosResolvidos++
+          }
+
+          idx++
+          setImportProgress(Math.round((idx / totalConsolidated) * 100))
         }
 
         // Gravar no histórico de importações
@@ -675,10 +878,25 @@ export default function Importar() {
         }),
       )
 
-      toast({
-        title: 'Importação finalizada com sucesso!',
-        description: `${countNovos} novos medicamentos criados, ${countAtualizados} atualizados.`,
-      })
+      // Verificar total real no banco após a sincronização
+      const finalDbList = await pb.collection('medicamentos').getFullList({ fields: 'id' })
+      const totalGravado = finalDbList.length
+
+      if (totalGravado === catalogoFinalPrevisto) {
+        toast({
+          title: 'Sincronização 100% Concluída!',
+          description: `Catálogo atualizado com exatamente ${totalGravado} itens (${countNovos} novos, ${countAtualizados} atualizados, ${duplicateStats.totalRepetitions} unificados sem perdas).`,
+        })
+      } else {
+        // Notificação explícita com a divergência caso ocorra (nunca silêncio)
+        toast({
+          title: 'Importação concluída com divergência',
+          description: `Catálogo final: ${totalGravado} itens gravados. Previsto: ${catalogoFinalPrevisto} itens. Diferença: ${Math.abs(
+            totalGravado - catalogoFinalPrevisto,
+          )} item(ns).`,
+          variant: 'destructive',
+        })
+      }
     } catch (err: unknown) {
       console.error('Erro na gravação:', err)
       toast({
@@ -1073,7 +1291,18 @@ export default function Importar() {
                   </div>
 
                   {/* Botão de Gravação Principal */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
+                    <div className="text-right sm:text-right hidden sm:block">
+                      <div className="text-xs font-bold text-[#0C4336]">
+                        Previsão catálogo:{' '}
+                        <span className="font-mono text-emerald-800">
+                          {duplicateStats.catalogoFinalPrevisto} itens
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {counts.selecionados} extraídos − {duplicateStats.totalRepetitions} unificados
+                      </div>
+                    </div>
                     <Button
                       onClick={handleExecuteImport}
                       disabled={importing || counts.selecionados === 0}
@@ -1087,12 +1316,220 @@ export default function Importar() {
                       ) : (
                         <>
                           <Check className="mr-1.5 h-4 w-4 text-[#F5B31C]" />
-                          Importar {counts.selecionados} Medicamento
-                          {counts.selecionados === 1 ? '' : 's'}
+                          Sincronizar ({duplicateStats.catalogoFinalPrevisto} itens previstos)
                         </>
                       )}
                     </Button>
                   </div>
+                </div>
+
+                {/* Previsão de Catálogo Final (Banner de Auditoria e Deduplicação) */}
+                <div className="mt-3 p-3 rounded-xl border border-emerald-900/15 bg-white shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-emerald-100/80 text-[#0C4336] flex items-center justify-center shrink-0">
+                      <Layers size={18} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#0C4336]">
+                          Catálogo final previsto: {duplicateStats.catalogoFinalPrevisto} itens
+                        </span>
+                        <Badge className="bg-[#0F5342] text-white text-[10px] font-bold">
+                          {counts.total} extraídos − {duplicateStats.totalRepetitions} duplicados unificados
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {duplicateStats.totalConflitosStatus > 0
+                          ? `${duplicateStats.totalConflitosStatus} item(ns) com conflito de status entre seções resolvidos por precedência (Inativo > Não Padronizado > Padronizado).`
+                          : 'Todos os medicamentos duplicados possuem status idêntico e serão agrupados em 1 item único.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDuplicatesTableExpanded(!duplicatesTableExpanded)}
+                      className="h-8 text-xs font-semibold border-emerald-950/20 text-[#0C4336] hover:bg-emerald-50"
+                    >
+                      <Copy size={13} className="mr-1.5 text-[#0D8272]" />
+                      {duplicatesTableExpanded ? 'Ocultar Relação de Duplicados' : 'Ver Relação de Duplicados'}
+                      {duplicatesTableExpanded ? (
+                        <ChevronUp size={14} className="ml-1" />
+                      ) : (
+                        <ChevronDown size={14} className="ml-1" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* 1. Painel "Relação de Duplicados" (Requisito 1: visível na tela de conferência antes de sincronizar) */}
+                <div className="mt-2 p-3.5 rounded-xl border border-amber-900/20 bg-[#FFFDF7] space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-6 w-6 rounded-md bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                        <Copy size={14} />
+                      </div>
+                      <h4 className="text-xs font-bold text-amber-950 uppercase tracking-wide">
+                        Relação de Duplicados no Documento
+                      </h4>
+                      {duplicateStats.totalDuplicatesCount > 0 ? (
+                        <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
+                          {duplicateStats.totalDuplicatesCount} nomes com 2+ ocorrências ({duplicateStats.totalRepetitions} repetições)
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
+                          Nenhum duplicado
+                        </Badge>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        Regra: Duplicados idênticos unificam; conflitos seguem precedência{' '}
+                        <strong>Inativo &gt; Não Padronizado &gt; Padronizado</strong>.
+                      </span>
+                    </div>
+                  </div>
+
+                  {duplicateStats.duplicates.length === 0 ? (
+                    <div className="p-4 rounded-lg bg-emerald-50/70 border border-emerald-200/80 text-center">
+                      <p className="text-xs font-semibold text-emerald-900">
+                        Nenhum medicamento duplicado nos {counts.total} itens extraídos.
+                      </p>
+                      <p className="text-[11px] text-emerald-700 mt-0.5">
+                        Cada nome de medicamento aparece exatamente uma vez nas páginas analisadas.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* Resumo compacto dos duplicados e busca rápida */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                        <div className="text-[11px] text-slate-600">
+                          Mostrando <strong>{duplicateStats.duplicates.length}</strong> medicamentos repetidos.
+                          {duplicateStats.totalConflitosStatus > 0 && (
+                            <span className="ml-1 text-amber-800 font-semibold">
+                              ({duplicateStats.totalConflitosStatus} com conflito de status entre seções)
+                            </span>
+                          )}
+                        </div>
+
+                        {duplicateStats.duplicates.length > 5 && (
+                          <div className="relative w-full sm:w-64">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+                            <Input
+                              type="search"
+                              placeholder="Filtrar duplicados por nome..."
+                              value={duplicatesFilterSearch}
+                              onChange={(e) => setDuplicatesFilterSearch(e.target.value)}
+                              className="h-7 pl-7 text-[11px] bg-white border-amber-900/15"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tabela detalhada de duplicados */}
+                      <div className="border border-amber-900/15 rounded-lg overflow-hidden bg-white max-h-72 overflow-y-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-amber-50/70 text-amber-950 font-bold uppercase text-[10px] tracking-wider border-b border-amber-900/10 sticky top-0 z-10">
+                            <tr>
+                              <th className="py-2 px-3">Nome do Medicamento</th>
+                              <th className="py-2 px-3 text-center w-24">Ocorrências</th>
+                              <th className="py-2 px-3">Seções / Origens Extraídas</th>
+                              <th className="py-2 px-3 text-center w-36">Status no Catálogo</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-amber-900/5">
+                            {duplicateStats.duplicates
+                              .filter((d) =>
+                                duplicatesFilterSearch.trim()
+                                  ? d.nome
+                                      .toLowerCase()
+                                      .includes(duplicatesFilterSearch.toLowerCase().trim())
+                                  : true,
+                              )
+                              .map((dup) => (
+                                <tr
+                                  key={dup.normalizedKey}
+                                  className={cn(
+                                    'hover:bg-amber-50/40 transition',
+                                    dup.hasConflict ? 'bg-amber-50/20' : '',
+                                  )}
+                                >
+                                  <td className="py-2 px-3">
+                                    <div className="font-semibold text-slate-900 text-xs">
+                                      {dup.nome}
+                                    </div>
+                                    {dup.classes.length > 0 && (
+                                      <div className="text-[10px] text-slate-400 truncate">
+                                        Classe: {dup.classes.join(' / ')}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
+                                      {dup.count}x
+                                    </Badge>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="text-xs font-medium text-slate-700">
+                                        {dup.sectionsDesc}
+                                      </span>
+                                      {dup.hasConflict && (
+                                        <Badge className="bg-amber-500/15 text-amber-900 border-amber-400 text-[9px] font-bold">
+                                          Conflito de Status
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">
+                                      Páginas: {dup.items.map((it) => it.pageNumber || '?').join(', ')}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    {dup.hasConflict ? (
+                                      <div className="flex flex-col items-center gap-0.5">
+                                        <Badge
+                                          className={cn(
+                                            'text-[10px] font-bold',
+                                            dup.resolvedStatus === 'Inativo' &&
+                                              'bg-slate-700 text-white',
+                                            dup.resolvedStatus === 'Não Padronizado' &&
+                                              'bg-amber-600 text-white',
+                                            dup.resolvedStatus === 'Padronizado' &&
+                                              'bg-emerald-700 text-white',
+                                          )}
+                                        >
+                                          {dup.resolvedStatus}
+                                        </Badge>
+                                        <span className="text-[9px] text-amber-800 font-semibold">
+                                          Mais restritivo
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <Badge
+                                        className={cn(
+                                          'text-[10px] font-medium',
+                                          dup.resolvedStatus === 'Padronizado' &&
+                                            'bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30',
+                                          dup.resolvedStatus === 'Não Padronizado' &&
+                                            'bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40',
+                                          dup.resolvedStatus === 'Inativo' &&
+                                            'bg-slate-100 text-slate-600 border border-slate-200',
+                                        )}
+                                      >
+                                        {dup.resolvedStatus} (Unificado)
+                                      </Badge>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Painel de Auditoria de Status da Régua Oficial (238 / 217 / 27 = 482) */}

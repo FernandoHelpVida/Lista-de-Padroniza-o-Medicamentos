@@ -617,8 +617,24 @@ routerAdd(
       let criados = 0
       let atualizados = 0
       let inalterados = 0
+      let unificados = 0
+      let conflitosResolvidos = 0
 
-      // Executar operações em lote
+      // Função de precedência de status mais restritivo: Inativo > Não Padronizado > Padronizado
+      const resolvePrecedence = (statuses) => {
+        if (statuses.indexOf('Inativo') !== -1) return 'Inativo'
+        if (statuses.indexOf('Não Padronizado') !== -1) return 'Não Padronizado'
+        return 'Padronizado'
+      }
+
+      // 1. Pré-processar e consolidar os itens recebidos por nome normalizado
+      // Regra acordada:
+      // (a) duplicado idêntico (mesmo nome E mesmo status) unifica em 1 item no catálogo;
+      // (b) nome repetido com status diferente grava o item com o status mais restritivo
+      //     (Inativo > Não Padronizado > Padronizado) e fica sinalizado como conflito;
+      // (c) o item nunca é descartado sem aparecer em uma destas duas categorias.
+      const consolidatedIncoming = new Map()
+
       items.forEach((item) => {
         let nomeLimpo = (item.nome || '').trim().toUpperCase()
         let classeLimpa = (item.classe || '').trim()
@@ -661,6 +677,50 @@ routerAdd(
         const key = normalizeSimple(nomeLimpo)
         if (!key) return
 
+        if (!consolidatedIncoming.has(key)) {
+          consolidatedIncoming.set(key, {
+            nome: nomeLimpo,
+            classe: classeLimpa,
+            statuses: [statusLimpo],
+            descricao: item.descricao || '',
+            observacao: item.observacao || '',
+            occurrences: 1,
+          })
+        } else {
+          const entry = consolidatedIncoming.get(key)
+          entry.occurrences++
+          entry.statuses.push(statusLimpo)
+          if (classeLimpa && !entry.classe) {
+            entry.classe = classeLimpa
+          }
+          if (item.observacao && entry.observacao.indexOf(item.observacao) === -1) {
+            entry.observacao = entry.observacao
+              ? entry.observacao + ' | ' + item.observacao
+              : item.observacao
+          }
+          if (item.descricao && !entry.descricao) {
+            entry.descricao = item.descricao
+          }
+        }
+      })
+
+      // 2. Gravar os registros consolidados na coleção medicamentos
+      consolidatedIncoming.forEach((entry, key) => {
+        const uniqueStatuses = Array.from(new Set(entry.statuses))
+        const hasConflict = uniqueStatuses.length > 1
+        const resolvedStatus = resolvePrecedence(entry.statuses)
+
+        if (entry.occurrences > 1) {
+          unificados += entry.occurrences - 1
+          if (hasConflict) conflitosResolvidos++
+        }
+
+        let obsFinal = entry.observacao
+        if (hasConflict) {
+          const conflictNote = 'Status unificado por precedência: ' + resolvedStatus
+          obsFinal = obsFinal ? obsFinal + ' (' + conflictNote + ')' : conflictNote
+        }
+
         const existing = existingMap.get(key)
         if (existing) {
           // Já existe no catálogo
@@ -670,20 +730,20 @@ routerAdd(
           const curObs = existing.getString('observacao')
 
           let hasChanges = false
-          if (curStatus !== statusLimpo) {
-            existing.set('status', statusLimpo)
+          if (curStatus !== resolvedStatus) {
+            existing.set('status', resolvedStatus)
             hasChanges = true
           }
-          if (classeLimpa && curClasse !== classeLimpa) {
-            existing.set('classe', classeLimpa)
+          if (entry.classe && curClasse !== entry.classe) {
+            existing.set('classe', entry.classe)
             hasChanges = true
           }
-          if (item.observacao && !curObs) {
-            existing.set('observacao', item.observacao)
+          if (obsFinal && curObs !== obsFinal) {
+            existing.set('observacao', obsFinal)
             hasChanges = true
           }
-          if (item.descricao && !curDesc) {
-            existing.set('descricao', item.descricao)
+          if (entry.descricao && !curDesc) {
+            existing.set('descricao', entry.descricao)
             hasChanges = true
           }
 
@@ -694,15 +754,14 @@ routerAdd(
             inalterados++
           }
         } else {
-          // Criar novo registro
+          // Criar novo registro consolidado
           const newRec = new Record(medCol)
-          newRec.set('nome', nomeLimpo)
-          newRec.set('classe', classeLimpa)
-          newRec.set('status', statusLimpo)
-          newRec.set('descricao', item.descricao || '')
-          newRec.set('observacao', item.observacao || '')
+          newRec.set('nome', entry.nome)
+          newRec.set('classe', entry.classe)
+          newRec.set('status', resolvedStatus)
+          newRec.set('descricao', entry.descricao || '')
+          newRec.set('observacao', obsFinal || '')
           e.app.save(newRec)
-          // Adicionar no map para evitar duplicados no mesmo payload
           existingMap.set(key, newRec)
           criados++
         }
@@ -734,6 +793,9 @@ routerAdd(
         criados,
         atualizados,
         inalterados,
+        unificados,
+        conflitos_resolvidos: conflitosResolvidos,
+        total_catalogo_final: existingMap.size,
       })
     } catch (err) {
       return e.json(500, {
