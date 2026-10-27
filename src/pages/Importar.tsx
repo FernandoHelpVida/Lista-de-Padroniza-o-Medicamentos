@@ -617,11 +617,13 @@ export default function Importar() {
       await loadHistorico()
     } catch (err: unknown) {
       console.error('Erro ao zerar catálogo:', err)
+      const errorMsg = getErrorMessage(err)
       toast({
         title: 'Erro ao zerar catálogo',
         description:
-          getErrorMessage(err) ||
-          'Não foi possível concluir o esvaziamento da coleção de medicamentos.',
+          errorMsg && errorMsg !== 'Something went wrong while processing your request.'
+            ? errorMsg
+            : 'Não foi possível concluir o esvaziamento da coleção de medicamentos. Verifique as permissões de administrador.',
         variant: 'destructive',
       })
     } finally {

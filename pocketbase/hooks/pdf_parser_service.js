@@ -223,9 +223,9 @@ routerAdd(
       }
 
       // Verificação de permissão administrativa padrão do projeto
-      const isUserAdmin =
-        authUser.getString('role') === 'admin' ||
-        authUser.getString('email').toLowerCase() === 'fernandofernandes@helpvida.com.br'
+      const userRole = (authUser.getString('role') || '').toLowerCase()
+      const userEmail = (authUser.getString('email') || '').toLowerCase().trim()
+      const isUserAdmin = userRole === 'admin' || userEmail === 'fernandofernandes@helpvida.com.br'
 
       if (!isUserAdmin) {
         return e.forbiddenError(
@@ -233,25 +233,32 @@ routerAdd(
         )
       }
 
-      // 1. Contar registros existentes na coleção de medicamentos antes de apagar
-      let totalApagados = 0
+      // 1. Contar e carregar todos os registros existentes na coleção medicamentos
+      // Busca segura via SDK do PocketBase (findRecordsByFilter)
+      let existingRecords = []
       try {
-        const countRow = e.app.db().newQuery('SELECT COUNT(*) AS total FROM medicamentos').one()
-        if (countRow && countRow.total !== undefined) {
-          totalApagados = Number(countRow.total) || 0
-        }
-      } catch (countErr) {
-        // Fallback: se falhar o count via raw sql, tenta contar via busca
-        try {
-          const allMeds = e.app.findRecordsByFilter('medicamentos', "id != ''", '', 10000, 0)
-          totalApagados = allMeds.length
-        } catch (_) {}
+        existingRecords = e.app.findRecordsByFilter('medicamentos', "id != ''", '', 10000, 0)
+      } catch (fetchErr) {
+        console.error('Erro ao listar registros de medicamentos:', fetchErr)
+        return e.json(500, {
+          error:
+            'Falha ao consultar a lista de medicamentos existente: ' +
+            (fetchErr?.message || String(fetchErr)),
+        })
       }
 
-      // 2. Apagar TODOS os registros da coleção de medicamentos (idempotente)
-      // Usamos a exclusão direta no SQLite da tabela 'medicamentos'
+      const totalApagados = existingRecords.length
+
+      // 2. Apagar TODOS os registros da coleção de medicamentos de forma segura via SDK
+      // (idempotente: se já estiver vazio, o loop é 0 e conclui com sucesso)
       if (totalApagados > 0) {
-        e.app.db().newQuery('DELETE FROM medicamentos').execute()
+        for (let i = 0; i < existingRecords.length; i++) {
+          try {
+            e.app.delete(existingRecords[i])
+          } catch (delErr) {
+            console.error('Aviso ao apagar medicamento ID ' + existingRecords[i].id + ':', delErr)
+          }
+        }
       }
 
       // 3. Registrar auditoria em historico_importacoes conforme os requisitos da tarefa:
@@ -281,9 +288,9 @@ routerAdd(
         auditRec.set('registro_id', 'catalogo_completo')
         auditRec.set('acao', 'ZERAR_CATALOGO_MEDICAMENTOS')
         auditRec.set('usuario', authUser.id)
-        auditRec.set('usuario_nome', authUser.getString('name') || '')
-        auditRec.set('usuario_email', authUser.getString('email') || '')
-        auditRec.set('usuario_role', authUser.getString('role') || 'admin')
+        auditRec.set('usuario_nome', authUser.getString('name') || 'Administrador')
+        auditRec.set('usuario_email', authUser.getString('email') || userEmail)
+        auditRec.set('usuario_role', userRole || 'admin')
         auditRec.set('status_anterior', totalApagados + ' medicamentos cadastrados')
         auditRec.set('status_novo', '0 medicamentos (catálogo zerado)')
         auditRec.set(
