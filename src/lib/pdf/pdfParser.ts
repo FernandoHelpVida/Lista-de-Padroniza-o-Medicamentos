@@ -20,9 +20,27 @@ export interface UnrecognizedItem {
   reason: string
 }
 
+export interface ItemDescartado {
+  pdfId?: number
+  rawText: string
+  secao?: StatusPadronizacao
+  pageNumber?: number
+  motivo: string
+}
+
+export interface ItemFaltanteRelatorio {
+  pdfId: number
+  secao?: StatusPadronizacao | string
+  motivo: string
+  rawText: string
+  origemEvidencia: 'descarte_registrado' | 'sem_correspondencia'
+  pageNumber?: number
+}
+
 export interface ParseResult {
   items: ParsedMedicamento[]
   unrecognized: UnrecognizedItem[]
+  descartados: ItemDescartado[]
   totalPages: number
   totalItems: number
 }
@@ -462,6 +480,7 @@ export function extractLineId(str: string): { pdfId?: number; cleanText: string 
 export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult {
   const items: ParsedMedicamento[] = []
   const unrecognized: UnrecognizedItem[] = []
+  const descartados: ItemDescartado[] = []
 
   let currentStatus: StatusPadronizacao = 'Padronizado'
   const lines = markdownText.split('\n')
@@ -482,6 +501,16 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
 
     // Descartar ruídos, rodapés e regras
     if (isNoiseLine(rawLine)) {
+      const extractedNoiseId = extractLineId(rawLine).pdfId
+      if (extractedNoiseId || rawLine.length > 5) {
+        descartados.push({
+          pdfId: extractedNoiseId,
+          rawText: rawLine,
+          secao: currentStatus,
+          pageNumber: 0,
+          motivo: 'Descartado como ruído, cabeçalho institucional ou rodapé de página.',
+        })
+      }
       continue
     }
 
@@ -574,12 +603,26 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
                 if (!isMonsterItem(combinedNome)) {
                   lastItem.nome = combinedNome
                   lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${nome}`
+                  descartados.push({
+                    pdfId: rowPdfId,
+                    rawText: rawLine,
+                    secao: currentStatus,
+                    pageNumber: 0,
+                    motivo: `Tratado como continuação da linha anterior (fundido no item "${lastItem.nome}").`,
+                  })
                   continue
                 }
               }
             }
             pendingNome = pendingNome ? `${pendingNome} ${nome}` : nome
             if (rowPdfId && !pendingId) pendingId = rowPdfId
+            descartados.push({
+              pdfId: rowPdfId,
+              rawText: rawLine,
+              secao: currentStatus,
+              pageNumber: 0,
+              motivo: 'Linha de tabela sem classe definida acumulada como fragmento pendente.',
+            })
             continue
           }
         }
@@ -628,6 +671,13 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
                 if (classeClean) lastItem.classe = classeClean
                 if (effectiveId && !lastItem.pdfId) lastItem.pdfId = effectiveId
                 lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+                descartados.push({
+                  pdfId: effectiveId,
+                  rawText: rawLine,
+                  secao: rowStatus,
+                  pageNumber: 0,
+                  motivo: `Inicia com dosagem fragmentada; fundido com o item anterior "${lastItem.nome}".`,
+                })
                 continue
               }
             }
@@ -693,6 +743,13 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         if (!isMonsterItem(combinedNome)) {
           lastItem.nome = combinedNome
           lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${effectiveLineText}`
+          descartados.push({
+            pdfId: currentLineId,
+            rawText: rawLine,
+            secao: currentStatus,
+            pageNumber: 0,
+            motivo: `Tratado como continuação de nome (anexado ao item anterior "${lastItem.nome}").`,
+          })
           continue
         }
       }
@@ -714,6 +771,13 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
               text: pendingNome,
               reason: 'Linha sem classe associada antes de outro item completo.',
             })
+            descartados.push({
+              pdfId: pendingId,
+              rawText: pendingNome,
+              secao: currentStatus,
+              pageNumber: 0,
+              motivo: 'Linha sem classe associada antes de outro item completo (não reconhecido).',
+            })
           }
         }
         pendingNome = null
@@ -726,6 +790,13 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           lastItem.classe = match.className
           if (currentLineId && !lastItem.pdfId) lastItem.pdfId = currentLineId
           lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+          descartados.push({
+            pdfId: currentLineId,
+            rawText: rawLine,
+            secao: currentStatus,
+            pageNumber: 0,
+            motivo: `Fragmento de dosagem com classe fundido no item anterior "${lastItem.nome}".`,
+          })
           pendingId = undefined
           continue
         }
@@ -833,6 +904,13 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           text: pendingNome,
           reason: 'Classe terapêutica não identificada para este item.',
         })
+        descartados.push({
+          pdfId: pendingId,
+          rawText: pendingNome,
+          secao: currentStatus,
+          pageNumber: 0,
+          motivo: 'Classe terapêutica não identificada para este item.',
+        })
       }
       pendingNome = effectiveLineText
       continue
@@ -842,11 +920,12 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
   }
 
   // Deduplicação e sanitização de ruídos
-  const sanitized = sanitizeAndFilterItems(items, unrecognized)
+  const sanitized = sanitizeAndFilterItems(items, unrecognized, descartados)
 
   return {
     items: sanitized,
     unrecognized,
+    descartados,
     totalPages: 16,
     totalItems: sanitized.length,
   }
@@ -858,6 +937,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
 export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseResult {
   const items: ParsedMedicamento[] = []
   const unrecognized: UnrecognizedItem[] = []
+  const descartados: ItemDescartado[] = []
 
   // Status padrão inicial da página 1 (no documento Anexo I, inicia com Padronizados)
   let currentStatus: StatusPadronizacao = 'Padronizado'
@@ -889,6 +969,13 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
               text: pendingNome,
               reason: 'Linha isolada antes de mudança de seção.',
             })
+            descartados.push({
+              pdfId: pendingId,
+              rawText: pendingNome,
+              secao: currentStatus,
+              pageNumber: pendingPageNumber,
+              motivo: 'Linha isolada antes de mudança de seção.',
+            })
           }
           pendingNome = null
           pendingId = undefined
@@ -898,6 +985,16 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
 
       // Descartar ruídos, rodapés e cabeçalhos de coluna
       if (isNoiseLine(rawLine)) {
+        const noiseId = extractLineId(rawLine).pdfId
+        if (noiseId || rawLine.length > 5) {
+          descartados.push({
+            pdfId: noiseId,
+            rawText: rawLine,
+            secao: currentStatus,
+            pageNumber: page.pageNumber,
+            motivo: 'Descartado como ruído, cabeçalho institucional ou rodapé de página.',
+          })
+        }
         continue
       }
 
@@ -937,6 +1034,13 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
           if (!isMonsterItem(combinedNome)) {
             lastItem.nome = combinedNome
             lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${cleanLine}`
+            descartados.push({
+              pdfId: linePdfId,
+              rawText: rawLine,
+              secao: currentStatus,
+              pageNumber: page.pageNumber,
+              motivo: `Tratado como continuação da linha anterior (fundido no item "${lastItem.nome}").`,
+            })
             continue
           }
         }
@@ -959,6 +1063,13 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
                 text: pendingNome,
                 reason: 'Linha sem classe associada antes de outro medicamento.',
               })
+              descartados.push({
+                pdfId: pendingId,
+                rawText: pendingNome,
+                secao: currentStatus,
+                pageNumber: pendingPageNumber,
+                motivo: 'Linha sem classe associada antes de outro medicamento.',
+              })
             }
           }
           pendingNome = null
@@ -973,6 +1084,13 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
             lastItem.classe = match.className
             if (linePdfId && !lastItem.pdfId) lastItem.pdfId = linePdfId
             lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+            descartados.push({
+              pdfId: linePdfId,
+              rawText: rawLine,
+              secao: currentStatus,
+              pageNumber: page.pageNumber,
+              motivo: `Fragmento de dosagem com classe fundido no item anterior "${lastItem.nome}".`,
+            })
             pendingId = undefined
             continue
           }
@@ -1069,6 +1187,13 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
             text: pendingNome,
             reason: 'Classe terapêutica não identificada para este item.',
           })
+          descartados.push({
+            pdfId: pendingId,
+            rawText: pendingNome,
+            secao: currentStatus,
+            pageNumber: pendingPageNumber,
+            motivo: 'Classe terapêutica não identificada para este item.',
+          })
         }
         pendingNome = cleanLine
         pendingPageNumber = page.pageNumber
@@ -1115,15 +1240,23 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
         text: pendingNome,
         reason: 'Classe terapêutica não identificada ao fim do documento.',
       })
+      descartados.push({
+        pdfId: pendingId,
+        rawText: pendingNome,
+        secao: currentStatus,
+        pageNumber: pendingPageNumber,
+        motivo: 'Classe terapêutica não identificada ao fim do documento.',
+      })
     }
   }
 
   // Deduplicação e sanitização garantindo regras por pdfId
-  const sanitized = sanitizeAndFilterItems(items, unrecognized)
+  const sanitized = sanitizeAndFilterItems(items, unrecognized, descartados)
 
   return {
     items: sanitized,
     unrecognized,
+    descartados,
     totalPages: pages.length,
     totalItems: sanitized.length,
   }
@@ -1348,6 +1481,7 @@ export function checkItemIntegrity(nome: string): string[] {
 function sanitizeAndFilterItems(
   items: ParsedMedicamento[],
   unrecognized: UnrecognizedItem[],
+  descartados: ItemDescartado[] = [],
 ): ParsedMedicamento[] {
   const uniqueItems: ParsedMedicamento[] = []
   // Mapas para unicidade: por pdfId (quando presente) e por chave nome+classe (quando ausente)
@@ -1356,9 +1490,38 @@ function sanitizeAndFilterItems(
 
   for (const item of items) {
     let nomeLimpo = (item.nome || '').replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
-    if (!nomeLimpo || nomeLimpo.length < 3) continue
-    if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO')) continue
-    if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) continue
+    if (!nomeLimpo || nomeLimpo.length < 3) {
+      if (item.pdfId || nomeLimpo) {
+        descartados.push({
+          pdfId: item.pdfId,
+          rawText: item.rawSourceLine || item.nome,
+          secao: item.status,
+          pageNumber: item.pageNumber || 0,
+          motivo: 'Barrado pela auditoria de integridade: nome vazio ou menor que 3 caracteres.',
+        })
+      }
+      continue
+    }
+    if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO')) {
+      descartados.push({
+        pdfId: item.pdfId,
+        rawText: item.rawSourceLine || item.nome,
+        secao: item.status,
+        pageNumber: item.pageNumber || 0,
+        motivo: 'Barrado pela auditoria de integridade: artefato de extração ou repetição espúria.',
+      })
+      continue
+    }
+    if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) {
+      descartados.push({
+        pdfId: item.pdfId,
+        rawText: item.rawSourceLine || item.nome,
+        secao: item.status,
+        pageNumber: item.pageNumber || 0,
+        motivo: 'Descartado como cabeçalho de coluna residual.',
+      })
+      continue
+    }
 
     // Guardrail: Rejeitar fragmentos órfãos isolados sem classe
     if (isContinuationLine(nomeLimpo) && !item.classe && !item.pdfId) {
@@ -1366,6 +1529,13 @@ function sanitizeAndFilterItems(
         pageNumber: item.pageNumber || 0,
         text: nomeLimpo,
         reason: 'Fragmento órfão sem medicamento ou classe associada descartado.',
+      })
+      descartados.push({
+        pdfId: item.pdfId,
+        rawText: item.rawSourceLine || item.nome,
+        secao: item.status,
+        pageNumber: item.pageNumber || 0,
+        motivo: 'Fragmento órfão sem medicamento ou classe associada descartado.',
       })
       continue
     }
@@ -1376,6 +1546,13 @@ function sanitizeAndFilterItems(
         pageNumber: item.pageNumber || 0,
         text: nomeLimpo.substring(0, 100) + '...',
         reason: 'Item rejeitado por fusão indevida de múltiplas linhas (item monstro detectado).',
+      })
+      descartados.push({
+        pdfId: item.pdfId,
+        rawText: item.rawSourceLine || item.nome,
+        secao: item.status,
+        pageNumber: item.pageNumber || 0,
+        motivo: 'Item rejeitado por fusão indevida de múltiplas linhas (item monstro detectado).',
       })
       continue
     }
@@ -1390,8 +1567,16 @@ function sanitizeAndFilterItems(
 
       if (canMergeWithPrev) {
         if (hasDanglingEnd(prev.nome)) {
+          const oldPrevNome = prev.nome
           prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
           if (item.pdfId && !prev.pdfId) prev.pdfId = item.pdfId
+          descartados.push({
+            pdfId: item.pdfId,
+            rawText: item.rawSourceLine || item.nome,
+            secao: item.status,
+            pageNumber: item.pageNumber || 0,
+            motivo: `Fundido no item anterior com término pendente ("${oldPrevNome}").`,
+          })
           continue
         }
         // Ou se o item atual inicia com fragmento de dosagem (ex: "0,6UI + CLORANFENICOL...") e o anterior é princípio ativo
@@ -1399,9 +1584,17 @@ function sanitizeAndFilterItems(
           isDosageFragmentStart(item.nome) &&
           (!/[0-9]/.test(prev.nome) || hasDanglingEnd(prev.nome))
         ) {
+          const oldPrevNome = prev.nome
           prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
           if (item.classe && !prev.classe) prev.classe = item.classe
           if (item.pdfId && !prev.pdfId) prev.pdfId = item.pdfId
+          descartados.push({
+            pdfId: item.pdfId,
+            rawText: item.rawSourceLine || item.nome,
+            secao: item.status,
+            pageNumber: item.pageNumber || 0,
+            motivo: `Fragmento de dosagem fundido no princípio ativo anterior ("${oldPrevNome}").`,
+          })
           continue
         }
       }
@@ -1418,6 +1611,13 @@ function sanitizeAndFilterItems(
         if (item.nome.length > existing.nome.length && !isMonsterItem(item.nome)) {
           existing.nome = item.nome
         }
+        descartados.push({
+          pdfId: item.pdfId,
+          rawText: item.rawSourceLine || item.nome,
+          secao: item.status,
+          pageNumber: item.pageNumber || 0,
+          motivo: `Duplicado fundido em outro ID #${item.pdfId} já registrado ("${existing.nome}").`,
+        })
         continue
       } else {
         seenPdfIdMap.set(item.pdfId, uniqueItems.length)
@@ -1431,6 +1631,16 @@ function sanitizeAndFilterItems(
       if (!seenKeyMap.has(key)) {
         seenKeyMap.set(key, uniqueItems.length)
         uniqueItems.push(item)
+      } else {
+        const existingIdx = seenKeyMap.get(key)!
+        const existing = uniqueItems[existingIdx]
+        descartados.push({
+          pdfId: item.pdfId,
+          rawText: item.rawSourceLine || item.nome,
+          secao: item.status,
+          pageNumber: item.pageNumber || 0,
+          motivo: `Item com mesmo nome e classe unificado ao registro "${existing.nome}".`,
+        })
       }
     }
   }
@@ -1444,14 +1654,30 @@ function sanitizeAndFilterItems(
       const canMergeWithLast = !it.pdfId || !last.pdfId || it.pdfId === last.pdfId
       if (canMergeWithLast) {
         if (hasDanglingEnd(last.nome)) {
+          const oldLastNome = last.nome
           last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
           if (it.pdfId && !last.pdfId) last.pdfId = it.pdfId
+          descartados.push({
+            pdfId: it.pdfId,
+            rawText: it.rawSourceLine || it.nome,
+            secao: it.status,
+            pageNumber: it.pageNumber || 0,
+            motivo: `Fundido ao término incompleto do item "${oldLastNome}".`,
+          })
           continue
         }
         if (isDosageFragmentStart(it.nome) && !/[0-9]/.test(last.nome)) {
+          const oldLastNome = last.nome
           last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
           if (it.classe) last.classe = it.classe
           if (it.pdfId && !last.pdfId) last.pdfId = it.pdfId
+          descartados.push({
+            pdfId: it.pdfId,
+            rawText: it.rawSourceLine || it.nome,
+            secao: it.status,
+            pageNumber: it.pageNumber || 0,
+            motivo: `Dosagem residual fundida ao item anterior "${oldLastNome}".`,
+          })
           continue
         }
       }
@@ -1460,4 +1686,83 @@ function sanitizeAndFilterItems(
   }
 
   return finalItems
+}
+
+/**
+ * Cruza o intervalo oficial esperado (1..482) com os itens extraídos e a lista de descartes.
+ * Para cada ID faltante, associa a evidência de descarte quando houver;
+ * se não houver nenhuma menção no documento, classifica como "ID sem correspondência na extração".
+ */
+export function buildMissingItemsReport(
+  extractedItems: ParsedMedicamento[],
+  descartados: ItemDescartado[] = [],
+  expectedMin = 1,
+  expectedMax = 482,
+): ItemFaltanteRelatorio[] {
+  // Identificar IDs presentes nos itens válidos
+  const presentIds = new Set<number>()
+  for (const item of extractedItems) {
+    if (item.pdfId && item.pdfId >= expectedMin && item.pdfId <= expectedMax) {
+      presentIds.add(item.pdfId)
+    }
+  }
+
+  // Mapear descartes por pdfId (priorizar descartes com mais detalhes)
+  const descartesByPdfId = new Map<number, ItemDescartado>()
+  for (const d of descartados) {
+    if (d.pdfId && d.pdfId >= expectedMin && d.pdfId <= expectedMax) {
+      if (!descartesByPdfId.has(d.pdfId)) {
+        descartesByPdfId.set(d.pdfId, d)
+      } else {
+        const existing = descartesByPdfId.get(d.pdfId)!
+        // Se o novo tem motivo mais descritivo ou texto maior
+        if ((d.rawText && d.rawText.length > existing.rawText.length) || d.secao) {
+          descartesByPdfId.set(d.pdfId, d)
+        }
+      }
+    }
+  }
+
+  const missingList: ItemFaltanteRelatorio[] = []
+
+  for (let id = expectedMin; id <= expectedMax; id++) {
+    if (!presentIds.has(id)) {
+      const descarte = descartesByPdfId.get(id)
+      if (descarte) {
+        missingList.push({
+          pdfId: id,
+          secao: descarte.secao || 'Não identificada',
+          motivo: descarte.motivo,
+          rawText: descarte.rawText || '',
+          origemEvidencia: 'descarte_registrado',
+          pageNumber: descarte.pageNumber,
+        })
+      } else {
+        missingList.push({
+          pdfId: id,
+          secao: 'Não identificada',
+          motivo: 'ID sem correspondência na extração',
+          rawText: '',
+          origemEvidencia: 'sem_correspondencia',
+        })
+      }
+    }
+  }
+
+  return missingList
+}
+
+/**
+ * Gera conteúdo CSV para o Relatório de Itens Faltantes no padrão Help Vida (ponto-e-vírgula e UTF-8 BOM).
+ */
+export function exportMissingItemsToCsv(faltantes: ItemFaltanteRelatorio[]): string {
+  const header = ['ID PDF', 'Seção do PDF', 'Motivo do Descarte', 'Texto Bruto de Origem']
+  const rows = faltantes.map((item) => [
+    `"${item.pdfId}"`,
+    `"${(item.secao || 'Não identificada').toString().replace(/"/g, '""')}"`,
+    `"${item.motivo.replace(/"/g, '""')}"`,
+    `"${(item.rawText || '').replace(/"/g, '""')}"`,
+  ])
+
+  return '\uFEFF' + [header.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n')
 }

@@ -3,6 +3,8 @@ import {
   parseMedicamentosFromMarkdown,
   checkItemIntegrity,
   postProcessItemName,
+  buildMissingItemsReport,
+  exportMissingItemsToCsv,
 } from './pdfParser'
 import type { ExtractedPageText } from './pdfLoader'
 
@@ -211,5 +213,71 @@ export function runPdfParserValidationTests() {
     seenIds.add(it.pdfId)
   }
 
-  return { success: true, totalItems: result.items.length, pdfIdsTested: seenIds.size }
+  // --- Caso 5: Teste do Relatório de Itens Faltantes e Registro de Descartes com Motivo ---
+  // Markdown simulando:
+  // - Item 1: Válido
+  // - Item 2: Duplicado com Item 2 anterior (deve ser registrado em descartados)
+  // - Item 3: Linha de ruído/rodapé
+  // - Item 4: Linha sem classe associada
+  // - IDs 5..10: Ausentes sem correspondência
+  const sampleMarkdownDescartes = `
+Medicamentos Padronizados:
+| 1 | PARACETAMOL 500MG COMPRIMIDO | Analgésico/antitérmico | Padrão |
+| 2 | DIPIRONA 500MG COMPRIMIDO | Analgésico/antitérmico | Padrão |
+| 2 | DIPIRONA 500MG COMPRIMIDO | Analgésico/antitérmico | Padrão |
+| 3 | Rua das Camélias, 381 – Jardim Cuiabá |
+4 | SUBSTANCIA DESCONHECIDA SEM CLASSE IDENTIFICAVEL
+`
+  const mdResultDescartes = parseMedicamentosFromMarkdown(sampleMarkdownDescartes)
+  if (!mdResultDescartes.descartados || mdResultDescartes.descartados.length === 0) {
+    throw new Error('Nenhum descarte foi registrado no resultado de parsing')
+  }
+
+  // Verificar se o ID 2 duplicado foi registrado em descartados com motivo
+  const descarteDup = mdResultDescartes.descartados.find((d) => d.pdfId === 2)
+  if (!descarteDup) {
+    throw new Error('Item duplicado ID 2 não foi capturado na lista de descartados')
+  }
+  if (!descarteDup.motivo || descarteDup.motivo.length < 5) {
+    throw new Error('Motivo do descarte do ID 2 não foi registrado corretamente')
+  }
+
+  // Gerar relatório de faltantes para um universo de teste de 1 a 10
+  const relatorioFaltantes = buildMissingItemsReport(
+    mdResultDescartes.items,
+    mdResultDescartes.descartados,
+    1,
+    10,
+  )
+
+  // Deve haver 8 faltantes no total (dos IDs 1 a 10, apenas 1 e 2 foram extraídos)
+  if (relatorioFaltantes.length !== 8) {
+    throw new Error(`Esperado 8 faltantes entre 1 e 10, obtido: ${relatorioFaltantes.length}`)
+  }
+
+  // ID 3 ou 4 devem ter evidência registrada se presentes nos descartes
+  const faltanteSemEvidencia = relatorioFaltantes.find((f) => f.pdfId === 10)
+  if (
+    !faltanteSemEvidencia ||
+    faltanteSemEvidencia.motivo !== 'ID sem correspondência na extração'
+  ) {
+    throw new Error('ID 10 deveria estar marcado como "ID sem correspondência na extração"')
+  }
+
+  // Testar exportação CSV
+  const csvFaltantes = exportMissingItemsToCsv(relatorioFaltantes)
+  if (!csvFaltantes.includes('ID PDF;Seção do PDF;Motivo do Descarte;Texto Bruto de Origem')) {
+    throw new Error('Cabeçalho CSV de itens faltantes incorreto')
+  }
+  if (!csvFaltantes.includes('ID sem correspondência na extração')) {
+    throw new Error('CSV de faltantes não incluiu motivo de item sem correspondência')
+  }
+
+  return {
+    success: true,
+    totalItems: result.items.length,
+    pdfIdsTested: seenIds.size,
+    descartesTested: mdResultDescartes.descartados.length,
+    faltantesTested: relatorioFaltantes.length,
+  }
 }

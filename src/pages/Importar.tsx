@@ -12,6 +12,10 @@ import {
   ParsedMedicamento,
   StatusPadronizacao,
   UnrecognizedItem,
+  ItemDescartado,
+  ItemFaltanteRelatorio,
+  buildMissingItemsReport,
+  exportMissingItemsToCsv,
 } from '@/lib/pdf/pdfParser'
 import { runPdfParserValidationTests } from '@/lib/pdf/pdfParserValidation.test'
 import officialPdfUrl from '@/assets/relacao-dos-medicamentos-avaliados-e-definicao-de-padronizacao-16.10-50a22.pdf'
@@ -110,6 +114,7 @@ export default function Importar() {
   // Itens analisados
   const [previewItems, setPreviewItems] = useState<PreviewItem[]>([])
   const [unrecognizedItems, setUnrecognizedItems] = useState<UnrecognizedItem[]>([])
+  const [descartadosList, setDescartadosList] = useState<ItemDescartado[]>([])
   const [documentStats, setDocumentStats] = useState<{
     totalPages: number
     fileName: string
@@ -119,6 +124,13 @@ export default function Importar() {
   // Estado para expandir/colapsar tabela detalhada de duplicados
   const [duplicatesTableExpanded, setDuplicatesTableExpanded] = useState(false)
   const [duplicatesFilterSearch, setDuplicatesFilterSearch] = useState('')
+
+  // Estado para o painel de itens faltantes
+  const [missingTableExpanded, setMissingTableExpanded] = useState(true)
+  const [missingFilterSearch, setMissingFilterSearch] = useState('')
+  const [missingFilterOrigem, setMissingFilterOrigem] = useState<
+    'TODOS' | 'descarte_registrado' | 'sem_correspondencia'
+  >('TODOS')
 
   // Filtros da tabela de pré-visualização
   const [filterSearch, setFilterSearch] = useState('')
@@ -240,6 +252,7 @@ export default function Importar() {
       let parseResult: {
         items: ParsedMedicamento[]
         unrecognized: UnrecognizedItem[]
+        descartados?: ItemDescartado[]
         totalPages: number
         totalItems: number
       } | null = null
@@ -367,6 +380,7 @@ export default function Importar() {
 
       setPreviewItems(previews)
       setUnrecognizedItems(parseResult.unrecognized)
+      setDescartadosList(parseResult.descartados || [])
       setDocumentStats({
         totalPages: parseResult.totalPages || 16,
         fileName,
@@ -685,6 +699,68 @@ export default function Importar() {
       ausentesNoBanco,
     }
   }, [previewItems, existingMeds])
+
+  // Relatório oficial dos 57 itens faltantes (ou qualquer ausência no intervalo 1..482)
+  const missingItemsReport = useMemo(() => {
+    return buildMissingItemsReport(previewItems, descartadosList, 1, 482)
+  }, [previewItems, descartadosList])
+
+  // Filtros da tabela de itens faltantes
+  const filteredMissingItems = useMemo(() => {
+    const q = missingFilterSearch.toLowerCase().trim()
+    return missingItemsReport.filter((item) => {
+      if (missingFilterOrigem !== 'TODOS' && item.origemEvidencia !== missingFilterOrigem) {
+        return false
+      }
+      if (q) {
+        const idMatch = item.pdfId.toString().includes(q)
+        const motivoMatch = item.motivo.toLowerCase().includes(q)
+        const rawMatch = (item.rawText || '').toLowerCase().includes(q)
+        const secaoMatch = (item.secao || '').toLowerCase().includes(q)
+        if (!idMatch && !motivoMatch && !rawMatch && !secaoMatch) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [missingItemsReport, missingFilterSearch, missingFilterOrigem])
+
+  // Exportar relatório de itens faltantes em CSV
+  const handleExportMissingCsv = () => {
+    if (missingItemsReport.length === 0) {
+      toast({
+        title: 'Nenhum item faltante',
+        description: 'Todos os 482 IDs da régua oficial foram extraídos com sucesso.',
+      })
+      return
+    }
+
+    try {
+      const csvContent = exportMissingItemsToCsv(missingItemsReport)
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const fileName = `relatorio-itens-faltantes-anexo-I-${new Date().toISOString().split('T')[0]}.csv`
+      link.setAttribute('href', url)
+      link.setAttribute('download', fileName)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      toast({
+        title: 'Relatório CSV exportado',
+        description: `${missingItemsReport.length} itens faltantes exportados com sucesso.`,
+      })
+    } catch (err) {
+      console.error('Erro ao exportar CSV de faltantes:', err)
+      toast({
+        title: 'Erro na exportação',
+        description: 'Não foi possível gerar o arquivo CSV.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   // Filtragem da lista de pré-visualização
   const filteredPreview = useMemo(() => {
@@ -1033,6 +1109,7 @@ export default function Importar() {
       // Limpar estados locais de pré-visualização e recarregar dados do banco
       setPreviewItems([])
       setUnrecognizedItems([])
+      setDescartadosList([])
       setSelectedFile(null)
       setDocumentStats(null)
       setImportSummary(null)
@@ -1969,7 +2046,232 @@ export default function Importar() {
             </Card>
           )}
 
-          {/* 3. Bloco de Itens Não Reconhecidos (para revisão manual) */}
+          {/* 3. Bloco Oficial: Relatório de Itens Faltantes (IDs 1-482 do Anexo I não extraídos) */}
+          {previewItems.length > 0 && missingItemsReport.length > 0 && (
+            <Card className="border-rose-200 bg-rose-50/30 shadow-xs">
+              <CardHeader className="pb-3 border-b border-rose-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                        <AlertTriangle className="h-4 w-4 text-rose-600" />
+                      </div>
+                      <CardTitle className="text-sm sm:text-base font-bold text-rose-950 flex items-center gap-2">
+                        Relatório de Itens Faltantes
+                        <Badge className="bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold">
+                          {missingItemsReport.length}{' '}
+                          {missingItemsReport.length === 1 ? 'item faltante' : 'itens faltantes'}
+                        </Badge>
+                      </CardTitle>
+                    </div>
+                    <CardDescription className="text-xs text-rose-900/80 leading-relaxed">
+                      Cruzamento oficial da régua de 482 itens (intervalo 1–482) com os IDs
+                      extraídos. Apresenta o motivo do descarte ou ausência de cada ID para
+                      auditoria completa da importação.
+                    </CardDescription>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportMissingCsv}
+                      className="h-8 text-xs font-semibold border-rose-300 text-rose-800 hover:bg-rose-100/70 flex items-center gap-1.5"
+                    >
+                      <Download size={13} className="text-rose-700" />
+                      Exportar Relatório em CSV
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setMissingTableExpanded(!missingTableExpanded)}
+                      className="h-8 px-2 text-rose-700 hover:bg-rose-100/50"
+                      aria-label={
+                        missingTableExpanded
+                          ? 'Ocultar tabela de faltantes'
+                          : 'Mostrar tabela de faltantes'
+                      }
+                    >
+                      {missingTableExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Filtros do Relatório de Faltantes */}
+                {missingTableExpanded && (
+                  <div className="pt-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                    <div className="relative flex-1 max-w-sm">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-rose-400" />
+                      <Input
+                        type="search"
+                        placeholder="Filtrar por ID, motivo, seção ou texto bruto..."
+                        value={missingFilterSearch}
+                        onChange={(e) => setMissingFilterSearch(e.target.value)}
+                        className="h-8 pl-8 text-xs bg-white border-rose-200 text-rose-950 placeholder:text-rose-400/80 focus-visible:ring-rose-400"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-semibold text-rose-800 mr-1 flex items-center gap-1">
+                        <Filter size={12} />
+                        Origem:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMissingFilterOrigem('TODOS')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-[11px] font-medium transition',
+                          missingFilterOrigem === 'TODOS'
+                            ? 'bg-rose-700 text-white font-bold'
+                            : 'bg-white text-rose-800 border border-rose-200 hover:bg-rose-50',
+                        )}
+                      >
+                        Todos ({missingItemsReport.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMissingFilterOrigem('descarte_registrado')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-[11px] font-medium transition',
+                          missingFilterOrigem === 'descarte_registrado'
+                            ? 'bg-amber-700 text-white font-bold'
+                            : 'bg-white text-amber-800 border border-amber-200 hover:bg-amber-50',
+                        )}
+                      >
+                        Descarte Registrado (
+                        {
+                          missingItemsReport.filter(
+                            (m) => m.origemEvidencia === 'descarte_registrado',
+                          ).length
+                        }
+                        )
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMissingFilterOrigem('sem_correspondencia')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-[11px] font-medium transition',
+                          missingFilterOrigem === 'sem_correspondencia'
+                            ? 'bg-slate-700 text-white font-bold'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100',
+                        )}
+                      >
+                        Sem Correspondência (
+                        {
+                          missingItemsReport.filter(
+                            (m) => m.origemEvidencia === 'sem_correspondencia',
+                          ).length
+                        }
+                        )
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </CardHeader>
+
+              {missingTableExpanded && (
+                <CardContent className="pt-3">
+                  <div className="border border-rose-200/80 rounded-xl overflow-hidden overflow-x-auto bg-white">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-rose-100/60 text-rose-900 font-bold uppercase text-[10px] tracking-wider border-b border-rose-200/70">
+                        <tr>
+                          <th className="py-2 px-3 w-16 text-center font-mono">ID PDF</th>
+                          <th className="py-2 px-3 w-32">Seção do PDF</th>
+                          <th className="py-2 px-3 w-48">Motivo do Descarte / Ausência</th>
+                          <th className="py-2 px-3">Texto Bruto de Origem</th>
+                          <th className="py-2 px-3 w-20 text-center">Página</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-100">
+                        {filteredMissingItems.map((missing) => (
+                          <tr key={missing.pdfId} className="hover:bg-rose-50/50 transition">
+                            <td className="py-2 px-3 text-center">
+                              <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono text-[11px] font-bold">
+                                #{missing.pdfId}
+                              </Badge>
+                            </td>
+
+                            <td className="py-2 px-3">
+                              {missing.secao === 'Padronizado' && (
+                                <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[10px] font-semibold">
+                                  Padronizado
+                                </Badge>
+                              )}
+                              {missing.secao === 'Não Padronizado' && (
+                                <Badge className="bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40 text-[10px] font-semibold">
+                                  Não Padronizado
+                                </Badge>
+                              )}
+                              {missing.secao === 'Inativo' && (
+                                <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
+                                  Inativo
+                                </Badge>
+                              )}
+                              {!['Padronizado', 'Não Padronizado', 'Inativo'].includes(
+                                missing.secao || '',
+                              ) && (
+                                <span className="text-[11px] text-slate-400 italic">
+                                  {missing.secao || 'Não identificada'}
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="py-2 px-3">
+                              {missing.origemEvidencia === 'descarte_registrado' ? (
+                                <div className="space-y-0.5">
+                                  <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-semibold">
+                                    Descarte Registrado
+                                  </Badge>
+                                  <p className="text-[11px] text-slate-700 leading-snug">
+                                    {missing.motivo}
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <Badge className="bg-slate-100 text-slate-700 border-slate-300 text-[10px]">
+                                    Sem Correspondência
+                                  </Badge>
+                                  <p className="text-[11px] text-slate-500 italic">
+                                    Nenhuma linha do PDF referenciou este ID.
+                                  </p>
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-800 break-words max-w-md">
+                              {missing.rawText ? (
+                                <span className="bg-slate-50 px-2 py-1 rounded border border-slate-200 inline-block">
+                                  {missing.rawText}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 italic text-[10px]">
+                                  (Ausente no texto extraído do documento)
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="py-2 px-3 text-center text-[11px] text-slate-400 font-mono">
+                              {missing.pageNumber && missing.pageNumber > 0
+                                ? `Pág. ${missing.pageNumber}`
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {filteredMissingItems.length === 0 && (
+                    <div className="text-center py-6 text-slate-400 text-xs">
+                      Nenhum item faltante encontrado para o filtro digitado.
+                    </div>
+                  )}
+                </CardContent>
+              )}
+            </Card>
+          )}
+
+          {/* 4. Bloco de Itens Não Reconhecidos (para revisão manual) */}
           {unrecognizedItems.length > 0 && (
             <Card className="border-amber-200/80 bg-amber-50/40 shadow-xs">
               <CardHeader className="pb-2">
