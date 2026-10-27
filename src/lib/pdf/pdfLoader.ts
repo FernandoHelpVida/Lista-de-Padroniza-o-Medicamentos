@@ -139,14 +139,16 @@ export async function extractTextFromPdf(fileBuffer: ArrayBuffer): Promise<Extra
       }
     }
 
-    // Agrupar itens que estejam na mesma linha (y com diferença <= 3 pontos)
+    // Agrupar itens que estejam na mesma linha (y com tolerância adaptada <= 4 pontos)
     const lineMap = new Map<number, ItemWithPos[]>()
     for (const item of itemsWithPos) {
       let foundKey: number | null = null
+      let minDiff = 4.5
       for (const key of lineMap.keys()) {
-        if (Math.abs(key - item.y) <= 3) {
+        const diff = Math.abs(key - item.y)
+        if (diff <= minDiff) {
+          minDiff = diff
           foundKey = key
-          break
         }
       }
       if (foundKey !== null) {

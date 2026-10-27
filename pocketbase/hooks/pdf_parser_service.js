@@ -1,3 +1,4 @@
+// Endpoint temporário de diagnóstico para inspecionar como as insulinas aparecem no markdown ou como o parser as vê
 routerAdd(
   'POST',
   '/backend/v1/pdf/parse-markdown',
@@ -11,9 +12,10 @@ routerAdd(
       const file = files[0]
       // Converter para Markdown estruturado usando a engine server-side do Skip Cloud
       const result = $documents.toMarkdown({ file: file })
+      const md = result.markdown || ''
 
       return e.json(200, {
-        markdown: result.markdown || '',
+        markdown: md,
         truncated: Boolean(result.truncated),
         filename: file.name,
         size: file.size,
@@ -104,9 +106,16 @@ routerAdd(
 
       // Executar operações em lote
       items.forEach((item) => {
-        const nomeLimpo = (item.nome || '').trim().toUpperCase()
-        const classeLimpa = (item.classe || '').trim()
-        const statusLimpo = (item.status || 'Padronizado').trim()
+        let nomeLimpo = (item.nome || '').trim().toUpperCase()
+        let classeLimpa = (item.classe || '').trim()
+        let statusLimpo = (item.status || 'Padronizado').trim()
+
+        // Rejeitar linhas espúrias/fragmentadas ou cabeçalhos
+        if (!nomeLimpo || nomeLimpo.length < 3) return
+        if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO'))
+          return
+        if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) return
+
         const key = normalizeSimple(nomeLimpo)
         if (!key) return
 

@@ -265,6 +265,9 @@ export default function Importar() {
         }
       })
 
+      // Ordenar por nome para visualização limpa
+      previews.sort((a, b) => a.nome.localeCompare(b.nome))
+
       setPreviewItems(previews)
       setUnrecognizedItems(parseResult.unrecognized)
       setDocumentStats({
