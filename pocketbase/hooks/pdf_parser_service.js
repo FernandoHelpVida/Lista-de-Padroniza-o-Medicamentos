@@ -14,6 +14,9 @@ routerAdd(
       const result = $documents.toMarkdown({ file: file })
       const md = result.markdown || ''
 
+      // Também registrar um preview no log para diagnóstico se necessário
+      console.log('PDF TO MARKDOWN LENGTH: ' + md.length)
+
       return e.json(200, {
         markdown: md,
         truncated: Boolean(result.truncated),
@@ -117,13 +120,15 @@ routerAdd(
         if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) return
 
         // Sanitização contra itens monstros:
-        if (nomeLimpo.length > 120) {
-          const compMatches = (nomeLimpo.match(/\b(COMPRIMIDO|CAPSULA|AMPOLA|FRASCO)\b/g) || [])
-            .length
-          if (compMatches >= 2) return
-        }
-        const compMatches2 = (nomeLimpo.match(/\bCOMPRIMIDO\b/g) || []).length
-        if (compMatches2 >= 2) return
+        if (nomeLimpo.length > 250) return
+        const compMatches = (nomeLimpo.match(/\bCOMPRIMIDO\b/g) || []).length
+        if (compMatches >= 3) return
+        const capsMatches = (nomeLimpo.match(/\bCAPSULA\b/g) || []).length
+        if (capsMatches >= 3) return
+        const ampMatches = (nomeLimpo.match(/\bAMPOLA\b/g) || []).length
+        const frascoMatches = (nomeLimpo.match(/\bFRASCO\b/g) || []).length
+        if (compMatches >= 2 && ampMatches >= 2) return
+        if (compMatches + capsMatches + ampMatches + frascoMatches >= 5) return
 
         const key = normalizeSimple(nomeLimpo)
         if (!key) return
