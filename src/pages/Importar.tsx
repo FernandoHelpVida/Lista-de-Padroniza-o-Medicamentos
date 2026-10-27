@@ -3,40 +3,32 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import pb from '@/lib/pocketbase/client'
 import type { MedicamentoRecord } from '@/pages/Index'
-import { extractTextFromPdf } from '@/lib/pdf/pdfLoader'
 import {
-  parseMedicamentosFromPages,
-  parseMedicamentosFromMarkdown,
-  makeMedicamentoKey,
+  parseSpreadsheetFile,
   normalizeStr,
   ParsedMedicamento,
   StatusPadronizacao,
   UnrecognizedItem,
   ItemDescartado,
   ItemFaltanteRelatorio,
-  buildMissingItemsReport,
-  exportMissingItemsToCsv,
-} from '@/lib/pdf/pdfParser'
-import { runPdfParserValidationTests } from '@/lib/pdf/pdfParserValidation.test'
-import officialPdfUrl from '@/assets/relacao-dos-medicamentos-avaliados-e-definicao-de-padronizacao-16.10-50a22.pdf'
+  buildSpreadsheetMissingReport,
+  exportSpreadsheetMissingItemsToCsv,
+} from '@/lib/spreadsheet/spreadsheetParser'
+import { runSpreadsheetParserValidationTests } from '@/lib/spreadsheet/spreadsheetParserValidation.test'
 import {
   UploadCloud,
-  FileText,
+  FileSpreadsheet,
   CheckCircle2,
   AlertTriangle,
   RefreshCw,
   PlusCircle,
-  Archive,
   Search,
   Filter,
   Check,
-  X,
   ArrowLeft,
   Loader2,
   ShieldAlert,
   FileCheck2,
-  Sparkles,
-  HelpCircle,
   AlertCircle,
   Download,
   History,
@@ -116,9 +108,10 @@ export default function Importar() {
   const [unrecognizedItems, setUnrecognizedItems] = useState<UnrecognizedItem[]>([])
   const [descartadosList, setDescartadosList] = useState<ItemDescartado[]>([])
   const [documentStats, setDocumentStats] = useState<{
-    totalPages: number
+    totalLinhas: number
     fileName: string
     fileSize: string
+    sheetName: string
   } | null>(null)
 
   // Estado para expandir/colapsar tabela detalhada de duplicados
@@ -176,7 +169,7 @@ export default function Importar() {
   const loadExistingMedicamentos = async () => {
     try {
       const records = await pb.collection<MedicamentoRecord>('medicamentos').getFullList({
-        sort: 'nome',
+        sort: 'pdfId',
       })
       setExistingMeds(records)
     } catch (err) {
@@ -196,23 +189,13 @@ export default function Importar() {
     loadExistingMedicamentos()
     loadHistorico()
 
-    // Auto-execução dos testes de validação do parser para integridade contínua
+    // Auto-execução dos testes de validação do parser de planilha
     try {
-      const testOutcome = runPdfParserValidationTests()
-      console.log('[PARSER-TESTS] Auto-validation passed:', testOutcome)
+      const testOutcome = runSpreadsheetParserValidationTests()
+      console.log('[SPREADSHEET-TESTS] Auto-validation passed:', testOutcome)
     } catch (testErr) {
-      console.warn('[PARSER-TESTS] Warning in parser validation tests:', testErr)
+      console.warn('[SPREADSHEET-TESTS] Warning in spreadsheet validation tests:', testErr)
     }
-
-    // Diagnóstico e auto-verificação da auditoria
-    const checkAudit = async () => {
-      try {
-        await pb.send('/backend/v1/pdf/audit-regua', { method: 'GET' })
-      } catch {
-        /* silencioso */
-      }
-    }
-    checkAudit()
   }, [])
 
   // Mapas de medicamentos existentes no banco: prioritário por pdfId e fallback por nome
@@ -237,90 +220,32 @@ export default function Importar() {
     return map
   }, [existingMeds])
 
-  // Processar arquivo PDF selecionado (com fallback automático: Backend Server-side -> Client-side PDF.js)
-  const processPdfFileOrBuffer = async (
+  // Processar arquivo de planilha (XLSX ou CSV) selecionado pelo usuário
+  const processSpreadsheetFileOrBlob = async (
     fileOrBlob: File | Blob,
     fileName: string,
     fileSizeStr: string,
   ) => {
     setExtracting(true)
-    setExtractionProgress(10)
-    setExtractionStage('Enviando documento para análise...')
+    setExtractionProgress(15)
+    setExtractionStage('Lendo arquivo de planilha...')
     setImportSummary(null)
 
     try {
-      let parseResult: {
-        items: ParsedMedicamento[]
-        unrecognized: UnrecognizedItem[]
-        descartados?: ItemDescartado[]
-        totalPages: number
-        totalItems: number
-      } | null = null
+      setExtractionProgress(40)
+      setExtractionStage('Analisando linhas, colunas e cabeçalhos...')
 
-      let serverMarkdown: string | null = null
+      const parseResult = await parseSpreadsheetFile(fileOrBlob, fileName)
 
-      // Tentativa 1: Processamento robusto server-side via engine do Skip Cloud ($documents.toMarkdown)
-      try {
-        setExtractionProgress(25)
-        setExtractionStage('Processando documento via serviço do servidor...')
+      setExtractionProgress(75)
+      setExtractionStage('Validando regras de negócio e mapeando status...')
 
-        const formData = new FormData()
-        formData.append('arquivo', fileOrBlob, fileName)
-
-        const data = await pb.send<{ markdown?: string }>('/backend/v1/pdf/parse-markdown', {
-          method: 'POST',
-          body: formData,
-        })
-
-        if (data && data.markdown && data.markdown.length > 50) {
-          serverMarkdown = data.markdown
-          try {
-            if (typeof window !== 'undefined') {
-              ;(window as unknown as { __LAST_PARSED_MARKDOWN?: string }).__LAST_PARSED_MARKDOWN =
-                data.markdown
-            }
-          } catch {
-            /* intentionally ignored */
-          }
-
-          setExtractionProgress(60)
-          setExtractionStage('Interpretando medicamentos estruturados...')
-          parseResult = parseMedicamentosFromMarkdown(data.markdown)
-          console.log(
-            `[IMPORT-AUDIT] Server extraction produced ${parseResult.items.length} items (expected 482).`,
-          )
-        }
-      } catch (srvErr) {
-        console.warn(
-          'Falha na extração server-side, utilizando parser nativo no navegador:',
-          srvErr,
-        )
-      }
-
-      // Tentativa 2: Se o resultado do servidor falhar ou NÃO atingir a régua completa esperada (482),
-      // ou se o servidor não respondeu, testar também extração no cliente via PDF.js
-      if (!parseResult || parseResult.items.length < 400) {
-        setExtractionProgress(40)
-        setExtractionStage('Extraindo texto das páginas no navegador (PDF.js)...')
-        const buffer = await fileOrBlob.arrayBuffer()
-        const pages = await extractTextFromPdf(buffer)
-
-        setExtractionProgress(75)
-        setExtractionStage('Interpretando estrutura de medicamentos, classes e status...')
-        const clientResult = parseMedicamentosFromPages(pages)
-        console.log(
-          `[IMPORT-AUDIT] Client PDF.js extraction produced ${clientResult.items.length} items.`,
-        )
-
-        // Se o cliente obteve mais itens ou o servidor não tinha retornado, usar o melhor resultado
-        if (!parseResult || clientResult.items.length > parseResult.items.length) {
-          parseResult = clientResult
-        }
-      }
-
-      if (!parseResult || parseResult.items.length === 0) {
+      if (
+        !parseResult ||
+        (parseResult.items.length === 0 && parseResult.descartados.length === 0)
+      ) {
         throw new Error(
-          'Não foi possível encontrar itens no padrão de medicamentos do Anexo I. Verifique se o arquivo possui texto legível.',
+          'A planilha enviada não contém linhas de medicamentos reconhecíveis. Verifique as colunas (ID, Nome do medicamento, Classe, Definição).',
         )
       }
 
@@ -370,21 +295,17 @@ export default function Importar() {
         }
       })
 
-      // Ordenar preferencialmente por pdfId crescente (1..482); se não tiver, por nome
-      previews.sort((a, b) => {
-        if (a.pdfId && b.pdfId) return a.pdfId - b.pdfId
-        if (a.pdfId) return -1
-        if (b.pdfId) return 1
-        return a.nome.localeCompare(b.nome)
-      })
+      // Ordenar por ID oficial crescente (1..482)
+      previews.sort((a, b) => a.pdfId - b.pdfId)
 
       setPreviewItems(previews)
       setUnrecognizedItems(parseResult.unrecognized)
       setDescartadosList(parseResult.descartados || [])
       setDocumentStats({
-        totalPages: parseResult.totalPages || 16,
+        totalLinhas: parseResult.totalLinhasLidas,
         fileName,
         fileSize: fileSizeStr,
+        sheetName: parseResult.nomeAbaUsada || 'Medicamentos',
       })
 
       setExtractionProgress(100)
@@ -396,71 +317,39 @@ export default function Importar() {
       try {
         await pb.collection('audit_logs').create({
           colecao: 'medicamentos',
-          registro_id: 'audit_regua_result',
-          acao: 'AUDIT_REGUA_482',
-          usuario_nome: 'Auditoria Automatizada Help Vida',
-          status_anterior: 'Execução de conferência da régua',
+          registro_id: 'audit_planilha_result',
+          acao: 'AUDIT_PLANILHA_482',
+          usuario_nome: user?.name || user?.email || 'Auditoria Help Vida',
+          status_anterior: 'Conferência de planilha semanal',
           status_novo: `${previews.length} (${countPad} Padronizados, ${countNao} Não Padronizados, ${countInat} Inativos)`,
           detalhes: JSON.stringify({
-            total: previews.length,
+            arquivo: fileName,
+            total_linhas_lidas: parseResult.totalLinhasLidas,
+            itens_validos: previews.length,
+            descartados_count: parseResult.descartados.length,
             padronizados: countPad,
             nao_padronizados: countNao,
             inativos: countInat,
-            regua_482:
+            regua_482_completa:
               previews.length === 482 && countPad === 238 && countNao === 217 && countInat === 27,
-            casosTeste: {
-              insulinaLantus: previews.some(
-                (p) => p.nome.includes('INSULINA LANTUS') && p.status === 'Padronizado',
-              ),
-              insulinaNph: previews.some(
-                (p) => p.nome.includes('INSULINA NPH') && p.status === 'Padronizado',
-              ),
-              insulinaRegular: previews.some(
-                (p) => p.nome.includes('INSULINA REGULAR') && p.status === 'Padronizado',
-              ),
-              amoxicilinaClavulanato: previews.some((p) =>
-                p.nome.includes('AMOXICILINA 875MG + CLAVULANATO 125MG COMPRIMIDO'),
-              ),
-              moxifloxacinoCompleto: previews.some(
-                (p) => p.nome === 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML',
-              ),
-              colagenaseEpitegel: previews.some(
-                (p) =>
-                  p.nome.startsWith('COLAGENASE') &&
-                  p.nome.includes('EPITEGEL') &&
-                  !p.nome.includes('###'),
-              ),
-              dimenidrinatoDramin: previews.some(
-                (p) =>
-                  p.nome.includes('DIMENIDRINATO') &&
-                  p.nome.includes('DRAMIN B6 DL') &&
-                  p.nome.includes('AMPOLA 10 ML'),
-              ),
-              episolSec: previews.some(
-                (p) =>
-                  p.nome.includes('EPISOL SEC OC FPS 60') &&
-                  (p.nome.endsWith('60 G') || p.nome.includes('FRASCO 60 G')),
-              ),
-              pentravan: previews.some((p) => p.nome.includes('PENTRAVAN')),
-            },
           }),
         })
       } catch (logErr) {
-        console.warn('Erro ao salvar log de auditoria:', logErr)
+        console.warn('Erro ao salvar log de auditoria da planilha:', logErr)
       }
 
       toast({
-        title: 'Extração Concluída com Sucesso',
+        title: 'Planilha Carregada com Sucesso!',
         description: `${previews.length} medicamentos identificados (${countPad} Padronizados, ${countNao} Não Padronizados, ${countInat} Inativos).`,
       })
     } catch (err: unknown) {
-      console.error('Falha ao processar PDF:', err)
+      console.error('Falha ao processar planilha:', err)
       const msg =
         err instanceof Error
           ? err.message
-          : 'Não foi possível ler o documento PDF. Verifique se o arquivo não está corrompido.'
+          : 'Não foi possível ler o arquivo de planilha. Verifique se o formato é .xlsx ou .csv válido.'
       toast({
-        title: 'Erro na leitura do PDF',
+        title: 'Erro na leitura da planilha',
         description: msg,
         variant: 'destructive',
       })
@@ -469,15 +358,24 @@ export default function Importar() {
     }
   }
 
-  // Manipular upload manual de arquivo
+  // Manipular upload de arquivo pelo usuário (.xlsx ou .csv)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    const lowerName = file.name.toLowerCase()
+    const isXlsx =
+      lowerName.endsWith('.xlsx') ||
+      lowerName.endsWith('.xls') ||
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'application/vnd.ms-excel'
+    const isCsv = lowerName.endsWith('.csv') || file.type === 'text/csv'
+
+    if (!isXlsx && !isCsv) {
       toast({
         title: 'Formato inválido',
-        description: 'Por favor, selecione um arquivo no formato PDF (.pdf).',
+        description:
+          'Por favor, selecione uma planilha Excel (.xlsx) ou arquivo separado por vírgula (.csv).',
         variant: 'destructive',
       })
       return
@@ -485,70 +383,18 @@ export default function Importar() {
 
     setSelectedFile(file)
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(2)
-    await processPdfFileOrBuffer(file, file.name, `${sizeInMb} MB`)
-  }
-
-  // Carregar o PDF institucional oficial já disponível no projeto
-  const handleLoadOfficialTestPdf = async () => {
-    setExtracting(true)
-    setExtractionProgress(10)
-    setExtractionStage('Carregando PDF institucional Help Vida...')
-
-    try {
-      const response = await fetch(officialPdfUrl)
-      if (!response.ok) throw new Error('Não foi possível obter o arquivo PDF institucional')
-      const blob = await response.blob()
-      const sizeInMb = (blob.size / (1024 * 1024)).toFixed(2)
-      const testFile = new File(
-        [blob],
-        'Relação dos Medicamentos Avaliados e Definição de Padronização 16.10.pdf',
-        {
-          type: 'application/pdf',
-        },
-      )
-      setSelectedFile(testFile)
-
-      await processPdfFileOrBuffer(
-        testFile,
-        'Relação dos Medicamentos Avaliados e Definição de Padronização 16.10.pdf',
-        `${sizeInMb} MB`,
-      )
-    } catch (err: unknown) {
-      console.error(err)
-      toast({
-        title: 'Erro ao carregar PDF institucional',
-        description: 'Não foi possível ler o arquivo modelo.',
-        variant: 'destructive',
-      })
-      setExtracting(false)
-    }
+    const sizeLabel =
+      file.size > 1024 * 1024 ? `${sizeInMb} MB` : `${Math.round(file.size / 1024)} KB`
+    await processSpreadsheetFileOrBlob(file, file.name, sizeLabel)
   }
 
   // Estrutura para análise de itens duplicados entre os extraídos
   const duplicateStats = useMemo(() => {
-    // Agrupar itens extraídos pelo nome normalizado exato
-    const nameMap = new Map<
-      string,
-      {
-        displayName: string
-        normalizedKey: string
-        items: PreviewItem[]
-        statuses: StatusPadronizacao[]
-        classes: string[]
-        hasConflict: boolean
-        resolvedStatus: StatusPadronizacao
-      }
-    >()
-
-    // Precedência estrita de status: Inativo > Não Padronizado > Padronizado
-    const resolvePrecedence = (statuses: StatusPadronizacao[]): StatusPadronizacao => {
-      if (statuses.includes('Inativo')) return 'Inativo'
-      if (statuses.includes('Não Padronizado')) return 'Não Padronizado'
-      return 'Padronizado'
-    }
-
-    // Identificar duplicados também por pdfId se houver
+    // 1. Duplicados por pdfId (IDs repetidos na planilha)
     const pdfIdDupMap = new Map<number, PreviewItem[]>()
+    // 2. Duplicados por nome normalizado
+    const nameMap = new Map<string, PreviewItem[]>()
+
     for (const item of previewItems) {
       if (item.pdfId && item.pdfId >= 1 && item.pdfId <= 482) {
         const list = pdfIdDupMap.get(item.pdfId) || []
@@ -557,29 +403,10 @@ export default function Importar() {
       }
 
       const key = normalizeStr(item.nome)
-      if (!key) continue
-
-      if (!nameMap.has(key)) {
-        nameMap.set(key, {
-          displayName: item.nome,
-          normalizedKey: key,
-          items: [item],
-          statuses: [item.status],
-          classes: [item.classe],
-          hasConflict: false,
-          resolvedStatus: item.status,
-        })
-      } else {
-        const group = nameMap.get(key)!
-        group.items.push(item)
-        group.statuses.push(item.status)
-        if (item.classe && !group.classes.includes(item.classe)) {
-          group.classes.push(item.classe)
-        }
-        // Verificar se há status diferentes (conflito)
-        const uniqueStatuses = new Set(group.statuses)
-        group.hasConflict = uniqueStatuses.size > 1
-        group.resolvedStatus = resolvePrecedence(group.statuses)
+      if (key) {
+        const list = nameMap.get(key) || []
+        list.push(item)
+        nameMap.set(key, list)
       }
     }
 
@@ -589,37 +416,36 @@ export default function Importar() {
         pdfId,
         count: list.length,
         nomes: list.map((i) => i.nome),
+        items: list,
       }))
 
-    // Filtrar apenas medicamentos com 2 ou mais ocorrências
-    const duplicateList = Array.from(nameMap.values())
-      .filter((g) => g.items.length >= 2)
-      .map((g) => {
-        // Formatar origens/seções (ex: "Padronizado + Não Padronizado" ou "Padronizado (2x)")
-        const statusCounts = new Map<StatusPadronizacao, number>()
-        for (const st of g.statuses) {
-          statusCounts.set(st, (statusCounts.get(st) || 0) + 1)
+    const duplicateNamesList = Array.from(nameMap.entries())
+      .filter(([, list]) => list.length >= 2)
+      .map(([key, list]) => {
+        const first = list[0]
+        const statuses = list.map((i) => i.status)
+        const uniqueStatuses = new Set(statuses)
+        const hasConflict = uniqueStatuses.size > 1
+
+        const resolvePrecedence = (stList: StatusPadronizacao[]): StatusPadronizacao => {
+          if (stList.includes('Inativo')) return 'Inativo'
+          if (stList.includes('Não Padronizado')) return 'Não Padronizado'
+          return 'Padronizado'
         }
 
-        const sectionsDesc = Array.from(statusCounts.entries())
-          .map(([st, count]) => (count > 1 ? `${st} (${count}x)` : st))
-          .join(' + ')
-
         return {
-          nome: g.displayName,
-          normalizedKey: g.normalizedKey,
-          count: g.items.length,
-          statuses: g.statuses,
-          sectionsDesc,
-          hasConflict: g.hasConflict,
-          resolvedStatus: g.resolvedStatus,
-          classes: g.classes,
-          items: g.items,
+          nome: first.nome,
+          normalizedKey: key,
+          count: list.length,
+          statuses,
+          hasConflict,
+          resolvedStatus: resolvePrecedence(statuses),
+          classes: Array.from(new Set(list.map((i) => i.classe).filter(Boolean))),
+          items: list,
         }
       })
       .sort((a, b) => b.count - a.count || a.nome.localeCompare(b.nome))
 
-    // Total de nomes únicos previstos para o catálogo final (considerando itens selecionados)
     const uniqueKeysSelected = new Set(
       previewItems
         .filter((i) => i.selected)
@@ -628,32 +454,16 @@ export default function Importar() {
     )
     const catalogoFinalPrevisto = uniqueKeysSelected.size
 
-    // Quantidade de duplicados idênticos unificados e duplicados com conflito de status
-    let totalIdenticosUnificados = 0
-    let totalConflitosStatus = 0
-
-    for (const dup of duplicateList) {
-      if (dup.hasConflict) {
-        totalConflitosStatus++
-        // As ocorrências excedentes são absorvidas na resolução
-        totalIdenticosUnificados += dup.count - 1
-      } else {
-        // Mesmo status
-        totalIdenticosUnificados += dup.count - 1
-      }
-    }
-
     return {
-      duplicates: duplicateList,
-      totalDuplicatesCount: duplicateList.length,
-      totalRepetitions: duplicateList.reduce((acc, d) => acc + (d.count - 1), 0),
+      duplicates: duplicateNamesList,
+      totalDuplicatesCount: duplicateNamesList.length,
+      totalRepetitions: duplicateNamesList.reduce((acc, d) => acc + (d.count - 1), 0),
       catalogoFinalPrevisto,
-      totalIdenticosUnificados,
-      totalConflitosStatus,
       duplicatesByPdfId,
     }
   }, [previewItems])
-  // Contagens dos itens (por status de diff e por status de padronização)
+
+  // Contagens dos itens
   const counts = useMemo(() => {
     const total = previewItems.length
     const novos = previewItems.filter((i) => i.diffStatus === 'NOVO').length
@@ -669,7 +479,7 @@ export default function Importar() {
     const atendeReguaOficial =
       total === 482 && padronizados === 238 && naoPadronizados === 217 && inativos === 27
 
-    // Contagem de pdfIds extraídos válidos (1 a 482)
+    // Contagem de IDs extraídos válidos (1 a 482)
     const validPdfIds = new Set(
       previewItems
         .map((i) => i.pdfId)
@@ -700,9 +510,9 @@ export default function Importar() {
     }
   }, [previewItems, existingMeds])
 
-  // Relatório oficial dos 57 itens faltantes (ou qualquer ausência no intervalo 1..482)
+  // Relatório oficial de itens faltantes no intervalo 1..482
   const missingItemsReport = useMemo(() => {
-    return buildMissingItemsReport(previewItems, descartadosList, 1, 482)
+    return buildSpreadsheetMissingReport(previewItems, descartadosList, 1, 482)
   }, [previewItems, descartadosList])
 
   // Filtros da tabela de itens faltantes
@@ -730,17 +540,17 @@ export default function Importar() {
     if (missingItemsReport.length === 0) {
       toast({
         title: 'Nenhum item faltante',
-        description: 'Todos os 482 IDs da régua oficial foram extraídos com sucesso.',
+        description: 'Todos os 482 IDs da régua oficial foram identificados com sucesso (482/482).',
       })
       return
     }
 
     try {
-      const csvContent = exportMissingItemsToCsv(missingItemsReport)
+      const csvContent = exportSpreadsheetMissingItemsToCsv(missingItemsReport)
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const fileName = `relatorio-itens-faltantes-anexo-I-${new Date().toISOString().split('T')[0]}.csv`
+      const fileName = `relatorio-itens-faltantes-planilha-${new Date().toISOString().split('T')[0]}.csv`
       link.setAttribute('href', url)
       link.setAttribute('download', fileName)
       document.body.appendChild(link)
@@ -771,9 +581,10 @@ export default function Importar() {
         return false
       }
       if (q) {
+        const matchId = item.pdfId.toString().includes(q)
         const matchNome = item.nome.toLowerCase().includes(q)
         const matchClasse = item.classe.toLowerCase().includes(q)
-        if (!matchNome && !matchClasse) return false
+        if (!matchId && !matchNome && !matchClasse) return false
       }
       return true
     })
@@ -790,12 +601,11 @@ export default function Importar() {
 
   // Selecionar / desselecionar todos os filtrados
   const handleSelectAllFiltered = (selected: boolean) => {
-    const filteredKeys = new Set(filteredPreview.map((item) => normalizeStr(item.nome)))
+    const filteredIds = new Set(filteredPreview.map((item) => item.pdfId))
 
     setPreviewItems((prev) =>
       prev.map((item) => {
-        const key = normalizeStr(item.nome)
-        if (filteredKeys.has(key)) {
+        if (filteredIds.has(item.pdfId)) {
           return { ...item, selected }
         }
         return item
@@ -821,30 +631,23 @@ export default function Importar() {
     let countNovos = 0
     let countAtualizados = 0
     let countInalterados = 0
-    let countUnificados = 0
-    let countConflitosResolvidos = 0
     const countIgnorados = previewItems.length - toImport.length
-
-    // Número esperado no catálogo final com base nos itens selecionados
-    const catalogoFinalPrevisto = duplicateStats.catalogoFinalPrevisto
 
     try {
       let syncedViaBackend = false
 
-      // Tentativa 1: Endpoint otimizado de bulk-sync no backend
+      // Tentativa 1: Endpoint otimizado de bulk-sync no backend (/backend/v1/medicamentos/bulk-sync)
       try {
         const syncData = await pb.send<{
           criados: number
           atualizados: number
           inalterados: number
-          unificados?: number
-          conflitos_resolvidos?: number
           total_catalogo_final?: number
         }>('/backend/v1/medicamentos/bulk-sync', {
           method: 'POST',
           body: {
             items: toImport.map((i) => ({
-              pdfId: i.pdfId || undefined,
+              pdfId: i.pdfId,
               nome: i.nome.trim(),
               classe: i.classe.trim(),
               status: i.status,
@@ -852,7 +655,8 @@ export default function Importar() {
               observacao: i.observacao || '',
             })),
             record_history: true,
-            file_name: documentStats?.fileName || selectedFile?.name || 'documento.pdf',
+            file_name:
+              documentStats?.fileName || selectedFile?.name || 'planilha_medicamentos.xlsx',
             ignorados: countIgnorados,
           },
         })
@@ -861,8 +665,6 @@ export default function Importar() {
           countNovos = syncData.criados || 0
           countAtualizados = syncData.atualizados || 0
           countInalterados = syncData.inalterados || 0
-          countUnificados = syncData.unificados || 0
-          countConflitosResolvidos = syncData.conflitos_resolvidos || 0
           syncedViaBackend = true
           setImportProgress(100)
         }
@@ -870,97 +672,46 @@ export default function Importar() {
         console.warn('Endpoint de bulk-sync falhou, executando em lotes client-side:', bkErr)
       }
 
-      // Tentativa 2: Fallback direto no PocketBase client-side com resolução de duplicados e precedência
+      // Tentativa 2: Fallback direto no PocketBase client-side por pdfId
       if (!syncedViaBackend) {
-        // Agrupar itens a importar por chave normalizada exata
-        const groupedMap = new Map<
-          string,
-          {
-            nome: string
-            classe: string
-            items: typeof toImport
-            resolvedStatus: StatusPadronizacao
-            hasConflict: boolean
-            descricao: string
-            observacao: string
-          }
-        >()
-
-        const resolvePrecedence = (statuses: StatusPadronizacao[]): StatusPadronizacao => {
-          if (statuses.includes('Inativo')) return 'Inativo'
-          if (statuses.includes('Não Padronizado')) return 'Não Padronizado'
-          return 'Padronizado'
-        }
-
-        for (const item of toImport) {
-          const key = normalizeStr(item.nome)
-          if (!key) continue
-
-          if (!groupedMap.has(key)) {
-            groupedMap.set(key, {
-              nome: item.nome.trim().toUpperCase(),
-              classe: item.classe.trim(),
-              items: [item],
-              resolvedStatus: item.status,
-              hasConflict: false,
-              descricao: item.descricao || '',
-              observacao: item.observacao || '',
-            })
-          } else {
-            const grp = groupedMap.get(key)!
-            grp.items.push(item)
-            const allStatuses = grp.items.map((it) => it.status)
-            const uniqueSt = new Set(allStatuses)
-            grp.hasConflict = uniqueSt.size > 1
-            grp.resolvedStatus = resolvePrecedence(allStatuses)
-
-            // Se ainda não tinha observação ou classe, unificar observações relevantes
-            if (item.observacao && !grp.observacao.includes(item.observacao)) {
-              grp.observacao = grp.observacao
-                ? `${grp.observacao} | ${item.observacao}`
-                : item.observacao
-            }
-          }
-        }
-
-        const consolidatedList = Array.from(groupedMap.values())
-        const totalConsolidated = consolidatedList.length
-
-        // Obter mapa atual de medicamentos no banco para saber quem atualizar vs quem criar
         const currentDbMeds = await pb.collection('medicamentos').getFullList<{
           id: string
+          pdfId: number
           nome: string
           status: string
           classe: string
-        }>({ fields: 'id,nome,status,classe' })
+          observacao?: string
+        }>({ fields: 'id,pdfId,nome,status,classe,observacao' })
 
-        const dbMap = new Map<string, { id: string; status: string; classe: string }>()
+        const dbByPdfId = new Map<
+          number,
+          { id: string; status: string; classe: string; nome: string }
+        >()
         for (const m of currentDbMeds) {
-          const k = normalizeStr(m.nome)
-          if (k) dbMap.set(k, { id: m.id, status: m.status, classe: m.classe })
+          if (m.pdfId) {
+            dbByPdfId.set(m.pdfId, { id: m.id, status: m.status, classe: m.classe, nome: m.nome })
+          }
         }
 
         let idx = 0
-        for (const grp of consolidatedList) {
-          const k = normalizeStr(grp.nome)
-          const existing = dbMap.get(k)
+        for (const item of toImport) {
+          const existing = dbByPdfId.get(item.pdfId)
 
-          const pdfIdVal = grp.items.find((i) => i.pdfId)?.pdfId
           const payload = {
-            pdfId: pdfIdVal || undefined,
-            nome: grp.nome,
-            classe: grp.classe,
-            status: grp.resolvedStatus,
-            descricao: grp.descricao,
-            observacao: grp.hasConflict
-              ? grp.observacao
-                ? `${grp.observacao} (Status unificado por precedência: ${grp.resolvedStatus})`
-                : `Status unificado por precedência: ${grp.resolvedStatus}`
-              : grp.observacao,
+            pdfId: item.pdfId,
+            nome: item.nome,
+            classe: item.classe,
+            status: item.status,
+            descricao: item.descricao || '',
+            observacao: item.observacao || '',
           }
 
           if (existing) {
-            if (existing.status !== grp.resolvedStatus || existing.classe !== grp.classe) {
+            const mudouStatus = existing.status !== item.status
+            const mudouClasse = existing.classe !== item.classe
+            const mudouNome = existing.nome !== item.nome
+
+            if (mudouStatus || mudouClasse || mudouNome) {
               await pb.collection('medicamentos').update(existing.id, payload)
               countAtualizados++
             } else {
@@ -971,19 +722,15 @@ export default function Importar() {
             countNovos++
           }
 
-          if (grp.items.length > 1) {
-            countUnificados += grp.items.length - 1
-            if (grp.hasConflict) countConflitosResolvidos++
-          }
-
           idx++
-          setImportProgress(Math.round((idx / totalConsolidated) * 100))
+          setImportProgress(Math.round((idx / toImport.length) * 100))
         }
 
         // Gravar no histórico de importações
         try {
           await pb.collection('historico_importacoes').create({
-            nome_arquivo: documentStats?.fileName || selectedFile?.name || 'documento.pdf',
+            nome_arquivo:
+              documentStats?.fileName || selectedFile?.name || 'planilha_medicamentos.xlsx',
             total_itens: previewItems.length,
             criados: countNovos,
             atualizados: countAtualizados,
@@ -1027,21 +774,10 @@ export default function Importar() {
       const finalDbList = await pb.collection('medicamentos').getFullList({ fields: 'id' })
       const totalGravado = finalDbList.length
 
-      if (totalGravado === catalogoFinalPrevisto) {
-        toast({
-          title: 'Sincronização 100% Concluída!',
-          description: `Catálogo atualizado com exatamente ${totalGravado} itens (${countNovos} novos, ${countAtualizados} atualizados, ${duplicateStats.totalRepetitions} unificados sem perdas).`,
-        })
-      } else {
-        // Notificação explícita com a divergência caso ocorra (nunca silêncio)
-        toast({
-          title: 'Importação concluída com divergência',
-          description: `Catálogo final: ${totalGravado} itens gravados. Previsto: ${catalogoFinalPrevisto} itens. Diferença: ${Math.abs(
-            totalGravado - catalogoFinalPrevisto,
-          )} item(ns).`,
-          variant: 'destructive',
-        })
-      }
+      toast({
+        title: 'Sincronização 100% Concluída!',
+        description: `Catálogo atualizado com sucesso (${countNovos} novos criados, ${countAtualizados} atualizados, ${countInalterados} sem alteração). Total no banco: ${totalGravado}.`,
+      })
     } catch (err: unknown) {
       console.error('Erro na gravação:', err)
       toast({
@@ -1133,7 +869,7 @@ export default function Importar() {
     }
   }
 
-  // 4. Se não for admin, exibir aviso de acesso restrito
+  // Se não for admin, exibir aviso de acesso restrito
   if (!authLoading && !isAdmin) {
     return (
       <div className="max-w-2xl mx-auto py-12 px-4 text-center">
@@ -1143,8 +879,9 @@ export default function Importar() {
           </div>
           <h2 className="text-xl font-bold text-slate-900">Acesso Restrito a Administradores</h2>
           <p className="text-xs text-slate-600 leading-relaxed max-w-md mx-auto">
-            A importação e atualização em lote da lista de padronização é permitida exclusivamente
-            para membros da comissão técnica e farmacêuticos administradores da Help Vida.
+            A importação e atualização em lote da lista de padronização por planilha é permitida
+            exclusivamente para membros da comissão técnica e farmacêuticos administradores da Help
+            Vida.
           </p>
           <div className="pt-2">
             <Button
@@ -1176,26 +913,16 @@ export default function Importar() {
           </Button>
           <div>
             <h2 className="text-xl sm:text-2xl font-bold text-[#0C4336] tracking-tight">
-              Importação da Padronização via PDF
+              Importação da Padronização por Planilha
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Extraia e atualize medicamentos do documento institucional oficial da Help Vida
+              Atualização semanal de medicamentos via arquivo Excel (.xlsx) ou CSV oficial da Help
+              Vida
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleLoadOfficialTestPdf}
-            disabled={extracting || importing || zerandoCatalogo}
-            className="h-9 min-h-[44px] sm:min-h-[36px] border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
-          >
-            <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[#F5B31C]" />
-            Carregar PDF Modelo
-          </Button>
-
           {/* Botão de Destaque: Zerar catálogo de medicamentos (Admin) */}
           {isAdmin && (
             <Button
@@ -1250,15 +977,15 @@ export default function Importar() {
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-[#0C4336]">
-                      Processo de Importação Concluído com Sucesso!
+                      Sincronização da Planilha Concluída com Sucesso!
                     </h4>
                     <div className="flex flex-wrap items-center gap-2.5 mt-1.5 text-xs">
                       <span className="font-semibold text-emerald-800">
-                        Novos adicionados: <strong>{importSummary.novos}</strong>
+                        Novos cadastrados: <strong>{importSummary.novos}</strong>
                       </span>
                       <span className="text-slate-300">•</span>
                       <span className="font-semibold text-amber-800">
-                        Status atualizados: <strong>{importSummary.atualizados}</strong>
+                        Atualizados: <strong>{importSummary.atualizados}</strong>
                       </span>
                       <span className="text-slate-300">•</span>
                       <span className="font-medium text-slate-600">
@@ -1281,63 +1008,25 @@ export default function Importar() {
             </Card>
           )}
 
-          {/* Alerta / Banner de Limpeza de Catálogo (Visível para Admins) */}
-          {isAdmin && (
-            <Card className="border-rose-200 bg-rose-50/50 shadow-xs">
-              <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <div className="h-9 w-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 mt-0.5">
-                    <Trash2 size={18} />
-                  </div>
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs sm:text-sm font-bold text-rose-950 flex items-center gap-2">
-                      Zerar Catálogo Atual para Nova Tabela
-                      <Badge className="bg-rose-200/80 text-rose-900 border-rose-300 text-[10px] font-bold">
-                        {existingMeds.length} medicamento{existingMeds.length === 1 ? '' : 's'} no
-                        banco
-                      </Badge>
-                    </h4>
-                    <p className="text-[11px] sm:text-xs text-rose-800/90 leading-relaxed">
-                      Se você precisa subir uma nova tabela do zero e limpar registros antigos ou
-                      corrompidos, esvazie a coleção antes de iniciar a nova importação. O histórico
-                      de importações será preservado.
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => {
-                    setZerarConfirmationText('')
-                    setZerarModalOpen(true)
-                  }}
-                  disabled={extracting || importing || zerandoCatalogo}
-                  className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 min-h-[44px] sm:min-h-[36px] px-4 rounded-xl shadow-xs"
-                >
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  Zerar Catálogo de Medicamentos
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Área de Upload / Seleção de Arquivo */}
+          {/* Área de Upload / Seleção de Arquivo de Planilha */}
           <Card className="border-emerald-950/10 bg-white shadow-xs">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
-                  <UploadCloud className="h-5 w-5 text-[#0D8272]" />
-                  1. Selecionar Arquivo do Catálogo (PDF)
+                  <FileSpreadsheet className="h-5 w-5 text-[#0D8272]" />
+                  1. Selecionar Arquivo da Planilha (.xlsx ou .csv)
                 </CardTitle>
                 {documentStats && (
                   <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-xs font-semibold">
-                    {documentStats.totalPages} páginas analisadas
+                    Aba &quot;{documentStats.sheetName}&quot; • {documentStats.totalLinhas} linhas
                   </Badge>
                 )}
               </div>
               <CardDescription className="text-xs text-slate-500">
-                A extração roda inteiramente no navegador via PDF.js, sem transferir dados para
-                serviços externos.
+                A planilha oficial deve conter as colunas: <strong>ID</strong> (1 a 482),{' '}
+                <strong>Nome do medicamento</strong>, <strong>Classe</strong> e{' '}
+                <strong>Definição</strong> (&quot;Padrão&quot;, &quot;NÃO padrão&quot; ou
+                &quot;Inativo&quot;).
               </CardDescription>
             </CardHeader>
 
@@ -1346,7 +1035,7 @@ export default function Importar() {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept=".pdf,application/pdf"
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                 className="hidden"
               />
 
@@ -1363,32 +1052,31 @@ export default function Importar() {
               >
                 <div className="flex flex-col items-center justify-center space-y-2">
                   <div className="h-12 w-12 rounded-2xl bg-white border border-emerald-900/10 flex items-center justify-center text-[#0D8272] shadow-xs">
-                    <FileText size={24} />
+                    <FileSpreadsheet size={26} />
                   </div>
 
                   {selectedFile ? (
                     <div className="space-y-0.5">
                       <p className="text-sm font-bold text-[#0C4336]">{selectedFile.name}</p>
                       <p className="text-xs text-slate-500">
-                        {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Clique para trocar de
-                        arquivo
+                        {documentStats?.fileSize || 'Arquivo carregado'} • Clique para selecionar
+                        outra planilha
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-slate-700">
-                        Clique aqui para selecionar o arquivo PDF do seu computador ou celular
+                        Clique aqui para carregar a planilha Excel (.xlsx) ou CSV semanal
                       </p>
                       <p className="text-xs text-slate-400">
-                        Ou use o botão &quot;Carregar PDF Modelo&quot; no topo para carregar o
-                        catálogo I oficial
+                        Formatos aceitos: Microsoft Excel (.xlsx, .xls) ou CSV exportado
                       </p>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Barra de Progresso da Extração */}
+              {/* Barra de Progresso da Leitura */}
               {extracting && (
                 <div className="space-y-2 p-4 rounded-xl bg-emerald-50/60 border border-emerald-950/10">
                   <div className="flex items-center justify-between text-xs">
@@ -1410,7 +1098,7 @@ export default function Importar() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-[#92400E] flex items-center gap-1.5">
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F5B31C]" />
-                      Gravando medicamentos na coleção Help Vida...
+                      Sincronizando medicamentos no banco de dados...
                     </span>
                     <span className="font-mono text-amber-900 font-bold">{importProgress}%</span>
                   </div>
@@ -1428,11 +1116,11 @@ export default function Importar() {
                   <div>
                     <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
                       <FileCheck2 className="h-5 w-5 text-[#0D8272]" />
-                      2. Conferência dos Medicamentos Extraídos (Auditoria da Régua ANEXO I)
+                      2. Conferência Prévia dos Medicamentos (Régua Oficial 1–482)
                     </CardTitle>
                     <CardDescription className="text-xs text-slate-500">
-                      Verifique a contagem exata por status de padronização antes de sincronizar com
-                      o banco.
+                      Verifique a auditoria com a régua oficial de 482 itens antes de sincronizar
+                      semanalmente.
                     </CardDescription>
                   </div>
 
@@ -1440,14 +1128,14 @@ export default function Importar() {
                   <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
                     <div className="text-right sm:text-right hidden sm:block">
                       <div className="text-xs font-bold text-[#0C4336]">
-                        Previsão catálogo:{' '}
+                        Itens selecionados:{' '}
                         <span className="font-mono text-emerald-800">
-                          {duplicateStats.catalogoFinalPrevisto} itens
+                          {counts.selecionados} medicamentos
                         </span>
                       </div>
                       <div className="text-[10px] text-slate-500">
-                        {counts.selecionados} extraídos − {duplicateStats.totalRepetitions}{' '}
-                        unificados
+                        {counts.novos} novos • {counts.existentes} a atualizar •{' '}
+                        {counts.semAlteracao} sem alteração
                       </div>
                     </div>
                     <Button
@@ -1458,252 +1146,29 @@ export default function Importar() {
                       {importing ? (
                         <>
                           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Gravando ({importProgress}%)...
+                          Sincronizando ({importProgress}%)...
                         </>
                       ) : (
                         <>
                           <Check className="mr-1.5 h-4 w-4 text-[#F5B31C]" />
-                          Sincronizar ({duplicateStats.catalogoFinalPrevisto} itens previstos)
+                          Importar Planilha ({counts.selecionados} itens)
                         </>
                       )}
                     </Button>
                   </div>
                 </div>
-                {/* Previsão de Catálogo Final (Banner de Auditoria e Deduplicação) */}
-                <div className="mt-3 p-3 rounded-xl border border-emerald-900/15 bg-white shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-xl bg-emerald-100/80 text-[#0C4336] flex items-center justify-center shrink-0">
-                      <Layers size={18} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[#0C4336]">
-                          Catálogo final previsto: {duplicateStats.catalogoFinalPrevisto} itens
-                        </span>
-                        <Badge className="bg-[#0F5342] text-white text-[10px] font-bold">
-                          {counts.total} extraídos − {duplicateStats.totalRepetitions} duplicados
-                          unificados
-                        </Badge>
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        {duplicateStats.totalConflitosStatus > 0
-                          ? `${duplicateStats.totalConflitosStatus} item(ns) com conflito de status entre seções resolvidos por precedência (Inativo > Não Padronizado > Padronizado).`
-                          : 'Todos os medicamentos duplicados possuem status idêntico e serão agrupados em 1 item único.'}
-                      </p>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setDuplicatesTableExpanded(!duplicatesTableExpanded)}
-                      className="h-8 text-xs font-semibold border-emerald-950/20 text-[#0C4336] hover:bg-emerald-50"
-                    >
-                      <Copy size={13} className="mr-1.5 text-[#0D8272]" />
-                      {duplicatesTableExpanded
-                        ? 'Ocultar Relação de Duplicados'
-                        : 'Ver Relação de Duplicados'}
-                      {duplicatesTableExpanded ? (
-                        <ChevronUp size={14} className="ml-1" />
-                      ) : (
-                        <ChevronDown size={14} className="ml-1" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-                {/* 1. Painel "Relação de Duplicados" (Requisito 1: visível na tela de conferência antes de sincronizar) */}
-                <div className="mt-2 p-3.5 rounded-xl border border-amber-900/20 bg-[#FFFDF7] space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-6 w-6 rounded-md bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-                        <Copy size={14} />
-                      </div>
-                      <h4 className="text-xs font-bold text-amber-950 uppercase tracking-wide">
-                        Relação de Duplicados no Documento
-                      </h4>
-                      {duplicateStats.totalDuplicatesCount > 0 ? (
-                        <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
-                          {duplicateStats.totalDuplicatesCount} nomes com 2+ ocorrências (
-                          {duplicateStats.totalRepetitions} repetições unificadas)
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
-                          Nenhum duplicado
-                        </Badge>
-                      )}
-
-                      {duplicateStats.duplicatesByPdfId.length > 0 ? (
-                        <Badge className="bg-rose-100 text-rose-900 border-rose-300 text-[10px] font-bold">
-                          {duplicateStats.duplicatesByPdfId.length} duplicados por pdfId detectados!
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
-                          pdfIds 100% únicos (zero colisão)
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-[11px] text-slate-500 font-medium">
-                        Regra: Duplicados idênticos unificam; conflitos seguem precedência{' '}
-                        <strong>Inativo &gt; Não Padronizado &gt; Padronizado</strong>.
-                      </span>
-                    </div>
-                  </div>
-
-                  {duplicateStats.duplicates.length === 0 ? (
-                    <div className="p-4 rounded-lg bg-emerald-50/70 border border-emerald-200/80 text-center">
-                      <p className="text-xs font-semibold text-emerald-900">
-                        Nenhum medicamento duplicado nos {counts.total} itens extraídos.
-                      </p>
-                      <p className="text-[11px] text-emerald-700 mt-0.5">
-                        Cada nome de medicamento aparece exatamente uma vez nas páginas analisadas.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {/* Resumo compacto dos duplicados e busca rápida */}
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                        <div className="text-[11px] text-slate-600">
-                          Mostrando <strong>{duplicateStats.duplicates.length}</strong> medicamentos
-                          repetidos.
-                          {duplicateStats.totalConflitosStatus > 0 && (
-                            <span className="ml-1 text-amber-800 font-semibold">
-                              ({duplicateStats.totalConflitosStatus} com conflito de status entre
-                              seções)
-                            </span>
-                          )}
-                        </div>
-
-                        {duplicateStats.duplicates.length > 5 && (
-                          <div className="relative w-full sm:w-64">
-                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
-                            <Input
-                              type="search"
-                              placeholder="Filtrar duplicados por nome..."
-                              value={duplicatesFilterSearch}
-                              onChange={(e) => setDuplicatesFilterSearch(e.target.value)}
-                              className="h-7 pl-7 text-[11px] bg-white border-amber-900/15"
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Tabela detalhada de duplicados */}
-                      <div className="border border-amber-900/15 rounded-lg overflow-hidden bg-white max-h-72 overflow-y-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead className="bg-amber-50/70 text-amber-950 font-bold uppercase text-[10px] tracking-wider border-b border-amber-900/10 sticky top-0 z-10">
-                            <tr>
-                              <th className="py-2 px-3">Nome do Medicamento</th>
-                              <th className="py-2 px-3 text-center w-24">Ocorrências</th>
-                              <th className="py-2 px-3">Seções / Origens Extraídas</th>
-                              <th className="py-2 px-3 text-center w-36">Status no Catálogo</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-amber-900/5">
-                            {duplicateStats.duplicates
-                              .filter((d) =>
-                                duplicatesFilterSearch.trim()
-                                  ? d.nome
-                                      .toLowerCase()
-                                      .includes(duplicatesFilterSearch.toLowerCase().trim())
-                                  : true,
-                              )
-                              .map((dup) => (
-                                <tr
-                                  key={dup.normalizedKey}
-                                  className={cn(
-                                    'hover:bg-amber-50/40 transition',
-                                    dup.hasConflict ? 'bg-amber-50/20' : '',
-                                  )}
-                                >
-                                  <td className="py-2 px-3">
-                                    <div className="font-semibold text-slate-900 text-xs">
-                                      {dup.nome}
-                                    </div>
-                                    {dup.classes.length > 0 && (
-                                      <div className="text-[10px] text-slate-400 truncate">
-                                        Classe: {dup.classes.join(' / ')}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="py-2 px-3 text-center">
-                                    <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
-                                      {dup.count}x
-                                    </Badge>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      <span className="text-xs font-medium text-slate-700">
-                                        {dup.sectionsDesc}
-                                      </span>
-                                      {dup.hasConflict && (
-                                        <Badge className="bg-amber-500/15 text-amber-900 border-amber-400 text-[9px] font-bold">
-                                          Conflito de Status
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 mt-0.5">
-                                      Páginas:{' '}
-                                      {dup.items.map((it) => it.pageNumber || '?').join(', ')}
-                                    </div>
-                                  </td>
-                                  <td className="py-2 px-3 text-center">
-                                    {dup.hasConflict ? (
-                                      <div className="flex flex-col items-center gap-0.5">
-                                        <Badge
-                                          className={cn(
-                                            'text-[10px] font-bold',
-                                            dup.resolvedStatus === 'Inativo' &&
-                                              'bg-slate-700 text-white',
-                                            dup.resolvedStatus === 'Não Padronizado' &&
-                                              'bg-amber-600 text-white',
-                                            dup.resolvedStatus === 'Padronizado' &&
-                                              'bg-emerald-700 text-white',
-                                          )}
-                                        >
-                                          {dup.resolvedStatus}
-                                        </Badge>
-                                        <span className="text-[9px] text-amber-800 font-semibold">
-                                          Mais restritivo
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <Badge
-                                        className={cn(
-                                          'text-[10px] font-medium',
-                                          dup.resolvedStatus === 'Padronizado' &&
-                                            'bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30',
-                                          dup.resolvedStatus === 'Não Padronizado' &&
-                                            'bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40',
-                                          dup.resolvedStatus === 'Inativo' &&
-                                            'bg-slate-100 text-slate-600 border border-slate-200',
-                                        )}
-                                      >
-                                        {dup.resolvedStatus} (Unificado)
-                                      </Badge>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
                 {/* Painel de Auditoria de Status da Régua Oficial (238 / 217 / 27 = 482) */}
                 <div className="mt-3 p-3.5 rounded-xl border border-emerald-950/15 bg-[#F4FAF8] space-y-2.5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-[#0C4336] uppercase tracking-wider">
-                        Régua Oficial do ANEXO I:
+                        Régua Oficial Help Vida:
                       </span>
                       {counts.atendeReguaOficial ? (
                         <Badge className="bg-[#0F5342] text-white text-[11px] font-bold flex items-center gap-1">
                           <CheckCircle2 size={12} className="text-[#F5B31C]" />
-                          Contagem 100% Exata (482 itens)
+                          Contagem 100% Exata (482/482 itens)
                         </Badge>
                       ) : (
                         <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[11px] font-bold">
@@ -1790,6 +1255,92 @@ export default function Importar() {
                     </div>
                   </div>
                 </div>
+
+                {/* Painel "Relação de Duplicados" (IDs ou nomes repetidos) */}
+                <div className="mt-2 p-3.5 rounded-xl border border-amber-900/20 bg-[#FFFDF7] space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-6 w-6 rounded-md bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                        <Copy size={14} />
+                      </div>
+                      <h4 className="text-xs font-bold text-amber-950 uppercase tracking-wide">
+                        Relação de Duplicados
+                      </h4>
+                      {duplicateStats.duplicatesByPdfId.length > 0 ? (
+                        <Badge className="bg-rose-100 text-rose-900 border-rose-300 text-[10px] font-bold">
+                          {duplicateStats.duplicatesByPdfId.length} IDs repetidos detectados!
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
+                          IDs 100% únicos (zero colisão)
+                        </Badge>
+                      )}
+
+                      {duplicateStats.totalDuplicatesCount > 0 && (
+                        <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
+                          {duplicateStats.totalDuplicatesCount} nomes repetidos
+                        </Badge>
+                      )}
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDuplicatesTableExpanded(!duplicatesTableExpanded)}
+                      className="h-7 text-xs font-semibold border-amber-900/20 text-amber-950 hover:bg-amber-50"
+                    >
+                      {duplicatesTableExpanded ? 'Ocultar Duplicados' : 'Ver Detalhes'}
+                      {duplicatesTableExpanded ? (
+                        <ChevronUp size={13} className="ml-1" />
+                      ) : (
+                        <ChevronDown size={13} className="ml-1" />
+                      )}
+                    </Button>
+                  </div>
+
+                  {duplicatesTableExpanded && (
+                    <div className="space-y-2 pt-1">
+                      {duplicateStats.duplicates.length === 0 &&
+                      duplicateStats.duplicatesByPdfId.length === 0 ? (
+                        <p className="text-xs text-emerald-800">
+                          Nenhum registro duplicado encontrado na planilha.
+                        </p>
+                      ) : (
+                        <div className="border border-amber-900/15 rounded-lg overflow-hidden bg-white max-h-60 overflow-y-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-amber-50/70 text-amber-950 font-bold uppercase text-[10px] tracking-wider border-b border-amber-900/10 sticky top-0 z-10">
+                              <tr>
+                                <th className="py-2 px-3">Medicamento</th>
+                                <th className="py-2 px-3 text-center w-24">Ocorrências</th>
+                                <th className="py-2 px-3 text-center w-36">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-amber-900/5">
+                              {duplicateStats.duplicates.map((dup) => (
+                                <tr key={dup.normalizedKey} className="hover:bg-amber-50/30">
+                                  <td className="py-2 px-3 font-semibold text-slate-800">
+                                    {dup.nome}
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px]">
+                                      {dup.count}x
+                                    </Badge>
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    <Badge className="bg-[#E6F5F2] text-[#0C4336] text-[10px]">
+                                      {dup.resolvedStatus}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Bloco de Sinalização de Itens Ausentes no Banco (NUNCA deletados silenciosamente) */}
                 {counts.ausentesNoBanco.length > 0 && (
                   <div className="mt-3 p-3 rounded-xl border border-rose-300 bg-rose-50/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
@@ -1800,11 +1351,11 @@ export default function Importar() {
                       <div>
                         <p className="text-xs font-bold text-rose-950">
                           {counts.ausentesNoBanco.length} medicamento(s) com ID cadastrado não
-                          constam neste PDF
+                          constam nesta planilha
                         </p>
                         <p className="text-[11px] text-rose-800">
-                          Ficam preservados no banco e sinalizados como ausentes (nenhum registro é
-                          apagado silenciosamente).
+                          Permanecem preservados no banco e sinalizados como ausentes (nenhum
+                          registro é apagado silenciosamente).
                         </p>
                       </div>
                     </div>
@@ -1813,6 +1364,7 @@ export default function Importar() {
                     </Badge>
                   </div>
                 )}
+
                 {/* Chips de Resumo de Casamento com o Banco de Dados */}
                 <div className="flex flex-wrap items-center gap-2 pt-3">
                   <button
@@ -1840,7 +1392,7 @@ export default function Importar() {
                     )}
                   >
                     <PlusCircle size={13} className="text-emerald-500" />
-                    <span>Novos (pdfId novo)</span>
+                    <span>Novos (ID novo)</span>
                     <span className="font-mono text-[10px] px-1.5 py-0.2 bg-emerald-200/50 rounded-full font-bold">
                       {counts.novos}
                     </span>
@@ -1856,7 +1408,7 @@ export default function Importar() {
                     )}
                   >
                     <RefreshCw size={13} className="text-amber-500" />
-                    <span>A Atualizar (pdfId já cadastrado)</span>
+                    <span>A Atualizar (ID já cadastrado)</span>
                     <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 rounded-full font-bold">
                       {counts.existentes}
                     </span>
@@ -1877,7 +1429,7 @@ export default function Importar() {
                       {counts.semAlteracao}
                     </span>
                   </button>
-                </div>{' '}
+                </div>
               </CardHeader>
 
               <CardContent className="space-y-3">
@@ -1887,7 +1439,7 @@ export default function Importar() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
                     <Input
                       type="search"
-                      placeholder="Filtrar nesta pré-visualização por nome ou classe..."
+                      placeholder="Filtrar por ID, nome ou classe..."
                       value={filterSearch}
                       onChange={(e) => setFilterSearch(e.target.value)}
                       className="h-9 pl-8 text-xs bg-[#F4FAF8] border-emerald-950/15"
@@ -1914,7 +1466,7 @@ export default function Importar() {
                   </div>
                 </div>
 
-                {/* Tabela de Itens Extraídos */}
+                {/* Tabela de Itens da Planilha */}
                 <div className="border border-emerald-950/10 rounded-xl overflow-hidden overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#F4FAF8] text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-emerald-950/10">
@@ -1929,25 +1481,20 @@ export default function Importar() {
                           />
                         </th>
                         <th className="py-2.5 px-3 w-16 text-center font-mono">ID PDF</th>
-                        <th className="py-2.5 px-3">Medicamento (Grafia Exata)</th>
+                        <th className="py-2.5 px-3">Nome do Medicamento</th>
                         <th className="py-2.5 px-3">Classe Terapêutica</th>
-                        <th className="py-2.5 px-3">Status no Documento</th>
-                        <th className="py-2.5 px-3">Situação / Ação</th>
-                        <th className="py-2.5 px-3 w-16 text-center">Pág.</th>
+                        <th className="py-2.5 px-3">Definição / Status</th>
+                        <th className="py-2.5 px-3">Situação na Base</th>
+                        <th className="py-2.5 px-3 w-16 text-center">Linha</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-emerald-950/5">
                       {filteredPreview.map((item, idx) => {
-                        const originalIndex = previewItems.findIndex(
-                          (p) =>
-                            (p.pdfId && item.pdfId && p.pdfId === item.pdfId) ||
-                            (normalizeStr(p.nome) === normalizeStr(item.nome) &&
-                              normalizeStr(p.classe) === normalizeStr(item.classe)),
-                        )
+                        const originalIndex = previewItems.findIndex((p) => p.pdfId === item.pdfId)
 
                         return (
                           <tr
-                            key={`${item.pdfId || ''}-${item.nome}-${item.classe}-${idx}`}
+                            key={`${item.pdfId}-${idx}`}
                             className={cn(
                               'hover:bg-emerald-50/40 transition',
                               item.selected ? 'bg-white' : 'bg-slate-50/50 opacity-60',
@@ -1962,13 +1509,9 @@ export default function Importar() {
                             </td>
 
                             <td className="py-2 px-3 text-center">
-                              {item.pdfId ? (
-                                <Badge className="bg-[#0F5342]/10 text-[#0F5342] border-[#0F5342]/20 font-mono text-[11px] font-bold">
-                                  #{item.pdfId}
-                                </Badge>
-                              ) : (
-                                <span className="text-[10px] text-slate-400 italic">s/ ID</span>
-                              )}
+                              <Badge className="bg-[#0F5342]/10 text-[#0F5342] border-[#0F5342]/20 font-mono text-[11px] font-bold">
+                                #{item.pdfId}
+                              </Badge>
                             </td>
 
                             <td className="py-2 px-3 font-semibold text-slate-900">
@@ -2011,11 +1554,10 @@ export default function Importar() {
                                 <div className="space-y-0.5">
                                   <Badge className="bg-amber-500 text-white text-[10px] font-bold flex items-center gap-1 w-fit">
                                     <RefreshCw size={10} />
-                                    ATUALIZAR STATUS
+                                    ATUALIZAR
                                   </Badge>
                                   <span className="text-[10px] text-slate-500 block">
-                                    De &quot;{item.existingStatus}&quot; para &quot;{item.status}
-                                    &quot;
+                                    Status atual: &quot;{item.existingStatus}&quot;
                                   </span>
                                 </div>
                               )}
@@ -2028,7 +1570,7 @@ export default function Importar() {
                             </td>
 
                             <td className="py-2 px-3 text-center text-[11px] text-slate-400 font-mono">
-                              {item.pageNumber || '-'}
+                              {item.linhaPlanilha || '-'}
                             </td>
                           </tr>
                         )
@@ -2046,7 +1588,7 @@ export default function Importar() {
             </Card>
           )}
 
-          {/* 3. Bloco Oficial: Relatório de Itens Faltantes (IDs 1-482 do Anexo I não extraídos) */}
+          {/* 3. Relatório de Itens Faltantes (IDs 1-482 ausentes ou descartados) */}
           {previewItems.length > 0 && missingItemsReport.length > 0 && (
             <Card className="border-rose-200 bg-rose-50/30 shadow-xs">
               <CardHeader className="pb-3 border-b border-rose-100">
@@ -2065,9 +1607,8 @@ export default function Importar() {
                       </CardTitle>
                     </div>
                     <CardDescription className="text-xs text-rose-900/80 leading-relaxed">
-                      Cruzamento oficial da régua de 482 itens (intervalo 1–482) com os IDs
-                      extraídos. Apresenta o motivo do descarte ou ausência de cada ID para
-                      auditoria completa da importação.
+                      Cruzamento oficial da régua Help Vida (intervalo 1–482) com os IDs da
+                      planilha. Apresenta o motivo do descarte ou ausência de cada ID.
                     </CardDescription>
                   </div>
 
@@ -2104,7 +1645,7 @@ export default function Importar() {
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-rose-400" />
                       <Input
                         type="search"
-                        placeholder="Filtrar por ID, motivo, seção ou texto bruto..."
+                        placeholder="Filtrar por ID, motivo ou linha..."
                         value={missingFilterSearch}
                         onChange={(e) => setMissingFilterSearch(e.target.value)}
                         className="h-8 pl-8 text-xs bg-white border-rose-200 text-rose-950 placeholder:text-rose-400/80 focus-visible:ring-rose-400"
@@ -2175,11 +1716,10 @@ export default function Importar() {
                     <table className="w-full text-left text-xs">
                       <thead className="bg-rose-100/60 text-rose-900 font-bold uppercase text-[10px] tracking-wider border-b border-rose-200/70">
                         <tr>
-                          <th className="py-2 px-3 w-16 text-center font-mono">ID PDF</th>
-                          <th className="py-2 px-3 w-32">Seção do PDF</th>
+                          <th className="py-2 px-3 w-16 text-center font-mono">ID</th>
                           <th className="py-2 px-3 w-48">Motivo do Descarte / Ausência</th>
-                          <th className="py-2 px-3">Texto Bruto de Origem</th>
-                          <th className="py-2 px-3 w-20 text-center">Página</th>
+                          <th className="py-2 px-3">Texto Bruto da Linha</th>
+                          <th className="py-2 px-3 w-20 text-center">Linha</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-rose-100">
@@ -2189,31 +1729,6 @@ export default function Importar() {
                               <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono text-[11px] font-bold">
                                 #{missing.pdfId}
                               </Badge>
-                            </td>
-
-                            <td className="py-2 px-3">
-                              {missing.secao === 'Padronizado' && (
-                                <Badge className="bg-[#E6F5F2] text-[#0C4336] border border-[#0D8272]/30 text-[10px] font-semibold">
-                                  Padronizado
-                                </Badge>
-                              )}
-                              {missing.secao === 'Não Padronizado' && (
-                                <Badge className="bg-[#FEF8EC] text-[#B45309] border border-[#F5B31C]/40 text-[10px] font-semibold">
-                                  Não Padronizado
-                                </Badge>
-                              )}
-                              {missing.secao === 'Inativo' && (
-                                <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
-                                  Inativo
-                                </Badge>
-                              )}
-                              {!['Padronizado', 'Não Padronizado', 'Inativo'].includes(
-                                missing.secao || '',
-                              ) && (
-                                <span className="text-[11px] text-slate-400 italic">
-                                  {missing.secao || 'Não identificada'}
-                                </span>
-                              )}
                             </td>
 
                             <td className="py-2 px-3">
@@ -2232,7 +1747,7 @@ export default function Importar() {
                                     Sem Correspondência
                                   </Badge>
                                   <p className="text-[11px] text-slate-500 italic">
-                                    Nenhuma linha do PDF referenciou este ID.
+                                    Nenhuma linha da planilha referenciou este ID.
                                   </p>
                                 </div>
                               )}
@@ -2245,15 +1760,13 @@ export default function Importar() {
                                 </span>
                               ) : (
                                 <span className="text-slate-300 italic text-[10px]">
-                                  (Ausente no texto extraído do documento)
+                                  (Ausente na planilha enviada)
                                 </span>
                               )}
                             </td>
 
                             <td className="py-2 px-3 text-center text-[11px] text-slate-400 font-mono">
-                              {missing.pageNumber && missing.pageNumber > 0
-                                ? `Pág. ${missing.pageNumber}`
-                                : '—'}
+                              {missing.linha ? `Linha ${missing.linha}` : '—'}
                             </td>
                           </tr>
                         ))}
@@ -2271,37 +1784,37 @@ export default function Importar() {
             </Card>
           )}
 
-          {/* 4. Bloco de Itens Não Reconhecidos (para revisão manual) */}
-          {unrecognizedItems.length > 0 && (
+          {/* 4. Bloco de Linhas Descartadas / Não Reconhecidas */}
+          {descartadosList.length > 0 && (
             <Card className="border-amber-200/80 bg-amber-50/40 shadow-xs">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-bold text-amber-900 flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-amber-600" />
-                    Itens Não Reconhecidos ({unrecognizedItems.length})
+                    Linhas Descartadas com Motivo ({descartadosList.length})
                   </CardTitle>
                   <Badge variant="outline" className="text-[10px] text-amber-800 border-amber-300">
-                    Revisão Manual
+                    Auditoria
                   </Badge>
                 </div>
                 <CardDescription className="text-xs text-amber-800/80">
-                  Linhas do documento com texto que aparenta ser medicamento mas cuja classe
-                  terapêutica não pôde ser associada automaticamente.
+                  Linhas da planilha que apresentaram erros de validação (ID duplicado, nome vazio
+                  ou definição inválida).
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {unrecognizedItems.map((unrec, idx) => (
+                  {descartadosList.map((desc, idx) => (
                     <div
                       key={idx}
                       className="p-2.5 rounded-lg bg-white border border-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1.5"
                     >
                       <div className="space-y-0.5">
-                        <p className="font-mono font-semibold text-slate-800">{unrec.text}</p>
-                        <p className="text-[11px] text-amber-700">{unrec.reason}</p>
+                        <p className="font-mono font-semibold text-slate-800">{desc.rawText}</p>
+                        <p className="text-[11px] text-amber-700">{desc.motivo}</p>
                       </div>
                       <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                        Página {unrec.pageNumber}
+                        {desc.linha ? `Linha ${desc.linha}` : ''}
                       </span>
                     </div>
                   ))}
@@ -2344,7 +1857,7 @@ export default function Importar() {
                 </div>
               ) : historicoList.length === 0 ? (
                 <div className="py-12 text-center text-slate-400 space-y-2">
-                  <FileText className="h-10 w-10 mx-auto text-slate-300" />
+                  <FileSpreadsheet className="h-10 w-10 mx-auto text-slate-300" />
                   <p className="text-xs font-medium text-slate-600">
                     Nenhuma importação registrada até o momento.
                   </p>
@@ -2373,7 +1886,7 @@ export default function Importar() {
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-2">
-                              <FileText className="h-4 w-4 text-[#0D8272] shrink-0" />
+                              <FileSpreadsheet className="h-4 w-4 text-[#0D8272] shrink-0" />
                               <h4 className="text-xs sm:text-sm font-bold text-[#0C4336] truncate">
                                 {item.nome_arquivo}
                               </h4>

@@ -458,8 +458,8 @@ export default function Medicamentos() {
                 size="sm"
                 className="flex-1 sm:flex-initial h-9 min-h-[38px] border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2] text-xs font-semibold"
               >
-                <FileUp className="mr-1.5 h-3.5 w-3.5 text-[#0D8272]" />
-                Importar PDF
+                <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-[#0D8272]" />
+                Importar Planilha
               </Button>
 
               <Button

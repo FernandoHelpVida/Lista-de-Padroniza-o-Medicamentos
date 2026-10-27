@@ -216,7 +216,7 @@ export default function Layout() {
     if (path.startsWith('/pacientes')) return 'Pacientes (SpinCare)'
     if (path.startsWith('/orcamentos')) return 'Orçamentos Aprovados (SpinCare)'
     if (path.startsWith('/prescricoes')) return 'Prescrições Médicas (SpinCare)'
-    if (path.startsWith('/importar')) return 'Importar Lista Padronizada (PDF)'
+    if (path.startsWith('/importar')) return 'Importar Lista Padronizada (Planilha)'
     if (path.startsWith('/equipe')) return 'Gestão de Contas da Equipe'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
     if (path.startsWith('/configuracoes')) return 'Configurações do Usuário'
@@ -243,7 +243,7 @@ export default function Layout() {
           { title: 'Orçamentos', path: '/orcamentos', icon: DollarSign },
         ]
       : []),
-    ...(isAdmin ? [{ title: 'Importar PDF', path: '/importar', icon: FileUp }] : []),
+    ...(isAdmin ? [{ title: 'Importar Planilha', path: '/importar', icon: FileSpreadsheet }] : []),
     ...(isAdmin
       ? [
           {
@@ -619,8 +619,8 @@ export default function Layout() {
                       onClick={() => navigate('/importar')}
                       className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50"
                     >
-                      <FileUp size={14} className="mr-2 text-[#0D8272]" />
-                      Importar Lista (PDF)
+                      <FileSpreadsheet size={14} className="mr-2 text-[#0D8272]" />
+                      Importar Planilha (XLSX)
                     </DropdownMenuItem>
                   </>
                 )}
