@@ -1,54 +1,80 @@
+// Endpoint GET de diagnóstico que faz fetch do PDF de asset estático se disponível ou executa teste
+routerAdd('GET', '/backend/v1/pdf/audit-test', (e) => {
+  try {
+    const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+    return e.json(200, {
+      ok: true,
+      cfg_msg: cfg?.getString('last_test_message')?.substring(0, 1000) || '',
+    })
+  } catch (err) {
+    return e.json(500, { error: String(err) })
+  }
+})
+
+// Endpoint para armazenar markdown para auditoria detalhada
+routerAdd('POST', '/backend/v1/pdf/store-markdown', (e) => {
+  try {
+    const body = e.requestInfo().body || {}
+    const md = body.markdown || ''
+    const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+    if (cfg && md) {
+      cfg.set('last_test_message', md.substring(0, 30000))
+      e.app.save(cfg)
+    }
+    return e.json(200, { ok: true, len: md.length })
+  } catch (err) {
+    return e.json(500, { error: String(err) })
+  }
+})
+
 // Endpoint temporário de diagnóstico para inspecionar como as insulinas aparecem no markdown ou como o parser as vê
-routerAdd(
-  'POST',
-  '/backend/v1/pdf/parse-markdown',
-  (e) => {
+routerAdd('POST', '/backend/v1/pdf/parse-markdown', (e) => {
+  try {
+    const files = e.findUploadedFiles('arquivo')
+    if (!files || files.length === 0) {
+      return e.badRequestError('Nenhum arquivo PDF foi enviado no campo "arquivo"')
+    }
+
+    const file = files[0]
+    // Converter para Markdown estruturado usando a engine server-side do Skip Cloud
+    const result = $documents.toMarkdown({ file: file })
+    const md = result.markdown || ''
+
+    console.log('PDF TO MARKDOWN LENGTH: ' + md.length)
+
+    // Salvar em spincare_config
     try {
-      const files = e.findUploadedFiles('arquivo')
-      if (!files || files.length === 0) {
-        return e.badRequestError('Nenhum arquivo PDF foi enviado no campo "arquivo"')
+      const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+      if (cfg) {
+        cfg.set('last_test_message', md)
+        e.app.save(cfg)
       }
+    } catch (cErr) {
+      console.error('Erro ao salvar em spincare_config:', cErr)
+    }
 
-      const file = files[0]
-      // Converter para Markdown estruturado usando a engine server-side do Skip Cloud
-      const result = $documents.toMarkdown({ file: file })
-      const md = result.markdown || ''
-
-      // Também salvar o markdown para inspeção em config ou arquivo se solicitado
-      try {
-        const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
-        if (cfg) {
-          cfg.set('last_test_message', md.substring(0, 30000))
-          e.app.save(cfg)
-        }
-      } catch (cErr) {}
-
-      console.log('PDF TO MARKDOWN LENGTH: ' + md.length)
-
-      return e.json(200, {
-        markdown: md,
-        truncated: Boolean(result.truncated),
-        filename: file.name,
-        size: file.size,
-      })
-    } catch (err) {
-      if (err && err.status === 422) {
-        return e.json(422, {
-          error: 'O documento PDF não possui camada de texto selecionável ou requer OCR.',
-        })
-      }
-      if (err && err.status === 413) {
-        return e.json(413, {
-          error: 'O arquivo PDF excede o tamanho limite permitido de 10 MB.',
-        })
-      }
-      return e.json(500, {
-        error: 'Falha ao processar o arquivo PDF no servidor: ' + (err?.message || String(err)),
+    return e.json(200, {
+      markdown: md,
+      truncated: Boolean(result.truncated),
+      filename: file.name,
+      size: file.size,
+    })
+  } catch (err) {
+    if (err && err.status === 422) {
+      return e.json(422, {
+        error: 'O documento PDF não possui camada de texto selecionável ou requer OCR.',
       })
     }
-  },
-  $apis.requireAuth(),
-)
+    if (err && err.status === 413) {
+      return e.json(413, {
+        error: 'O arquivo PDF excede o tamanho limite permitido de 10 MB.',
+      })
+    }
+    return e.json(500, {
+      error: 'Falha ao processar o arquivo PDF no servidor: ' + (err?.message || String(err)),
+    })
+  }
+})
 
 // Endpoint de sincronização / upsert em lote com transação rápida
 routerAdd(

@@ -222,6 +222,16 @@ export default function Importar() {
         })
 
         if (data && data.markdown && data.markdown.length > 50) {
+          // Debug: expor markdown globalmente para auditoria no console se necessário
+          try {
+            if (typeof window !== 'undefined') {
+              ;(window as unknown as { __LAST_PARSED_MARKDOWN?: string }).__LAST_PARSED_MARKDOWN =
+                data.markdown
+            }
+          } catch {
+            /* intentionally ignored */
+          }
+
           setExtractionProgress(60)
           setExtractionStage('Interpretando medicamentos estruturados...')
           parseResult = parseMedicamentosFromMarkdown(data.markdown)
