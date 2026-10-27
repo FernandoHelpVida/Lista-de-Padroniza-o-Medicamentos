@@ -13,6 +13,7 @@ import {
   StatusPadronizacao,
   UnrecognizedItem,
 } from '@/lib/pdf/pdfParser'
+import { runPdfParserValidationTests } from '@/lib/pdf/pdfParserValidation.test'
 import officialPdfUrl from '@/assets/relacao-dos-medicamentos-avaliados-e-definicao-de-padronizacao-16.10-50a22.pdf'
 import {
   UploadCloud,
@@ -175,6 +176,14 @@ export default function Importar() {
     loadExistingMedicamentos()
     loadHistorico()
 
+    // Auto-execução dos testes de validação do parser para integridade contínua
+    try {
+      const testOutcome = runPdfParserValidationTests()
+      console.log('[PARSER-TESTS] Auto-validation passed:', testOutcome)
+    } catch (testErr) {
+      console.warn('[PARSER-TESTS] Warning in parser validation tests:', testErr)
+    }
+
     // Diagnóstico e auto-verificação da auditoria
     const checkAudit = async () => {
       try {
@@ -218,6 +227,8 @@ export default function Importar() {
         totalItems: number
       } | null = null
 
+      let serverMarkdown: string | null = null
+
       // Tentativa 1: Processamento robusto server-side via engine do Skip Cloud ($documents.toMarkdown)
       try {
         setExtractionProgress(25)
@@ -232,7 +243,7 @@ export default function Importar() {
         })
 
         if (data && data.markdown && data.markdown.length > 50) {
-          // Debug: expor markdown globalmente para auditoria no console se necessário
+          serverMarkdown = data.markdown
           try {
             if (typeof window !== 'undefined') {
               ;(window as unknown as { __LAST_PARSED_MARKDOWN?: string }).__LAST_PARSED_MARKDOWN =
@@ -245,6 +256,9 @@ export default function Importar() {
           setExtractionProgress(60)
           setExtractionStage('Interpretando medicamentos estruturados...')
           parseResult = parseMedicamentosFromMarkdown(data.markdown)
+          console.log(
+            `[IMPORT-AUDIT] Server extraction produced ${parseResult.items.length} items (expected 482).`,
+          )
         }
       } catch (srvErr) {
         console.warn(
@@ -253,8 +267,9 @@ export default function Importar() {
         )
       }
 
-      // Tentativa 2: Extração no cliente via PDF.js caso o servidor não responda
-      if (!parseResult || parseResult.items.length === 0) {
+      // Tentativa 2: Se o resultado do servidor falhar ou NÃO atingir a régua completa esperada (482),
+      // ou se o servidor não respondeu, testar também extração no cliente via PDF.js
+      if (!parseResult || parseResult.items.length < 400) {
         setExtractionProgress(40)
         setExtractionStage('Extraindo texto das páginas no navegador (PDF.js)...')
         const buffer = await fileOrBlob.arrayBuffer()
@@ -262,7 +277,15 @@ export default function Importar() {
 
         setExtractionProgress(75)
         setExtractionStage('Interpretando estrutura de medicamentos, classes e status...')
-        parseResult = parseMedicamentosFromPages(pages)
+        const clientResult = parseMedicamentosFromPages(pages)
+        console.log(
+          `[IMPORT-AUDIT] Client PDF.js extraction produced ${clientResult.items.length} items.`,
+        )
+
+        // Se o cliente obteve mais itens ou o servidor não tinha retornado, usar o melhor resultado
+        if (!parseResult || clientResult.items.length > parseResult.items.length) {
+          parseResult = clientResult
+        }
       }
 
       if (!parseResult || parseResult.items.length === 0) {

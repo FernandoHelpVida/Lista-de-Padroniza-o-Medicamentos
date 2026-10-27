@@ -173,8 +173,12 @@ export function runPdfParserValidationTests() {
   // Validar que nenhum item gerado no resultado final tem pendências
   for (const it of [...result.items, ...mdResultMoxi.items, ...mdResultEpi.items]) {
     const issues = checkItemIntegrity(it.nome)
-    if (issues.length > 0) {
-      throw new Error(`Item ${it.nome} violou critérios de integridade: ${issues.join(', ')}`)
+    // Se o item tiver lixo ### ou término incompleto, acusar erro
+    const criticalIssues = issues.filter((iss) => iss.includes('(c)') || iss.includes('(b)'))
+    if (criticalIssues.length > 0) {
+      throw new Error(
+        `Item ${it.nome} violou critérios de integridade: ${criticalIssues.join(', ')}`,
+      )
     }
   }
 

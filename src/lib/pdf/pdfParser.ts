@@ -266,8 +266,76 @@ export function findClassInLine(line: string): {
 
   const normLine = normalizeStr(workingLine)
 
-  // 1. Procurar pelas classes conhecidas (priorizando as maiores/mais específicas)
-  const sortedKnown = [...KNOWN_CLASSES].sort((a, b) => b.length - a.length)
+  // 0. Se a linha contiver delimitador pipe "|" e tiver pelo menos duas partes
+  if (workingLine.includes('|')) {
+    const pipeParts = workingLine
+      .split('|')
+      .map((p) => p.replace(/#+/g, ' ').replace(/\*\*/g, '').trim())
+      .filter((p, idx, arr) => !(idx === 0 && p === '') && !(idx === arr.length - 1 && p === ''))
+    if (pipeParts.length >= 2) {
+      const pNome = pipeParts[0]
+      const pClasse = pipeParts[1]
+      const pDef = pipeParts[2] || detectedDefinicao
+      if (pNome && pClasse) {
+        return {
+          className: pClasse,
+          restOfLine: pNome,
+          definicao: pDef,
+          matched: true,
+        }
+      }
+    }
+  }
+
+  // Adicionar variações conhecidas com grafia normalizada
+  const sortedKnown = [
+    ...KNOWN_CLASSES,
+    'Antibacteriano',
+    'Anticonvulsivante',
+    'Antidepressivo',
+    'Antidiabético',
+    'Antidiabéticos',
+    'Anti-hipertensivo',
+    'Anti-inflamatório não esteroidal',
+    'Anti-inflamatório intestinal',
+    'Analgésico/antitérmico',
+    'Analgésico opioide',
+    'Corticosteroide',
+    'Dermatológico',
+    'Diurético',
+    'Gastrointestinal',
+    'Relaxante muscular',
+    'Suplemento/Vitamina',
+    'Eletrólito',
+    'Água/diluente',
+    'Broncodilatador',
+    'Antiemético/antivertiginoso',
+    'Anti-histamínico',
+    'Antiparasitário',
+    'Antipsicótico',
+    'Antitussígeno',
+    'Antiarrítmico',
+    'Antiasmático',
+    'Anticoagulante',
+    'Antifúngico',
+    'Antiviral',
+    'Anestésico local',
+    'Cardiovascular',
+    'Otológico',
+    'Colírio',
+    'Canabinoide',
+    'Bloqueador neuromuscular',
+    'Contraceptivo/hormonal',
+    'Antiagregante plaquetário',
+    'Antialérgico/estimulante do apetite',
+    'Anticolinérgico/antiespasmódico',
+    'Antiprolactinêmico',
+    'Antiparkinsoniano',
+    'Antidemencial',
+    'Antiepiléptico',
+    'Antisseptico/dermatologico',
+    'Dermatologico/cosmetico',
+  ].sort((a, b) => b.length - a.length)
 
   for (const cls of sortedKnown) {
     const normCls = normalizeStr(cls)
@@ -295,6 +363,39 @@ export function findClassInLine(line: string): {
             restOfLine: rest,
             definicao: detectedDefinicao,
             matched: true,
+          }
+        }
+      }
+    }
+
+    // A classe também pode estar no MEIO da linha se a definição vier depois
+    // Ex: "AMOXICILINA 875MG + CLAVULANATO 125MG COMPRIMIDO Antibacteriano Padrão"
+    // (Caso o defMatch acima não tenha removido por variação na escrita de definição)
+    const clsIdx = normLine.lastIndexOf(normCls)
+    if (clsIdx > 0) {
+      const charBefore = normLine[clsIdx - 1]
+      const charAfterIdx = clsIdx + normCls.length
+      const charAfter = charAfterIdx < normLine.length ? normLine[charAfterIdx] : ''
+      if (
+        (charBefore === ' ' || charBefore === '|' || charBefore === '\t') &&
+        (charAfter === ' ' || charAfter === '|' || charAfter === '\t' || charAfter === '')
+      ) {
+        const remainderAfter = normLine.substring(charAfterIdx).trim()
+        // Se o que sobrou depois for apenas definição (padrao, nao padrao, inativo)
+        if (
+          !remainderAfter ||
+          remainderAfter.includes('padrao') ||
+          remainderAfter.includes('inativo') ||
+          remainderAfter.includes('nao')
+        ) {
+          const rest = workingLine.substring(0, clsIdx).trim()
+          if (rest.length > 1) {
+            return {
+              className: cls,
+              restOfLine: rest,
+              definicao: remainderAfter || detectedDefinicao,
+              matched: true,
+            }
           }
         }
       }
@@ -328,6 +429,9 @@ export function findClassInLine(line: string): {
  * Processa tabelas markdown no formato:
  * | Nome do medicamento | Classe | Definição |
  * | AGUA DESTILADA 5L | Água/diluente | Padrão |
+ */
+/**
+ * Analisa markdown e linhas de texto
  */
 export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult {
   const items: ParsedMedicamento[] = []
@@ -400,26 +504,36 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           rowStatus = 'Padronizado'
         }
 
-        // Se a linha tem nome mas não tem classe:
-        // Pode ser continuação da linha anterior! (ex: | SOLUCAO INJETAVEL BOLSA 250 ML | | |)
+        // Se a classe não está preenchida mas temos nome:
+        // Pode ser:
+        // (a) continuação do item anterior (ex: | SOLUCAO INJETAVEL BOLSA 250 ML | | |)
+        // (b) a classe veio embutida no próprio nome! Ex: | AGUA DESTILADA 5L Água/diluente | | Padrão |
+        // (c) pendingNome para a próxima linha
         if (nome && !classe) {
-          if (items.length > 0) {
-            const lastItem = items[items.length - 1]
-            // Se o último item tem nome incompleto ou a linha atual é continuação
-            if (isContinuationLine(nome) || hasDanglingEnd(lastItem.nome)) {
-              const combinedNome = `${lastItem.nome} ${nome}`
-                .replace(/\s+/g, ' ')
-                .trim()
-                .toUpperCase()
-              if (!isMonsterItem(combinedNome)) {
-                lastItem.nome = combinedNome
-                lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${nome}`
-                continue
+          const matchInCol = findClassInLine(nome)
+          if (matchInCol.matched && matchInCol.restOfLine) {
+            classe = matchInCol.className
+            nome = matchInCol.restOfLine
+            if (matchInCol.definicao && !definicao) definicao = matchInCol.definicao
+          } else {
+            if (items.length > 0) {
+              const lastItem = items[items.length - 1]
+              // Se o último item tem nome incompleto ou a linha atual é continuação
+              if (isContinuationLine(nome) || hasDanglingEnd(lastItem.nome)) {
+                const combinedNome = `${lastItem.nome} ${nome}`
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                  .toUpperCase()
+                if (!isMonsterItem(combinedNome)) {
+                  lastItem.nome = combinedNome
+                  lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${nome}`
+                  continue
+                }
               }
             }
+            pendingNome = pendingNome ? `${pendingNome} ${nome}` : nome
+            continue
           }
-          pendingNome = pendingNome ? `${pendingNome} ${nome}` : nome
-          continue
         }
 
         // Se a classe está preenchida
@@ -482,6 +596,11 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           }
         }
       }
+    }
+
+    // Se a linha anterior foi tabela com pipes e foi processada acima, não reprocessar aqui
+    if (rawLine.includes('|')) {
+      continue
     }
 
     // Se não for linha de tabela com pipes, processar como texto livre / linha estruturada
@@ -636,27 +755,11 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
   // Deduplicação e sanitização de ruídos
   const sanitized = sanitizeAndFilterItems(items, unrecognized)
 
-  // Auditoria de integridade para mover itens que ainda apresentem fragmentos graves para unrecognized
-  const fullyValid: ParsedMedicamento[] = []
-  for (const it of sanitized) {
-    const issues = checkItemIntegrity(it.nome)
-    // Se o item inicia com fragmento de dosagem isolado (ex: "150 ML" sem princípio ativo antes), mover para unrecognized
-    if (isDosageFragmentStart(it.nome) && !/^[A-Z]/.test(it.nome.replace(/^[\d.,\s+]+/, ''))) {
-      unrecognized.push({
-        pageNumber: 0,
-        text: it.nome,
-        reason: `Item descartado por iniciar com fragmento de dosagem: ${issues.join(', ')}`,
-      })
-      continue
-    }
-    fullyValid.push(it)
-  }
-
   return {
-    items: fullyValid,
+    items: sanitized,
     unrecognized,
     totalPages: 16,
-    totalItems: fullyValid.length,
+    totalItems: sanitized.length,
   }
 }
 
@@ -872,38 +975,35 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
     }
   }
 
-  // Fim de todas as páginas com pendingNome não resolvido
-  if (pendingNome && pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
-    unrecognized.push({
-      pageNumber: pendingPageNumber,
-      text: pendingNome,
-      reason: 'Classe terapêutica não identificada ao fim do documento.',
-    })
+  // Se sobrou um pendingNome com classe associável ou identificável
+  if (pendingNome) {
+    const lastMatch = findClassInLine(pendingNome)
+    if (lastMatch.matched && lastMatch.restOfLine) {
+      items.push({
+        nome: lastMatch.restOfLine.trim().toUpperCase(),
+        classe: lastMatch.className,
+        status: currentStatus,
+        definicaoOriginal: lastMatch.definicao,
+        rawSourceLine: pendingNome,
+        pageNumber: pendingPageNumber,
+      })
+    } else if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
+      unrecognized.push({
+        pageNumber: pendingPageNumber,
+        text: pendingNome,
+        reason: 'Classe terapêutica não identificada ao fim do documento.',
+      })
+    }
   }
 
   // Deduplicação e sanitização de monstros
   const sanitized = sanitizeAndFilterItems(items, unrecognized)
 
-  // Auditoria de integridade para mover itens que ainda apresentem fragmentos graves para unrecognized
-  const fullyValid: ParsedMedicamento[] = []
-  for (const it of sanitized) {
-    const issues = checkItemIntegrity(it.nome)
-    if (isDosageFragmentStart(it.nome) && !/^[A-Z]/.test(it.nome.replace(/^[\d.,\s+]+/, ''))) {
-      unrecognized.push({
-        pageNumber: it.pageNumber || 0,
-        text: it.nome,
-        reason: `Item descartado por iniciar com fragmento de dosagem: ${issues.join(', ')}`,
-      })
-      continue
-    }
-    fullyValid.push(it)
-  }
-
   return {
-    items: fullyValid,
+    items: sanitized,
     unrecognized,
     totalPages: pages.length,
-    totalItems: fullyValid.length,
+    totalItems: sanitized.length,
   }
 }
 
@@ -996,6 +1096,12 @@ export function isContinuationLine(line: string): boolean {
     return true
   }
 
+  // 7. Não é continuação se parecer um medicamento completo com nome e apresentação
+  // Ex: "DIPIRONA 500MG/ML GOTAS FRASCO 20 ML" tem princípio ativo + dose + forma
+  if (/^[a-z]{4,}\s+\d+/i.test(norm)) {
+    return false
+  }
+
   return false
 }
 
@@ -1013,22 +1119,26 @@ export function isMonsterItem(nome: string): boolean {
     return true
   }
 
-  // 2. Se contém 3 ou mais repetições de "COMPRIMIDO" ou "CAPSULA"
+  // 2. Se contém repetições excessivas de uma mesma forma indicando junção de múltiplos remédios
+  // (Notar: fórmulas manipuladas podem ter 1 ou 2 formas, mas não 4 ou mais itens distintos)
   const compCount = (upper.match(/\bCOMPRIMIDO\b/g) || []).length
-  if (compCount >= 3) return true
+  if (compCount >= 4) return true
 
   const capsCount = (upper.match(/\bCAPSULA\b/g) || []).length
-  if (capsCount >= 3) return true
+  if (capsCount >= 4) return true
 
-  // Se tem combinação excessiva de formas farmacêuticas diferentes repetidas
   const ampCount = (upper.match(/\bAMPOLA\b/g) || []).length
   const frascoCount = (upper.match(/\bFRASCO\b/g) || []).length
-  if (compCount >= 2 && ampCount >= 2) return true
-  if (compCount + capsCount + ampCount + frascoCount >= 5) return true
+  if (compCount >= 3 && ampCount >= 3) return true
+  if (compCount + capsCount + ampCount + frascoCount >= 7) return true
 
   // 3. Padrões de cabeçalho residuais
   if (upper.startsWith('###') || upper.startsWith('##') || upper.startsWith('||')) return true
   if (upper.includes('NOME DO MEDICAMENTO') || upper.includes('ANTIBACTERIANO ANTIBACTERIANO'))
+    return true
+
+  // 4. Se contém palavras-chave de cabeçalho ou rodapé institucional
+  if (upper.includes('RELACAO DOS MEDICAMENTOS') || upper.includes('DEFINICAO DE PADRONIZACAO'))
     return true
 
   return false

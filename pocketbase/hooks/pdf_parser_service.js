@@ -1,13 +1,18 @@
 // Endpoint GET de diagnóstico que faz fetch do PDF de asset estático se disponível ou executa teste
 routerAdd('GET', '/backend/v1/pdf/audit-test', (e) => {
   try {
-    const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
-    const testMsg = cfg?.getString('last_test_message') || ''
+    const auditRec = e.app.findRecordsByFilter(
+      'audit_logs',
+      "registro_id = 'last_pdf_markdown'",
+      '-created',
+      1,
+      0,
+    )
+    const testMsg = auditRec && auditRec.length > 0 ? auditRec[0].getString('detalhes') : ''
     return e.json(200, {
       ok: true,
       msg_len: testMsg.length,
       msg_preview: testMsg.substring(0, 500),
-      msg_full: testMsg,
     })
   } catch (err) {
     return e.json(500, { error: String(err) })
@@ -343,6 +348,19 @@ routerAdd('GET', '/backend/v1/pdf/audit-regua', (e) => {
     const naoPadronizados = finalItems.filter((i) => i.status === 'Não Padronizado')
     const inativos = finalItems.filter((i) => i.status === 'Inativo')
 
+    console.log(
+      'AUDIT_REGUA_STATS: rawItems=' +
+        items.length +
+        ', finalItems=' +
+        finalItems.length +
+        ', pad=' +
+        padronizados.length +
+        ', naoPad=' +
+        naoPadronizados.length +
+        ', inat=' +
+        inativos.length,
+    )
+
     // Checar os 7 casos de teste obrigatórios
     const testCases = {
       insulinaLantus: finalItems.some(
@@ -466,18 +484,52 @@ routerAdd('POST', '/backend/v1/pdf/parse-markdown', (e) => {
 
     console.log('PDF TO MARKDOWN LENGTH: ' + md.length)
 
-    // Salvar em spincare_config
+    // Salvar em audit_logs para permitir inspeção e auditoria sem estourar limite de tamanho de spincare_config
     try {
-      const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
-      if (cfg) {
-        cfg.set('last_test_message', md)
-        e.app.save(cfg)
-      }
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      const auditRec = new Record(auditCol)
+      auditRec.set('colecao', 'medicamentos')
+      auditRec.set('registro_id', 'last_pdf_markdown')
+      auditRec.set('acao', 'PDF_PARSE_MARKDOWN')
+      auditRec.set('status_novo', 'Markdown extraído (' + md.length + ' chars)')
+      auditRec.set('detalhes', md)
+      e.app.save(auditRec)
     } catch (cErr) {
-      console.error('Erro ao salvar em spincare_config:', cErr)
+      console.error('Erro ao salvar em audit_logs:', cErr)
     }
 
-    // Executar também auditoria do parser server-side se solicitado ou sempre
+    // Diagnóstico detalhado: contar linhas de tabela, seções encontradas e tamanho
+    const lines = md.split('\n')
+    let tableRows = 0
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes('|')) tableRows++
+    }
+    console.log(
+      'PDF_MARKDOWN_STATS: totalLines=' +
+        lines.length +
+        ', tableRows=' +
+        tableRows +
+        ', length=' +
+        md.length,
+    )
+
+    // Salvar o markdown completo em uma coleção que permite armazenar texto longo
+    try {
+      const existingAudit = e.app.findRecordsByFilter(
+        'audit_logs',
+        "registro_id = 'last_pdf_markdown'",
+        '-created',
+        1,
+        0,
+      )
+      if (existingAudit && existingAudit.length > 0) {
+        existingAudit[0].set('detalhes', md)
+        e.app.save(existingAudit[0])
+      }
+    } catch (saveMdErr) {
+      console.error('Erro ao salvar md em audit_logs:', saveMdErr)
+    }
+
     return e.json(200, {
       markdown: md,
       truncated: Boolean(result.truncated),
