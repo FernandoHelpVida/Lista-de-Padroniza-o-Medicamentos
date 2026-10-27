@@ -182,5 +182,34 @@ export function runPdfParserValidationTests() {
     }
   }
 
-  return { success: true, totalItems: result.items.length }
+  // --- Caso 4: Validação da régua oficial Help Vida de pdfId (1 a 482) ---
+  const sampleMarkdownWithPdfIds = `
+| 1 | AMOXICILINA 875MG + CLAVULANATO 125MG COMPRIMIDO | Antibacteriano | Padrão |
+| 2 | MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML | Antibacteriano | Padrão |
+| 3 | INSULINA LANTUS 100UI/ML SOLUÇÃO INJETÁVEL | Antidiabético | Padrão |
+| 4 | INSULINA NPH 100UI/ML SUSPENSÃO INJETÁVEL | Antidiabético | Padrão |
+| 5 | INSULINA REGULAR 100UI/ML SOLUÇÃO INJETÁVEL | Antidiabético | Padrão |
+| 6 | COLAGENASE 0,6UI + CLORANFENICOL 50MG/G (EPITEGEL) GEL | Cicatrizante | Padrão |
+| 7 | DIMENIDRINATO (DRAMIN B6 DL) AMPOLA 10 ML | Antiemético | Padrão |
+| 8 | EPISOL SEC OC FPS 60 GEL FRASCO 60 G | Protetor solar | Não padrão |
+| 9 | FORMULA PENTRAVAN (CLOBETASOL + ACIDO SALICILICO) | Dermatológico | Inativo |
+`
+  const mdResultIds = parseMedicamentosFromMarkdown(sampleMarkdownWithPdfIds)
+  if (mdResultIds.items.length !== 9) {
+    throw new Error(`Esperado 9 itens com ID, encontrado ${mdResultIds.items.length}`)
+  }
+
+  // Garantir que cada item possui pdfId válido e único
+  const seenIds = new Set<number>()
+  for (const it of mdResultIds.items) {
+    if (!it.pdfId || it.pdfId < 1 || it.pdfId > 482) {
+      throw new Error(`Item ${it.nome} sem pdfId válido: ${it.pdfId}`)
+    }
+    if (seenIds.has(it.pdfId)) {
+      throw new Error(`pdfId duplicado detectado: ${it.pdfId}`)
+    }
+    seenIds.add(it.pdfId)
+  }
+
+  return { success: true, totalItems: result.items.length, pdfIdsTested: seenIds.size }
 }

@@ -203,9 +203,18 @@ export default function Importar() {
     checkAudit()
   }, [])
 
-  // Mapa de medicamentos existentes indexado EXATAMENTE pelo nome normalizado
-  // (trim, colapsar espaços, maiúsculas, sem acentos)
-  const existingMap = useMemo(() => {
+  // Mapas de medicamentos existentes no banco: prioritário por pdfId e fallback por nome
+  const existingByPdfId = useMemo(() => {
+    const map = new Map<number, MedicamentoRecord>()
+    for (const med of existingMeds) {
+      if (med.pdfId && med.pdfId >= 1 && med.pdfId <= 482) {
+        map.set(med.pdfId, med)
+      }
+    }
+    return map
+  }, [existingMeds])
+
+  const existingMapByName = useMemo(() => {
     const map = new Map<string, MedicamentoRecord>()
     for (const med of existingMeds) {
       const key = normalizeStr(med.nome)
@@ -305,10 +314,16 @@ export default function Importar() {
       setExtractionProgress(90)
       setExtractionStage('Comparando com a base de dados Help Vida atual...')
 
-      // Cruzar com os dados existentes por casamento EXATO do nome normalizado
+      // Cruzar com os dados existentes por casamento PRIORITÁRIO por pdfId (Regra Help Vida Oficial)
       const previews: PreviewItem[] = parseResult.items.map((item) => {
-        const key = normalizeStr(item.nome)
-        const existing = existingMap.get(key)
+        let existing: MedicamentoRecord | undefined = undefined
+        if (item.pdfId && item.pdfId >= 1 && item.pdfId <= 482) {
+          existing = existingByPdfId.get(item.pdfId)
+        }
+        if (!existing) {
+          const key = normalizeStr(item.nome)
+          existing = existingMapByName.get(key)
+        }
 
         let diffStatus: ItemDiffStatus = 'NOVO'
         let existingId: string | undefined = undefined
@@ -317,10 +332,17 @@ export default function Importar() {
         if (existing) {
           existingId = existing.id
           existingStatus = existing.status
-          if (existing.status !== item.status) {
-            diffStatus = 'EXISTENTE' // status mudou, precisa atualizar
+          const statusMudou = existing.status !== item.status
+          const nomeMudou = normalizeStr(existing.nome) !== normalizeStr(item.nome)
+          const classeMudou = Boolean(
+            item.classe && normalizeStr(existing.classe) !== normalizeStr(item.classe),
+          )
+          const pdfIdMudou = !existing.pdfId && item.pdfId
+
+          if (statusMudou || nomeMudou || classeMudou || pdfIdMudou) {
+            diffStatus = 'EXISTENTE' // dados mudaram, precisa atualizar
           } else {
-            diffStatus = 'SEM_ALTERACAO' // exatamente igual em nome e status
+            diffStatus = 'SEM_ALTERACAO' // exatamente igual
           }
         } else {
           diffStatus = 'NOVO'
@@ -331,12 +353,17 @@ export default function Importar() {
           diffStatus,
           existingId,
           existingStatus,
-          selected: true, // selecionar por padrão para facilitar sincronização completa
+          selected: true, // selecionar por padrão para sincronização completa
         }
       })
 
-      // Ordenar por nome para visualização limpa
-      previews.sort((a, b) => a.nome.localeCompare(b.nome))
+      // Ordenar preferencialmente por pdfId crescente (1..482); se não tiver, por nome
+      previews.sort((a, b) => {
+        if (a.pdfId && b.pdfId) return a.pdfId - b.pdfId
+        if (a.pdfId) return -1
+        if (b.pdfId) return 1
+        return a.nome.localeCompare(b.nome)
+      })
 
       setPreviewItems(previews)
       setUnrecognizedItems(parseResult.unrecognized)
@@ -506,7 +533,15 @@ export default function Importar() {
       return 'Padronizado'
     }
 
+    // Identificar duplicados também por pdfId se houver
+    const pdfIdDupMap = new Map<number, PreviewItem[]>()
     for (const item of previewItems) {
+      if (item.pdfId && item.pdfId >= 1 && item.pdfId <= 482) {
+        const list = pdfIdDupMap.get(item.pdfId) || []
+        list.push(item)
+        pdfIdDupMap.set(item.pdfId, list)
+      }
+
       const key = normalizeStr(item.nome)
       if (!key) continue
 
@@ -533,6 +568,14 @@ export default function Importar() {
         group.resolvedStatus = resolvePrecedence(group.statuses)
       }
     }
+
+    const duplicatesByPdfId = Array.from(pdfIdDupMap.entries())
+      .filter(([, list]) => list.length >= 2)
+      .map(([pdfId, list]) => ({
+        pdfId,
+        count: list.length,
+        nomes: list.map((i) => i.nome),
+      }))
 
     // Filtrar apenas medicamentos com 2 ou mais ocorrências
     const duplicateList = Array.from(nameMap.values())
@@ -593,9 +636,9 @@ export default function Importar() {
       catalogoFinalPrevisto,
       totalIdenticosUnificados,
       totalConflitosStatus,
+      duplicatesByPdfId,
     }
   }, [previewItems])
-
   // Contagens dos itens (por status de diff e por status de padronização)
   const counts = useMemo(() => {
     const total = previewItems.length
@@ -612,6 +655,22 @@ export default function Importar() {
     const atendeReguaOficial =
       total === 482 && padronizados === 238 && naoPadronizados === 217 && inativos === 27
 
+    // Contagem de pdfIds extraídos válidos (1 a 482)
+    const validPdfIds = new Set(
+      previewItems
+        .map((i) => i.pdfId)
+        .filter((id): id is number => typeof id === 'number' && id >= 1 && id <= 482),
+    )
+    const pdfIdsCount = validPdfIds.size
+
+    // Medicamentos existentes no banco que NÃO estão presentes nesta importação (ausentes)
+    const ausentesNoBanco = existingMeds.filter((m) => {
+      if (m.pdfId && m.pdfId >= 1 && m.pdfId <= 482) {
+        return !validPdfIds.has(m.pdfId)
+      }
+      return false
+    })
+
     return {
       total,
       novos,
@@ -622,8 +681,10 @@ export default function Importar() {
       naoPadronizados,
       inativos,
       atendeReguaOficial,
+      pdfIdsCount,
+      ausentesNoBanco,
     }
-  }, [previewItems])
+  }, [previewItems, existingMeds])
 
   // Filtragem da lista de pré-visualização
   const filteredPreview = useMemo(() => {
@@ -707,6 +768,7 @@ export default function Importar() {
           method: 'POST',
           body: {
             items: toImport.map((i) => ({
+              pdfId: i.pdfId || undefined,
               nome: i.nome.trim(),
               classe: i.classe.trim(),
               status: i.status,
@@ -807,7 +869,9 @@ export default function Importar() {
           const k = normalizeStr(grp.nome)
           const existing = dbMap.get(k)
 
+          const pdfIdVal = grp.items.find((i) => i.pdfId)?.pdfId
           const payload = {
+            pdfId: pdfIdVal || undefined,
             nome: grp.nome,
             classe: grp.classe,
             status: grp.resolvedStatus,
@@ -1328,7 +1392,6 @@ export default function Importar() {
                     </Button>
                   </div>
                 </div>
-
                 {/* Previsão de Catálogo Final (Banner de Auditoria e Deduplicação) */}
                 <div className="mt-3 p-3 rounded-xl border border-emerald-900/15 bg-white shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
@@ -1372,7 +1435,6 @@ export default function Importar() {
                     </Button>
                   </div>
                 </div>
-
                 {/* 1. Painel "Relação de Duplicados" (Requisito 1: visível na tela de conferência antes de sincronizar) */}
                 <div className="mt-2 p-3.5 rounded-xl border border-amber-900/20 bg-[#FFFDF7] space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1386,11 +1448,21 @@ export default function Importar() {
                       {duplicateStats.totalDuplicatesCount > 0 ? (
                         <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
                           {duplicateStats.totalDuplicatesCount} nomes com 2+ ocorrências (
-                          {duplicateStats.totalRepetitions} repetições)
+                          {duplicateStats.totalRepetitions} repetições unificadas)
                         </Badge>
                       ) : (
                         <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
                           Nenhum duplicado
+                        </Badge>
+                      )}
+
+                      {duplicateStats.duplicatesByPdfId.length > 0 ? (
+                        <Badge className="bg-rose-100 text-rose-900 border-rose-300 text-[10px] font-bold">
+                          {duplicateStats.duplicatesByPdfId.length} duplicados por pdfId detectados!
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
+                          pdfIds 100% únicos (zero colisão)
                         </Badge>
                       )}
                     </div>
@@ -1544,11 +1616,10 @@ export default function Importar() {
                     </div>
                   )}
                 </div>
-
                 {/* Painel de Auditoria de Status da Régua Oficial (238 / 217 / 27 = 482) */}
                 <div className="mt-3 p-3.5 rounded-xl border border-emerald-950/15 bg-[#F4FAF8] space-y-2.5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-[#0C4336] uppercase tracking-wider">
                         Régua Oficial do ANEXO I:
                       </span>
@@ -1562,6 +1633,10 @@ export default function Importar() {
                           {counts.total} de 482 itens esperados
                         </Badge>
                       )}
+
+                      <Badge className="bg-emerald-100 text-emerald-900 border-emerald-300 text-[11px] font-mono font-bold">
+                        IDs extraídos: {counts.pdfIdsCount} de 482
+                      </Badge>
                     </div>
                     <span className="text-[11px] text-slate-500 font-mono">
                       Meta: 238 Padronizados • 217 Não Padronizados • 27 Inativos
@@ -1638,7 +1713,29 @@ export default function Importar() {
                     </div>
                   </div>
                 </div>
-
+                {/* Bloco de Sinalização de Itens Ausentes no Banco (NUNCA deletados silenciosamente) */}
+                {counts.ausentesNoBanco.length > 0 && (
+                  <div className="mt-3 p-3 rounded-xl border border-rose-300 bg-rose-50/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-7 w-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                        <AlertTriangle size={15} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-rose-950">
+                          {counts.ausentesNoBanco.length} medicamento(s) com ID cadastrado não
+                          constam neste PDF
+                        </p>
+                        <p className="text-[11px] text-rose-800">
+                          Ficam preservados no banco e sinalizados como ausentes (nenhum registro é
+                          apagado silenciosamente).
+                        </p>
+                      </div>
+                    </div>
+                    <Badge className="bg-rose-600 text-white text-[10px] font-bold shrink-0">
+                      Preservados no catálogo
+                    </Badge>
+                  </div>
+                )}
                 {/* Chips de Resumo de Casamento com o Banco de Dados */}
                 <div className="flex flex-wrap items-center gap-2 pt-3">
                   <button
@@ -1666,7 +1763,7 @@ export default function Importar() {
                     )}
                   >
                     <PlusCircle size={13} className="text-emerald-500" />
-                    <span>Novos</span>
+                    <span>Novos (pdfId novo)</span>
                     <span className="font-mono text-[10px] px-1.5 py-0.2 bg-emerald-200/50 rounded-full font-bold">
                       {counts.novos}
                     </span>
@@ -1682,7 +1779,7 @@ export default function Importar() {
                     )}
                   >
                     <RefreshCw size={13} className="text-amber-500" />
-                    <span>Com alteração</span>
+                    <span>A Atualizar (pdfId já cadastrado)</span>
                     <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 rounded-full font-bold">
                       {counts.existentes}
                     </span>
@@ -1703,7 +1800,7 @@ export default function Importar() {
                       {counts.semAlteracao}
                     </span>
                   </button>
-                </div>
+                </div>{' '}
               </CardHeader>
 
               <CardContent className="space-y-3">
@@ -1754,6 +1851,7 @@ export default function Importar() {
                             aria-label="Selecionar todos os visíveis"
                           />
                         </th>
+                        <th className="py-2.5 px-3 w-16 text-center font-mono">ID PDF</th>
                         <th className="py-2.5 px-3">Medicamento (Grafia Exata)</th>
                         <th className="py-2.5 px-3">Classe Terapêutica</th>
                         <th className="py-2.5 px-3">Status no Documento</th>
@@ -1765,13 +1863,14 @@ export default function Importar() {
                       {filteredPreview.map((item, idx) => {
                         const originalIndex = previewItems.findIndex(
                           (p) =>
-                            normalizeStr(p.nome) === normalizeStr(item.nome) &&
-                            normalizeStr(p.classe) === normalizeStr(item.classe),
+                            (p.pdfId && item.pdfId && p.pdfId === item.pdfId) ||
+                            (normalizeStr(p.nome) === normalizeStr(item.nome) &&
+                              normalizeStr(p.classe) === normalizeStr(item.classe)),
                         )
 
                         return (
                           <tr
-                            key={`${item.nome}-${item.classe}-${idx}`}
+                            key={`${item.pdfId || ''}-${item.nome}-${item.classe}-${idx}`}
                             className={cn(
                               'hover:bg-emerald-50/40 transition',
                               item.selected ? 'bg-white' : 'bg-slate-50/50 opacity-60',
@@ -1783,6 +1882,16 @@ export default function Importar() {
                                 onCheckedChange={() => toggleItemSelection(originalIndex)}
                                 aria-label={`Selecionar ${item.nome}`}
                               />
+                            </td>
+
+                            <td className="py-2 px-3 text-center">
+                              {item.pdfId ? (
+                                <Badge className="bg-[#0F5342]/10 text-[#0F5342] border-[#0F5342]/20 font-mono text-[11px] font-bold">
+                                  #{item.pdfId}
+                                </Badge>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 italic">s/ ID</span>
+                              )}
                             </td>
 
                             <td className="py-2 px-3 font-semibold text-slate-900">

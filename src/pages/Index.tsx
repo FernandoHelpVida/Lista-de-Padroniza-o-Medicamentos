@@ -31,6 +31,7 @@ export interface MedicamentoRecord extends RecordModel {
   status: 'Padronizado' | 'Não Padronizado' | 'Inativo'
   descricao?: string
   observacao?: string
+  pdfId?: number
 }
 
 const COLORS = [

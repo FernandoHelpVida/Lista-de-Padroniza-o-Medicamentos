@@ -554,6 +554,10 @@ routerAdd('POST', '/backend/v1/pdf/parse-markdown', (e) => {
 })
 
 // Endpoint de sincronização / upsert em lote com transação rápida
+// REGRA OFICIAL HELP VIDA: Chave primária de sincronização é o pdfId (1 a 482)
+// - pdfId novo -> CRIA medicamento
+// - pdfId já cadastrado -> ATUALIZA (nome, classe, status, observação)
+// - Medicamento no banco com pdfId não presente no envio fica sinalizado como ausente (NUNCA apagado silenciosamente)
 routerAdd(
   'POST',
   '/backend/v1/medicamentos/bulk-sync',
@@ -566,8 +570,14 @@ routerAdd(
       }
 
       const medCol = e.app.findCollectionByNameOrId('medicamentos')
-      // Carregar todos os medicamentos existentes para indexação rápida por nome normalizado
-      const existingRecords = e.app.findRecordsByFilter('medicamentos', "id != ''", 'nome', 5000, 0)
+      // Carregar todos os medicamentos existentes para indexação rápida por pdfId e por ID interno
+      const existingRecords = e.app.findRecordsByFilter(
+        'medicamentos',
+        "id != ''",
+        'pdfId',
+        5000,
+        0,
+      )
 
       const normalizeSimple = (str) => {
         if (!str) return ''
@@ -606,50 +616,44 @@ routerAdd(
         return out.replace(/\s+/g, ' ').trim()
       }
 
-      const existingMap = new Map()
+      // Mapas de busca dos registros existentes
+      const existingByPdfId = new Map() // pdfId (número) -> record
+      const existingByName = new Map() // nome normalizado -> record
+
       existingRecords.forEach((rec) => {
+        const pId = rec.getInt('pdfId')
+        if (pId && pId >= 1 && pId <= 482) {
+          existingByPdfId.set(pId, rec)
+        }
         const key = normalizeSimple(rec.getString('nome'))
         if (key) {
-          existingMap.set(key, rec)
+          existingByName.set(key, rec)
         }
       })
 
       let criados = 0
       let atualizados = 0
       let inalterados = 0
-      let unificados = 0
-      let conflitosResolvidos = 0
+      const processedPdfIds = new Set()
 
-      // Função de precedência de status mais restritivo: Inativo > Não Padronizado > Padronizado
-      const resolvePrecedence = (statuses) => {
-        if (statuses.indexOf('Inativo') !== -1) return 'Inativo'
-        if (statuses.indexOf('Não Padronizado') !== -1) return 'Não Padronizado'
-        return 'Padronizado'
-      }
-
-      // 1. Pré-processar e consolidar os itens recebidos por nome normalizado
-      // Regra acordada:
-      // (a) duplicado idêntico (mesmo nome E mesmo status) unifica em 1 item no catálogo;
-      // (b) nome repetido com status diferente grava o item com o status mais restritivo
-      //     (Inativo > Não Padronizado > Padronizado) e fica sinalizado como conflito;
-      // (c) o item nunca é descartado sem aparecer em uma destas duas categorias.
-      const consolidatedIncoming = new Map()
-
+      // 1. Processar cada item recebido casando PRIORITARIAMENTE por pdfId
       items.forEach((item) => {
         let nomeLimpo = (item.nome || '').trim().toUpperCase()
         let classeLimpa = (item.classe || '').trim()
         let statusLimpo = (item.status || 'Padronizado').trim()
+        let itemPdfId = Number(item.pdfId || 0)
+        if (!itemPdfId || itemPdfId < 1 || itemPdfId > 482) {
+          itemPdfId = 0
+        }
 
-        // Rejeitar linhas espúrias/fragmentadas ou cabeçalhos
+        // Rejeitar linhas vazias ou ruídos de cabeçalho
         if (!nomeLimpo || nomeLimpo.length < 3) return
         if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO'))
           return
         if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) return
 
-        // Remover ruídos residuais como '###'
+        // Pós-processamento e padronização Help Vida
         nomeLimpo = nomeLimpo.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
-
-        // Pós-processamento e unificação sistemática de casos conhecidos
         if (
           nomeLimpo.startsWith('MOXIFLOXACINO 1,6MG/ML PO PARA') &&
           !nomeLimpo.includes('SOLUCAO INJETAVEL')
@@ -663,116 +667,119 @@ routerAdd(
           nomeLimpo = nomeLimpo.replace(/^\d+\s*ML\s+/, '')
         }
 
-        // Sanitização contra itens monstros:
-        if (nomeLimpo.length > 250) return
-        const compMatches = (nomeLimpo.match(/\bCOMPRIMIDO\b/g) || []).length
-        if (compMatches >= 3) return
-        const capsMatches = (nomeLimpo.match(/\bCAPSULA\b/g) || []).length
-        if (capsMatches >= 3) return
-        const ampMatches = (nomeLimpo.match(/\bAMPOLA\b/g) || []).length
-        const frascoMatches = (nomeLimpo.match(/\bFRASCO\b/g) || []).length
-        if (compMatches >= 2 && ampMatches >= 2) return
-        if (compMatches + capsMatches + ampMatches + frascoMatches >= 5) return
+        // Observação padrão para Não Padronizado se vazia
+        let obsFinal = item.observacao || ''
+        if (statusLimpo === 'Não Padronizado' && !obsFinal) {
+          obsFinal =
+            'Os medicamentos não padronizados deverão ser solicitados mediante justificativa médica fundamentada.'
+        } else if (statusLimpo === 'Inativo' && !obsFinal) {
+          obsFinal = 'Medicamento inativo no sistema da farmácia.'
+        }
 
-        const key = normalizeSimple(nomeLimpo)
-        if (!key) return
-
-        if (!consolidatedIncoming.has(key)) {
-          consolidatedIncoming.set(key, {
-            nome: nomeLimpo,
-            classe: classeLimpa,
-            statuses: [statusLimpo],
-            descricao: item.descricao || '',
-            observacao: item.observacao || '',
-            occurrences: 1,
-          })
+        // CASAMENTO: Primeiro por pdfId; se não houver pdfId, por nome exato
+        let existingRec = null
+        if (itemPdfId > 0 && existingByPdfId.has(itemPdfId)) {
+          existingRec = existingByPdfId.get(itemPdfId)
         } else {
-          const entry = consolidatedIncoming.get(key)
-          entry.occurrences++
-          entry.statuses.push(statusLimpo)
-          if (classeLimpa && !entry.classe) {
-            entry.classe = classeLimpa
-          }
-          if (item.observacao && entry.observacao.indexOf(item.observacao) === -1) {
-            entry.observacao = entry.observacao
-              ? entry.observacao + ' | ' + item.observacao
-              : item.observacao
-          }
-          if (item.descricao && !entry.descricao) {
-            entry.descricao = item.descricao
+          const nameKey = normalizeSimple(nomeLimpo)
+          if (nameKey && existingByName.has(nameKey)) {
+            existingRec = existingByName.get(nameKey)
           }
         }
-      })
 
-      // 2. Gravar os registros consolidados na coleção medicamentos
-      consolidatedIncoming.forEach((entry, key) => {
-        const uniqueStatuses = Array.from(new Set(entry.statuses))
-        const hasConflict = uniqueStatuses.length > 1
-        const resolvedStatus = resolvePrecedence(entry.statuses)
-
-        if (entry.occurrences > 1) {
-          unificados += entry.occurrences - 1
-          if (hasConflict) conflitosResolvidos++
-        }
-
-        let obsFinal = entry.observacao
-        if (hasConflict) {
-          const conflictNote = 'Status unificado por precedência: ' + resolvedStatus
-          obsFinal = obsFinal ? obsFinal + ' (' + conflictNote + ')' : conflictNote
-        }
-
-        const existing = existingMap.get(key)
-        if (existing) {
-          // Já existe no catálogo
-          const curStatus = existing.getString('status')
-          const curClasse = existing.getString('classe')
-          const curDesc = existing.getString('descricao')
-          const curObs = existing.getString('observacao')
+        if (existingRec) {
+          // ATUALIZAR registro existente
+          const curStatus = existingRec.getString('status')
+          const curClasse = existingRec.getString('classe')
+          const curNome = existingRec.getString('nome')
+          const curObs = existingRec.getString('observacao')
+          const curPdfId = existingRec.getInt('pdfId')
 
           let hasChanges = false
-          if (curStatus !== resolvedStatus) {
-            existing.set('status', resolvedStatus)
+
+          if (itemPdfId > 0 && curPdfId !== itemPdfId) {
+            existingRec.set('pdfId', itemPdfId)
             hasChanges = true
           }
-          if (entry.classe && curClasse !== entry.classe) {
-            existing.set('classe', entry.classe)
+          if (curNome !== nomeLimpo) {
+            existingRec.set('nome', nomeLimpo)
+            hasChanges = true
+          }
+          if (classeLimpa && curClasse !== classeLimpa) {
+            existingRec.set('classe', classeLimpa)
+            hasChanges = true
+          }
+          if (curStatus !== statusLimpo) {
+            existingRec.set('status', statusLimpo)
             hasChanges = true
           }
           if (obsFinal && curObs !== obsFinal) {
-            existing.set('observacao', obsFinal)
+            existingRec.set('observacao', obsFinal)
             hasChanges = true
           }
-          if (entry.descricao && !curDesc) {
-            existing.set('descricao', entry.descricao)
+          if (item.descricao && !existingRec.getString('descricao')) {
+            existingRec.set('descricao', item.descricao)
             hasChanges = true
           }
 
           if (hasChanges) {
-            e.app.save(existing)
+            e.app.save(existingRec)
             atualizados++
           } else {
             inalterados++
           }
+
+          if (itemPdfId > 0) {
+            processedPdfIds.add(itemPdfId)
+            existingByPdfId.set(itemPdfId, existingRec)
+          }
         } else {
-          // Criar novo registro consolidado
+          // CRIAR novo medicamento no catálogo
           const newRec = new Record(medCol)
-          newRec.set('nome', entry.nome)
-          newRec.set('classe', entry.classe)
-          newRec.set('status', resolvedStatus)
-          newRec.set('descricao', entry.descricao || '')
-          newRec.set('observacao', obsFinal || '')
+          newRec.set('nome', nomeLimpo)
+          newRec.set('classe', classeLimpa)
+          newRec.set('status', statusLimpo)
+          newRec.set('descricao', item.descricao || '')
+          newRec.set('observacao', obsFinal)
+          if (itemPdfId > 0) {
+            newRec.set('pdfId', itemPdfId)
+            processedPdfIds.add(itemPdfId)
+          }
           e.app.save(newRec)
-          existingMap.set(key, newRec)
           criados++
+
+          if (itemPdfId > 0) {
+            existingByPdfId.set(itemPdfId, newRec)
+          }
+          const nameKey = normalizeSimple(nomeLimpo)
+          if (nameKey) {
+            existingByName.set(nameKey, newRec)
+          }
         }
       })
 
-      // Registrar no histórico de importações se solicitado
+      // 2. Identificar itens cadastrados no banco que NÃO vieram nesta importação (ausentes)
+      // NUNCA apagar silenciosamente: listar para decisão administrativa
+      const ausentesList = []
+      existingRecords.forEach((rec) => {
+        const pId = rec.getInt('pdfId')
+        if (pId > 0 && !processedPdfIds.has(pId)) {
+          ausentesList.push({
+            id: rec.id,
+            pdfId: pId,
+            nome: rec.getString('nome'),
+            classe: rec.getString('classe'),
+            status: rec.getString('status'),
+          })
+        }
+      })
+
+      // 3. Registrar no histórico de importações se solicitado
       if (body.record_history) {
         try {
           const histCol = e.app.findCollectionByNameOrId('historico_importacoes')
           const histRec = new Record(histCol)
-          histRec.set('nome_arquivo', body.file_name || 'importacao_catalogo.pdf')
+          histRec.set('nome_arquivo', body.file_name || 'importacao_catalogo_pdfId.pdf')
           histRec.set('total_itens', items.length)
           histRec.set('criados', criados)
           histRec.set('atualizados', atualizados)
@@ -783,8 +790,40 @@ routerAdd(
           }
           e.app.save(histRec)
         } catch (hErr) {
-          // Log silencioso sem falhar o sync principal
+          console.error('Aviso ao registrar historico_importacoes:', hErr)
         }
+      }
+
+      // 4. Log em audit_logs para rastreabilidade de pdfId
+      try {
+        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+        const auditRec = new Record(auditCol)
+        auditRec.set('colecao', 'medicamentos')
+        auditRec.set('registro_id', 'bulk_sync_pdfId')
+        auditRec.set('acao', 'IMPORTACAO_POR_PDF_ID')
+        auditRec.set(
+          'status_novo',
+          `${criados} criados, ${atualizados} atualizados, ${inalterados} inalterados`,
+        )
+        auditRec.set(
+          'detalhes',
+          JSON.stringify({
+            total_enviados: items.length,
+            criados,
+            atualizados,
+            inalterados,
+            total_ausentes: ausentesList.length,
+            ausentes: ausentesList.slice(0, 50),
+          }),
+        )
+        if (e.auth && e.auth.id) {
+          auditRec.set('usuario', e.auth.id)
+          auditRec.set('usuario_nome', e.auth.getString('name') || '')
+          auditRec.set('usuario_email', e.auth.getString('email') || '')
+        }
+        e.app.save(auditRec)
+      } catch (aErr) {
+        console.error('Aviso ao registrar audit_logs:', aErr)
       }
 
       return e.json(200, {
@@ -793,13 +832,13 @@ routerAdd(
         criados,
         atualizados,
         inalterados,
-        unificados,
-        conflitos_resolvidos: conflitosResolvidos,
-        total_catalogo_final: existingMap.size,
+        ausentes_count: ausentesList.length,
+        ausentes: ausentesList,
+        total_catalogo_final: existingByPdfId.size,
       })
     } catch (err) {
       return e.json(500, {
-        error: 'Erro ao processar sincronização de medicamentos: ' + (err?.message || String(err)),
+        error: 'Erro ao processar sincronização por pdfId: ' + (err?.message || String(err)),
       })
     }
   },

@@ -1350,7 +1350,9 @@ function sanitizeAndFilterItems(
   unrecognized: UnrecognizedItem[],
 ): ParsedMedicamento[] {
   const uniqueItems: ParsedMedicamento[] = []
-  const seenMap = new Map<string, number>()
+  // Mapas para unicidade: por pdfId (quando presente) e por chave nome+classe (quando ausente)
+  const seenPdfIdMap = new Map<number, number>()
+  const seenKeyMap = new Map<string, number>()
 
   for (const item of items) {
     let nomeLimpo = (item.nome || '').replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
@@ -1359,7 +1361,7 @@ function sanitizeAndFilterItems(
     if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) continue
 
     // Guardrail: Rejeitar fragmentos órfãos isolados sem classe
-    if (isContinuationLine(nomeLimpo) && !item.classe) {
+    if (isContinuationLine(nomeLimpo) && !item.classe && !item.pdfId) {
       unrecognized.push({
         pageNumber: item.pageNumber || 0,
         text: nomeLimpo,
@@ -1383,25 +1385,53 @@ function sanitizeAndFilterItems(
     // Se o item anterior terminou com forma pendente (ex: "PO PARA") e o item atual for continuação dele:
     if (uniqueItems.length > 0) {
       const prev = uniqueItems[uniqueItems.length - 1]
-      if (hasDanglingEnd(prev.nome)) {
-        prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
-        continue
-      }
-      // Ou se o item atual inicia com fragmento de dosagem (ex: "0,6UI + CLORANFENICOL...") e o anterior é princípio ativo
-      if (
-        isDosageFragmentStart(item.nome) &&
-        (!/[0-9]/.test(prev.nome) || hasDanglingEnd(prev.nome))
-      ) {
-        prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
-        if (item.classe && !prev.classe) prev.classe = item.classe
-        continue
+      // SÓ funde se não houver colisão de IDs diferentes!
+      const canMergeWithPrev = !item.pdfId || !prev.pdfId || item.pdfId === prev.pdfId
+
+      if (canMergeWithPrev) {
+        if (hasDanglingEnd(prev.nome)) {
+          prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
+          if (item.pdfId && !prev.pdfId) prev.pdfId = item.pdfId
+          continue
+        }
+        // Ou se o item atual inicia com fragmento de dosagem (ex: "0,6UI + CLORANFENICOL...") e o anterior é princípio ativo
+        if (
+          isDosageFragmentStart(item.nome) &&
+          (!/[0-9]/.test(prev.nome) || hasDanglingEnd(prev.nome))
+        ) {
+          prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
+          if (item.classe && !prev.classe) prev.classe = item.classe
+          if (item.pdfId && !prev.pdfId) prev.pdfId = item.pdfId
+          continue
+        }
       }
     }
 
-    const key = makeMedicamentoKey(item.nome, item.classe)
-    if (!seenMap.has(key)) {
-      seenMap.set(key, uniqueItems.length)
-      uniqueItems.push(item)
+    // Unicidade prioritária por pdfId quando disponível
+    if (item.pdfId && item.pdfId >= 1 && item.pdfId <= 482) {
+      if (seenPdfIdMap.has(item.pdfId)) {
+        // Já existe um item com este pdfId! Atualizar dados mais completos
+        const existingIdx = seenPdfIdMap.get(item.pdfId)!
+        const existing = uniqueItems[existingIdx]
+        // Se o novo tem classe e o anterior não tinha:
+        if (item.classe && !existing.classe) existing.classe = item.classe
+        if (item.nome.length > existing.nome.length && !isMonsterItem(item.nome)) {
+          existing.nome = item.nome
+        }
+        continue
+      } else {
+        seenPdfIdMap.set(item.pdfId, uniqueItems.length)
+        const key = makeMedicamentoKey(item.nome, item.classe)
+        seenKeyMap.set(key, uniqueItems.length)
+        uniqueItems.push(item)
+      }
+    } else {
+      // Sem pdfId explícito: deduplicar por nome+classe
+      const key = makeMedicamentoKey(item.nome, item.classe)
+      if (!seenKeyMap.has(key)) {
+        seenKeyMap.set(key, uniqueItems.length)
+        uniqueItems.push(item)
+      }
     }
   }
 
@@ -1411,14 +1441,19 @@ function sanitizeAndFilterItems(
     it.nome = postProcessItemName(it.nome)
     if (finalItems.length > 0) {
       const last = finalItems[finalItems.length - 1]
-      if (hasDanglingEnd(last.nome)) {
-        last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
-        continue
-      }
-      if (isDosageFragmentStart(it.nome) && !/[0-9]/.test(last.nome)) {
-        last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
-        if (it.classe) last.classe = it.classe
-        continue
+      const canMergeWithLast = !it.pdfId || !last.pdfId || it.pdfId === last.pdfId
+      if (canMergeWithLast) {
+        if (hasDanglingEnd(last.nome)) {
+          last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
+          if (it.pdfId && !last.pdfId) last.pdfId = it.pdfId
+          continue
+        }
+        if (isDosageFragmentStart(it.nome) && !/[0-9]/.test(last.nome)) {
+          last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
+          if (it.classe) last.classe = it.classe
+          if (it.pdfId && !last.pdfId) last.pdfId = it.pdfId
+          continue
+        }
       }
     }
     finalItems.push(it)
