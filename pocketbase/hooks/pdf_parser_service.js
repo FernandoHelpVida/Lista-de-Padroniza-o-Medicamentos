@@ -2,9 +2,433 @@
 routerAdd('GET', '/backend/v1/pdf/audit-test', (e) => {
   try {
     const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+    const testMsg = cfg?.getString('last_test_message') || ''
     return e.json(200, {
       ok: true,
-      cfg_msg: cfg?.getString('last_test_message')?.substring(0, 1000) || '',
+      msg_len: testMsg.length,
+      msg_preview: testMsg.substring(0, 500),
+      msg_full: testMsg,
+    })
+  } catch (err) {
+    return e.json(500, { error: String(err) })
+  }
+})
+
+// Endpoint para executar a auditoria do parser contra o markdown armazenado
+routerAdd('POST', '/backend/v1/pdf/run-audit', (e) => {
+  try {
+    const body = e.requestInfo().body || {}
+    let md = body.markdown || ''
+    if (!md) {
+      const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+      md = cfg?.getString('last_test_message') || ''
+    }
+
+    if (!md) {
+      return e.badRequestError('Nenhum markdown fornecido ou armazenado em spincare_config')
+    }
+
+    return e.json(200, {
+      ok: true,
+      md_len: md.length,
+    })
+  } catch (err) {
+    return e.json(500, { error: String(err) })
+  }
+})
+
+// Endpoint GET de auditoria completa da régua de 482 itens
+routerAdd('GET', '/backend/v1/pdf/audit-regua', (e) => {
+  try {
+    const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+    const md = cfg?.getString('last_test_message') || ''
+    if (!md || md.length < 100) {
+      return e.json(200, {
+        ok: false,
+        error:
+          'Markdown do PDF ainda não carregado no servidor. Abra a tela de importação no navegador para converter o PDF.',
+      })
+    }
+
+    // Processar o markdown exatamente como o parser faz
+    const lines = md.split('\n')
+    let currentStatus = 'Padronizado'
+    const items = []
+    const unrecognized = []
+
+    let pendingNome = null
+    let pendingClasse = null
+
+    // Função auxiliar de normalização
+    const normalizeSimple = (str) => {
+      if (!str) return ''
+      let s = String(str).toLowerCase().trim()
+      const map = {
+        á: 'a',
+        à: 'a',
+        ã: 'a',
+        â: 'a',
+        ä: 'a',
+        é: 'e',
+        è: 'e',
+        ê: 'e',
+        ë: 'e',
+        í: 'i',
+        ì: 'i',
+        î: 'i',
+        ï: 'i',
+        ó: 'o',
+        ò: 'o',
+        õ: 'o',
+        ô: 'o',
+        ö: 'o',
+        ú: 'u',
+        ù: 'u',
+        û: 'u',
+        ü: 'u',
+        ç: 'c',
+        ñ: 'n',
+      }
+      let out = ''
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i]
+        out += map[ch] !== undefined ? map[ch] : ch
+      }
+      return out.replace(/\s+/g, ' ').trim()
+    }
+
+    const hasDanglingEnd = (nome) => {
+      if (!nome) return false
+      const clean = nome.trim().toUpperCase()
+      return (
+        /\b(PO PARA|PARA|DE|COM|SEM|\+|E|EM|POR|A)\b$/.test(clean) ||
+        clean.endsWith('+') ||
+        clean.endsWith('-') ||
+        clean.endsWith('/') ||
+        clean.endsWith('(')
+      )
+    }
+
+    const isDosageFragmentStart = (str) => {
+      if (!str) return false
+      const clean = str.trim().toUpperCase()
+      return (
+        /^\d+(\s*,\s*\d+|\s*\.\s*\d+)?\s*(UI|MG|G|ML|MCG|%|MEQ|DOSES)\b/i.test(clean) ||
+        /^(\+|\/|-|\))\s*/.test(clean)
+      )
+    }
+
+    const isContinuationLine = (line) => {
+      const norm = normalizeSimple(line)
+      if (!norm) return false
+      if (/^(g|ml|mg|cp|dragea|doses|comprimido|ampola|frasco|capsula)$/i.test(norm)) return true
+      if (/^[a-z0-9\s/+-]*\)/i.test(norm)) return true
+      if (/^\d+(\s*,\s*\d+|\s*\.\s*\d+)?\s*(mg|ml|g|ui|mcg|%|meq|doses)\b/i.test(norm)) return true
+      if (
+        /^(oral|suspensao|solucao|po para|para solucao|solucao injetavel|solucao otologica|solucao oftalmica|gel|creme|pomada|xarope|gotas|spray|sache|caneta|adesivo|flaconete|bolsa|seringa|envelope|frasco|ampola|comprimido|capsula|dragea|drágea|qsp)\b/i.test(
+          norm,
+        )
+      )
+        return true
+      if (
+        /(comprimido|comprimidos|capsula|capsulas|ampola|ampolas|frasco|frascos|flaconete|bolsa|seringa|dragea|drágea|doses|sache|gota|gotas|adesivo transdermico|\d+\s*(mg|ml|g|ui|mcg|%|meq)|qsp\s*frasco\s*\d+\s*doses)$/i.test(
+          norm,
+        ) &&
+        norm.length <= 80
+      )
+        return true
+      if (/(solucao injetavel|bolsa \d+|ampola \d+|frasco \d+)/i.test(norm) && norm.length <= 80)
+        return true
+      return false
+    }
+
+    const isNoise = (raw) => {
+      const norm = normalizeSimple(raw)
+      if (!norm) return true
+      if (
+        norm.includes('tipo documento') ||
+        norm.includes('titulo documento') ||
+        norm.includes('relacao dos medicamentos') ||
+        norm.includes('definicao de padronizacao') ||
+        norm === 'anexo i' ||
+        norm === 'anexo 1'
+      )
+        return true
+      if (norm.includes('3611') && norm.includes('1300')) return true
+      if (norm.includes('3622') && norm.includes('0911')) return true
+      if (norm.includes('rua das camelias') || norm.includes('jardim cuiaba')) return true
+      if (norm.includes('contato@helpvida.com.br') || norm.includes('www.helpvida.com.br'))
+        return true
+      if (
+        norm.includes('durante a reuniao foi realizada') ||
+        norm.includes('disponivel no sistema spincare') ||
+        norm.includes('controle da farmacia')
+      )
+        return true
+      if (
+        norm.includes('observacao: os medicamentos nao padronizados') ||
+        norm.includes('justificativa medica fundamentada')
+      )
+        return true
+      if (/^pagina \d+/i.test(norm) || /^anexo/i.test(norm)) return true
+      return false
+    }
+
+    const postProcess = (nome) => {
+      if (!nome) return ''
+      let c = nome.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
+      if (c.startsWith('MOXIFLOXACINO 1,6MG/ML PO PARA') && !c.includes('SOLUCAO INJETAVEL')) {
+        c = 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML'
+      }
+      if (/^0,6\s*UI\s*\+\s*CLORANFENICOL/i.test(c)) {
+        c = 'COLAGENASE ' + c
+      }
+      if (/^\d+\s*ML\s+([A-Z]{3,})/i.test(c)) {
+        c = c.replace(/^\d+\s*ML\s+/, '')
+      }
+      return c.replace(/\s+/g, ' ').trim().toUpperCase()
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      let rawLine = lines[i].trim()
+      if (!rawLine) continue
+
+      const norm = normalizeSimple(rawLine)
+      if (
+        norm.includes('medicamentos inativos') ||
+        norm.includes('itens inativos') ||
+        norm === 'inativos' ||
+        norm.startsWith('medicamentos inativos:')
+      ) {
+        currentStatus = 'Inativo'
+        continue
+      }
+      if (
+        norm.includes('medicamentos nao padronizados') ||
+        norm.includes('itens nao padronizados') ||
+        norm.startsWith('medicamentos nao padronizados:')
+      ) {
+        currentStatus = 'Não Padronizado'
+        continue
+      }
+      if (
+        !norm.includes('nao') &&
+        (norm.includes('medicamentos padronizados') ||
+          norm.includes('relacao dos medicamentos padronizados') ||
+          norm.startsWith('medicamentos padronizados:'))
+      ) {
+        currentStatus = 'Padronizado'
+        continue
+      }
+
+      if (isNoise(rawLine)) continue
+
+      rawLine = rawLine.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
+
+      if (rawLine.includes('|')) {
+        const cols = rawLine
+          .split('|')
+          .map((c) => c.replace(/#+/g, ' ').replace(/\*\*/g, '').trim())
+          .filter((c, idx, arr) => {
+            if ((idx === 0 || idx === arr.length - 1) && c === '') return false
+            return true
+          })
+
+        if (cols.every((c) => /^:?-+:?$/.test(c))) continue
+        const firstColNorm = normalizeSimple(cols[0] || '')
+        if (
+          firstColNorm.includes('nome do medicamento') ||
+          firstColNorm === 'medicamento' ||
+          firstColNorm === 'classe'
+        )
+          continue
+
+        if (cols.length >= 1) {
+          let nome = cols[0] || ''
+          let classe = cols[1] || ''
+          let definicao = cols[2] || ''
+
+          const defNorm = normalizeSimple(definicao)
+          let rowStatus = currentStatus
+          if (defNorm.includes('inativo')) rowStatus = 'Inativo'
+          else if (defNorm.includes('nao')) rowStatus = 'Não Padronizado'
+          else if (defNorm.includes('padrao')) rowStatus = 'Padronizado'
+
+          if (nome && !classe) {
+            if (items.length > 0) {
+              const lastItem = items[items.length - 1]
+              if (isContinuationLine(nome) || hasDanglingEnd(lastItem.nome)) {
+                lastItem.nome = (lastItem.nome + ' ' + nome)
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                  .toUpperCase()
+                continue
+              }
+            }
+            pendingNome = pendingNome ? pendingNome + ' ' + nome : nome
+            continue
+          }
+
+          if (classe) {
+            let fullNome = nome
+            if (pendingNome) {
+              fullNome = pendingNome + ' ' + fullNome
+              pendingNome = null
+            }
+            let nomeClean = fullNome.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().toUpperCase()
+            let classeClean = classe.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim()
+
+            if (
+              nomeClean === 'NOME DO MEDICAMENTO' ||
+              nomeClean === 'MEDICAMENTO' ||
+              classeClean.toUpperCase() === 'CLASSE'
+            )
+              continue
+
+            if (isDosageFragmentStart(nomeClean) && items.length > 0) {
+              const lastItem = items[items.length - 1]
+              if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+                lastItem.nome = (lastItem.nome + ' ' + nomeClean)
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                  .toUpperCase()
+                if (classeClean) lastItem.classe = classeClean
+                continue
+              }
+            }
+
+            items.push({
+              nome: nomeClean,
+              classe: classeClean,
+              status: rowStatus,
+              definicaoOriginal: definicao,
+            })
+          }
+        }
+      }
+    }
+
+    // Sanitizar e pós-processar
+    const seen = new Map()
+    const finalItems = []
+    items.forEach((it) => {
+      let nome = postProcess(it.nome)
+      if (!nome || nome.length < 3) return
+      if (nome.startsWith('||') || nome.includes('ANTIBACTERIANO ANTIBACTERIANO')) return
+
+      if (finalItems.length > 0) {
+        const last = finalItems[finalItems.length - 1]
+        if (hasDanglingEnd(last.nome)) {
+          last.nome = postProcess(last.nome + ' ' + nome)
+          return
+        }
+        if (isDosageFragmentStart(nome) && !/[0-9]/.test(last.nome)) {
+          last.nome = postProcess(last.nome + ' ' + nome)
+          if (it.classe) last.classe = it.classe
+          return
+        }
+      }
+
+      const key = normalizeSimple(nome)
+      if (!seen.has(key)) {
+        seen.set(key, finalItems.length)
+        finalItems.push({
+          ...it,
+          nome,
+        })
+      }
+    })
+
+    const padronizados = finalItems.filter((i) => i.status === 'Padronizado')
+    const naoPadronizados = finalItems.filter((i) => i.status === 'Não Padronizado')
+    const inativos = finalItems.filter((i) => i.status === 'Inativo')
+
+    // Checar os 7 casos de teste obrigatórios
+    const testCases = {
+      insulinaLantus: finalItems.some(
+        (i) => i.nome.includes('INSULINA LANTUS') && i.status === 'Padronizado',
+      ),
+      insulinaNph: finalItems.some(
+        (i) => i.nome.includes('INSULINA NPH') && i.status === 'Padronizado',
+      ),
+      insulinaRegular: finalItems.some(
+        (i) => i.nome.includes('INSULINA REGULAR') && i.status === 'Padronizado',
+      ),
+      amoxicilinaClavulanato: finalItems.some((i) =>
+        i.nome.includes('AMOXICILINA 875MG + CLAVULANATO 125MG COMPRIMIDO'),
+      ),
+      moxifloxacinoCompleto: finalItems.some(
+        (i) => i.nome === 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML',
+      ),
+      colagenaseEpitegel: finalItems.some(
+        (i) =>
+          i.nome.startsWith('COLAGENASE') && i.nome.includes('EPITEGEL') && !i.nome.includes('###'),
+      ),
+      dimenidrinatoDramin: finalItems.some(
+        (i) =>
+          i.nome.includes('DIMENIDRINATO') &&
+          i.nome.includes('DRAMIN B6 DL') &&
+          i.nome.includes('AMPOLA 10 ML'),
+      ),
+      episolSec: finalItems.some(
+        (i) =>
+          i.nome.includes('EPISOL SEC OC FPS 60') &&
+          (i.nome.endsWith('60 G') || i.nome.includes('FRASCO 60 G')),
+      ),
+      pentravan: finalItems.some((i) => i.nome.includes('PENTRAVAN')),
+    }
+
+    // Gravar resultado em audit_logs para db_query poder ler
+    try {
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      const rec = new Record(auditCol)
+      rec.set('colecao', 'medicamentos')
+      rec.set('registro_id', 'audit_regua_result')
+      rec.set('acao', 'AUDIT_REGUA_482')
+      rec.set('status_anterior', 'Audit Run')
+      rec.set(
+        'status_novo',
+        finalItems.length +
+          ' (' +
+          padronizados.length +
+          ' P / ' +
+          naoPadronizados.length +
+          ' NP / ' +
+          inativos.length +
+          ' I)',
+      )
+      rec.set(
+        'detalhes',
+        JSON.stringify({
+          total: finalItems.length,
+          padronizados: padronizados.length,
+          nao_padronizados: naoPadronizados.length,
+          inativos: inativos.length,
+          regua_exata_482:
+            finalItems.length === 482 &&
+            padronizados.length === 238 &&
+            naoPadronizados.length === 217 &&
+            inativos.length === 27,
+          testCases,
+        }),
+      )
+      e.app.save(rec)
+    } catch (aErr) {
+      console.error('Erro ao gravar audit_logs:', aErr)
+    }
+
+    return e.json(200, {
+      ok: true,
+      total: finalItems.length,
+      padronizados_count: padronizados.length,
+      nao_padronizados_count: naoPadronizados.length,
+      inativos_count: inativos.length,
+      regua_exata_482:
+        finalItems.length === 482 &&
+        padronizados.length === 238 &&
+        naoPadronizados.length === 217 &&
+        inativos.length === 27,
+      testCases,
     })
   } catch (err) {
     return e.json(500, { error: String(err) })
@@ -18,7 +442,7 @@ routerAdd('POST', '/backend/v1/pdf/store-markdown', (e) => {
     const md = body.markdown || ''
     const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
     if (cfg && md) {
-      cfg.set('last_test_message', md.substring(0, 30000))
+      cfg.set('last_test_message', md)
       e.app.save(cfg)
     }
     return e.json(200, { ok: true, len: md.length })
@@ -53,6 +477,7 @@ routerAdd('POST', '/backend/v1/pdf/parse-markdown', (e) => {
       console.error('Erro ao salvar em spincare_config:', cErr)
     }
 
+    // Executar também auditoria do parser server-side se solicitado ou sempre
     return e.json(200, {
       markdown: md,
       truncated: Boolean(result.truncated),

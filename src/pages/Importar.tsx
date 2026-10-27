@@ -174,6 +174,16 @@ export default function Importar() {
   useEffect(() => {
     loadExistingMedicamentos()
     loadHistorico()
+
+    // Diagnóstico e auto-verificação da auditoria
+    const checkAudit = async () => {
+      try {
+        await pb.send('/backend/v1/pdf/audit-regua', { method: 'GET' })
+      } catch {
+        /* silencioso */
+      }
+    }
+    checkAudit()
   }, [])
 
   // Mapa de medicamentos existentes indexado EXATAMENTE pelo nome normalizado
@@ -310,6 +320,63 @@ export default function Importar() {
       const countNao = previews.filter((p) => p.status === 'Não Padronizado').length
       const countInat = previews.filter((p) => p.status === 'Inativo').length
 
+      // Gravar log de auditoria no audit_logs automaticamente
+      try {
+        await pb.collection('audit_logs').create({
+          colecao: 'medicamentos',
+          registro_id: 'audit_regua_result',
+          acao: 'AUDIT_REGUA_482',
+          usuario_nome: 'Auditoria Automatizada Help Vida',
+          status_anterior: 'Execução de conferência da régua',
+          status_novo: `${previews.length} (${countPad} Padronizados, ${countNao} Não Padronizados, ${countInat} Inativos)`,
+          detalhes: JSON.stringify({
+            total: previews.length,
+            padronizados: countPad,
+            nao_padronizados: countNao,
+            inativos: countInat,
+            regua_482:
+              previews.length === 482 && countPad === 238 && countNao === 217 && countInat === 27,
+            casosTeste: {
+              insulinaLantus: previews.some(
+                (p) => p.nome.includes('INSULINA LANTUS') && p.status === 'Padronizado',
+              ),
+              insulinaNph: previews.some(
+                (p) => p.nome.includes('INSULINA NPH') && p.status === 'Padronizado',
+              ),
+              insulinaRegular: previews.some(
+                (p) => p.nome.includes('INSULINA REGULAR') && p.status === 'Padronizado',
+              ),
+              amoxicilinaClavulanato: previews.some((p) =>
+                p.nome.includes('AMOXICILINA 875MG + CLAVULANATO 125MG COMPRIMIDO'),
+              ),
+              moxifloxacinoCompleto: previews.some(
+                (p) => p.nome === 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML',
+              ),
+              colagenaseEpitegel: previews.some(
+                (p) =>
+                  p.nome.startsWith('COLAGENASE') &&
+                  p.nome.includes('EPITEGEL') &&
+                  !p.nome.includes('###'),
+              ),
+              dimenidrinatoDramin: previews.some(
+                (p) =>
+                  p.nome.includes('DIMENIDRINATO') &&
+                  p.nome.includes('DRAMIN B6 DL') &&
+                  p.nome.includes('AMPOLA 10 ML'),
+              ),
+              episolSec: previews.some(
+                (p) =>
+                  p.nome.includes('EPISOL SEC OC FPS 60') &&
+                  (p.nome.endsWith('60 G') || p.nome.includes('FRASCO 60 G')),
+              ),
+              pentravan: previews.some((p) => p.nome.includes('PENTRAVAN')),
+            },
+          }),
+        })
+      } catch (logErr) {
+        console.warn('Erro ao salvar log de auditoria:', logErr)
+      }
+
       toast({
         title: 'Extração Concluída com Sucesso',
         description: `${previews.length} medicamentos identificados (${countPad} Padronizados, ${countNao} Não Padronizados, ${countInat} Inativos).`,
@@ -362,12 +429,13 @@ export default function Importar() {
       const sizeInMb = (blob.size / (1024 * 1024)).toFixed(2)
       const testFile = new File(
         [blob],
-        'Relação dos Medicamentos Avaliados e Definição de Padronização.pdf',
+        'Relação dos Medicamentos Avaliados e Definição de Padronização 16.10.pdf',
         {
           type: 'application/pdf',
         },
       )
       setSelectedFile(testFile)
+
       await processPdfFileOrBuffer(
         testFile,
         'Relação dos Medicamentos Avaliados e Definição de Padronização 16.10.pdf',
@@ -384,7 +452,7 @@ export default function Importar() {
     }
   }
 
-  // Contagens dos itens
+  // Contagens dos itens (por status de diff e por status de padronização)
   const counts = useMemo(() => {
     const total = previewItems.length
     const novos = previewItems.filter((i) => i.diffStatus === 'NOVO').length
@@ -392,7 +460,25 @@ export default function Importar() {
     const semAlteracao = previewItems.filter((i) => i.diffStatus === 'SEM_ALTERACAO').length
     const selecionados = previewItems.filter((i) => i.selected).length
 
-    return { total, novos, existentes, semAlteracao, selecionados }
+    // Contagens de padronização exigidas pela auditoria oficial:
+    // 238 padronizados, 217 não padronizados, 27 inativos = 482
+    const padronizados = previewItems.filter((i) => i.status === 'Padronizado').length
+    const naoPadronizados = previewItems.filter((i) => i.status === 'Não Padronizado').length
+    const inativos = previewItems.filter((i) => i.status === 'Inativo').length
+    const atendeReguaOficial =
+      total === 482 && padronizados === 238 && naoPadronizados === 217 && inativos === 27
+
+    return {
+      total,
+      novos,
+      existentes,
+      semAlteracao,
+      selecionados,
+      padronizados,
+      naoPadronizados,
+      inativos,
+      atendeReguaOficial,
+    }
   }, [previewItems])
 
   // Filtragem da lista de pré-visualização
@@ -955,11 +1041,11 @@ export default function Importar() {
                   <div>
                     <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
                       <FileCheck2 className="h-5 w-5 text-[#0D8272]" />
-                      2. Conferência dos Medicamentos Extraídos
+                      2. Conferência dos Medicamentos Extraídos (Auditoria da Régua ANEXO I)
                     </CardTitle>
                     <CardDescription className="text-xs text-slate-500">
-                      Verifique o casamento com a base atual. Você pode desmarcar itens que não
-                      deseja gravar.
+                      Verifique a contagem exata por status de padronização antes de sincronizar com
+                      o banco.
                     </CardDescription>
                   </div>
 
@@ -986,7 +1072,101 @@ export default function Importar() {
                   </div>
                 </div>
 
-                {/* Chips de Resumo de Casamento */}
+                {/* Painel de Auditoria de Status da Régua Oficial (238 / 217 / 27 = 482) */}
+                <div className="mt-3 p-3.5 rounded-xl border border-emerald-950/15 bg-[#F4FAF8] space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-[#0C4336] uppercase tracking-wider">
+                        Régua Oficial do ANEXO I:
+                      </span>
+                      {counts.atendeReguaOficial ? (
+                        <Badge className="bg-[#0F5342] text-white text-[11px] font-bold flex items-center gap-1">
+                          <CheckCircle2 size={12} className="text-[#F5B31C]" />
+                          Contagem 100% Exata (482 itens)
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[11px] font-bold">
+                          {counts.total} de 482 itens esperados
+                        </Badge>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-mono">
+                      Meta: 238 Padronizados • 217 Não Padronizados • 27 Inativos
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-950/10 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-500">
+                          Total Geral
+                        </span>
+                        {counts.total === 482 ? (
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                        ) : null}
+                      </div>
+                      <div className="flex items-baseline gap-1.5 mt-1">
+                        <span className="text-base font-extrabold text-[#0C4336]">
+                          {counts.total}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-medium">/ 482</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-950/10 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-emerald-700">
+                          Padronizados
+                        </span>
+                        {counts.padronizados === 238 ? (
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                        ) : null}
+                      </div>
+                      <div className="flex items-baseline gap-1.5 mt-1">
+                        <span className="text-base font-extrabold text-emerald-800">
+                          {counts.padronizados}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-medium">/ 238</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-950/10 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-amber-700">
+                          Não Padronizados
+                        </span>
+                        {counts.naoPadronizados === 217 ? (
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                        ) : null}
+                      </div>
+                      <div className="flex items-baseline gap-1.5 mt-1">
+                        <span className="text-base font-extrabold text-amber-800">
+                          {counts.naoPadronizados}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-medium">/ 217</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-950/10 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-600">
+                          Inativos
+                        </span>
+                        {counts.inativos === 27 ? (
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                        ) : null}
+                      </div>
+                      <div className="flex items-baseline gap-1.5 mt-1">
+                        <span className="text-base font-extrabold text-slate-700">
+                          {counts.inativos}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-medium">/ 27</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Chips de Resumo de Casamento com o Banco de Dados */}
                 <div className="flex flex-wrap items-center gap-2 pt-3">
                   <button
                     onClick={() => setFilterDiff('TODOS')}
