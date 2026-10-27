@@ -1,0 +1,23 @@
+migrate(
+  (app) => {
+    const cfg = app.findRecordsByFilter('spincare_config', "id != ''", '', 1, 0)[0]
+    try {
+      const target = app.findFirstRecordByFilter(
+        'medicamentos',
+        "nome ~ 'DONEPEZILA 10MG COMPRIMIDO DONEPEZILA 5MG'",
+      )
+      const nome = target.getString('nome')
+      const hasInsulina = nome.indexOf('INSULINA')
+      let insulinSubstr = ''
+      if (hasInsulina >= 0) {
+        insulinSubstr = nome.substring(hasInsulina, hasInsulina + 80)
+      }
+      cfg.set('last_test_message', `Insulina at ${hasInsulina}: ${insulinSubstr}`)
+      app.save(cfg)
+    } catch (e) {
+      cfg.set('last_test_message', 'Not found')
+      app.save(cfg)
+    }
+  },
+  (app) => {},
+)

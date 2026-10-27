@@ -116,6 +116,15 @@ routerAdd(
           return
         if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) return
 
+        // Sanitização contra itens monstros:
+        if (nomeLimpo.length > 120) {
+          const compMatches = (nomeLimpo.match(/\b(COMPRIMIDO|CAPSULA|AMPOLA|FRASCO)\b/g) || [])
+            .length
+          if (compMatches >= 2) return
+        }
+        const compMatches2 = (nomeLimpo.match(/\bCOMPRIMIDO\b/g) || []).length
+        if (compMatches2 >= 2) return
+
         const key = normalizeSimple(nomeLimpo)
         if (!key) return
 

@@ -53,6 +53,7 @@ export const KNOWN_CLASSES = [
   'Antidepressivo',
   'Antidemencial',
   'Antidiabético',
+  'Antidiabéticos',
   'Antiepiléptico',
   'Antiparasitário',
   'Antipsicótico',
@@ -99,8 +100,8 @@ export function normalizeStr(s: string): string {
 /**
  * Normaliza chave de medicamento para casamento (nome + classe)
  */
-export function makeMedicamentoKey(nome: string, classe: string): string {
-  return `${normalizeStr(nome)}||${normalizeStr(classe)}`
+export function makeMedicamentoKey(nome: string, _classe?: string): string {
+  return normalizeStr(nome)
 }
 
 /**
@@ -238,15 +239,32 @@ export function findClassInLine(line: string): {
     const normCls = normalizeStr(cls)
 
     // A classe pode estar no final da linha: "NOME DO MEDICAMENTO 10MG CLASSE"
+    // Verificar que antes da classe existe fronteira de palavra/espaço para não casar dentro de palavras
     if (normLine.endsWith(normCls)) {
       const idx = normLine.lastIndexOf(normCls)
-      const rest = workingLine.substring(0, idx).trim()
-      if (rest.length > 1) {
+      const charBefore = idx > 0 ? normLine[idx - 1] : ''
+      if (idx === 0) {
+        // A linha é exatamente a classe
         return {
           className: cls,
-          restOfLine: rest,
+          restOfLine: '',
           definicao: detectedDefinicao,
           matched: true,
+        }
+      } else if (
+        charBefore === ' ' ||
+        charBefore === '|' ||
+        charBefore === '-' ||
+        charBefore === '\t'
+      ) {
+        const rest = workingLine.substring(0, idx).trim()
+        if (rest.length > 1) {
+          return {
+            className: cls,
+            restOfLine: rest,
+            definicao: detectedDefinicao,
+            matched: true,
+          }
         }
       }
     }
@@ -261,7 +279,6 @@ export function findClassInLine(line: string): {
       }
     }
   }
-
   // 2. Tentar detectar via delimitador comum (ex: " | ", " - ", "\t", " ; ")
   const delimiters = [' | ', '\t', '; ']
   for (const delim of delimiters) {
@@ -416,12 +433,20 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
     // Se não for linha de tabela com pipes, processar como texto livre / linha estruturada
     const match = findClassInLine(rawLine)
     if (match.matched && match.restOfLine) {
-      let fullNome = match.restOfLine.trim()
+      // Linha casou nome + classe: é um medicamento independente!
+      // NÃO concatenar com pendingNome anterior se ele já era outra linha
       if (pendingNome) {
-        fullNome = `${pendingNome} ${match.restOfLine}`.replace(/\s+/g, ' ').trim()
+        if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
+          unrecognized.push({
+            pageNumber: 0,
+            text: pendingNome,
+            reason: 'Linha sem classe associada antes de outro item completo.',
+          })
+        }
         pendingNome = null
       }
-      const nome = fullNome.toUpperCase()
+
+      const nome = match.restOfLine.trim().toUpperCase()
       const classe = match.className
 
       let observacao: string | undefined
@@ -468,79 +493,72 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
     }
 
     if (pendingNome) {
-      const combined = `${pendingNome} ${rawLine}`
-      const combMatch = findClassInLine(combined)
-      if (combMatch.matched && combMatch.restOfLine) {
-        let observacao: string | undefined
-        if (currentStatus === 'Não Padronizado') {
-          observacao =
-            'Os medicamentos não padronizados deverão ser solicitados mediante justificativa médica fundamentada.'
-        } else if (currentStatus === 'Inativo') {
-          observacao = 'Medicamento inativo no sistema da farmácia.'
-        }
+      // Avaliar se rawLine é fragmento curto de dosagem/apresentação
+      const isShortFragment =
+        rawLine.length < 35 &&
+        (/^(AMPOLA|FRASCO|ML|MG|G|COMPRIMIDO|GOTAS|POMADA|CREME|SUSPENSAO|SOLUCAO|CAPSULA|ADESIVO|SERINGA|ENVELOPE)\b/i.test(
+          rawLine,
+        ) ||
+          /(\d+\s*(MG|ML|G|UI|MCG|%))\b/i.test(rawLine) ||
+          rawLine === 'ML' ||
+          rawLine === 'G' ||
+          rawLine === 'COMPRIMIDO' ||
+          rawLine === 'AMPOLA' ||
+          rawLine.endsWith('ML') ||
+          rawLine.endsWith('G') ||
+          rawLine.endsWith('COMPRIMIDO'))
 
-        items.push({
-          nome: combMatch.restOfLine.trim().toUpperCase(),
-          classe: combMatch.className,
-          status: currentStatus,
-          definicaoOriginal: combMatch.definicao,
-          observacao,
-          rawSourceLine: combined,
-        })
-        pendingNome = null
-        continue
-      } else {
-        // Se for continuação de nome (ex: "ML" ou "AMPOLA 10 ML")
-        if (
-          rawLine.length < 25 &&
-          (rawLine === 'ML' ||
-            rawLine === 'G' ||
-            rawLine === 'COMPRIMIDO' ||
-            rawLine === 'AMPOLA' ||
-            rawLine.endsWith('ML') ||
-            rawLine.endsWith('G') ||
-            rawLine.endsWith('COMPRIMIDO'))
-        ) {
+      if (isShortFragment) {
+        const combined = `${pendingNome} ${rawLine}`.replace(/\s+/g, ' ').trim()
+        const combMatch = findClassInLine(combined)
+        if (combMatch.matched && combMatch.restOfLine) {
+          let observacao: string | undefined
+          if (currentStatus === 'Não Padronizado') {
+            observacao =
+              'Os medicamentos não padronizados deverão ser solicitados mediante justificativa médica fundamentada.'
+          } else if (currentStatus === 'Inativo') {
+            observacao = 'Medicamento inativo no sistema da farmácia.'
+          }
+
+          items.push({
+            nome: combMatch.restOfLine.trim().toUpperCase(),
+            classe: combMatch.className,
+            status: currentStatus,
+            definicaoOriginal: combMatch.definicao,
+            observacao,
+            rawSourceLine: combined,
+          })
+          pendingNome = null
+          continue
+        } else {
           pendingNome = `${pendingNome} ${rawLine}`
           continue
         }
-        if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|COMP|AMP/i.test(pendingNome)) {
-          unrecognized.push({
-            pageNumber: 0,
-            text: pendingNome,
-            reason: 'Classe terapêutica não identificada para este item.',
-          })
-        }
-        pendingNome = rawLine
-        continue
       }
+
+      // Se não é fragmento curto, a linha anterior era um item órfão
+      if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
+        unrecognized.push({
+          pageNumber: 0,
+          text: pendingNome,
+          reason: 'Classe terapêutica não identificada para este item.',
+        })
+      }
+      pendingNome = rawLine
+      continue
     }
 
     pendingNome = rawLine
   }
 
   // Deduplicação e sanitização de ruídos
-  const uniqueItems: ParsedMedicamento[] = []
-  const seenMap = new Map<string, number>()
-
-  for (const item of items) {
-    // Rejeitar linhas espúrias/fragmentadas
-    if (!item.nome || item.nome.length < 3) continue
-    if (item.nome.startsWith('||') || item.nome.includes('ANTIBACTERIANO ANTIBACTERIANO')) continue
-    if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(item.nome)) continue
-
-    const key = makeMedicamentoKey(item.nome, item.classe)
-    if (!seenMap.has(key)) {
-      seenMap.set(key, uniqueItems.length)
-      uniqueItems.push(item)
-    }
-  }
+  const sanitized = sanitizeAndFilterItems(items, unrecognized)
 
   return {
-    items: uniqueItems,
+    items: sanitized,
     unrecognized,
     totalPages: 16,
-    totalItems: uniqueItems.length,
+    totalItems: sanitized.length,
   }
 }
 
@@ -580,38 +598,22 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
       const match = findClassInLine(rawLine)
 
       if (match.matched && match.restOfLine) {
-        // Se temos um pendingNome acumulado anteriormente
-        let fullNome = match.restOfLine.trim()
+        // Se a linha casou nome + classe, este é um medicamento independente!
+        // Se havia um pendingNome acumulado anteriormente, ele NÃO deve ser fundido a um
+        // medicamento completo que já possui nome + classe próprios.
         if (pendingNome) {
-          // Atenção: se pendingNome já parece ser um medicamento completo ou não se encaixa como prefixo,
-          // não devemos cegamente concatenar com um novo medicamento completo!
-          // Ex: "INSULINA LANTUS 100UI/ML FRASCO" + "AMPOLA 10 ML" é continuação legítima.
-          // Mas se pendingNome já tem nome completo ou se a linha atual já começa com substantivo farmacológico independente,
-          // avaliamos a continuação.
-          const isContinuation =
-            match.restOfLine.length < 20 ||
-            /^(AMPOLA|FRASCO|ML|MG|G|COMPRIMIDO|GOTAS|POMADA|CREME|SUSPENSAO|SOLUCAO|CAPSULA)\b/i.test(
-              match.restOfLine,
-            ) ||
-            /(\d+\s*(MG|ML|G|UI|MCG|%))\b/i.test(match.restOfLine)
-
-          if (isContinuation) {
-            fullNome = `${pendingNome} ${match.restOfLine}`.replace(/\s+/g, ' ').trim()
-            pendingNome = null
-          } else {
-            // pendingNome era outro item órfão
-            if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|COMP|AMP/i.test(pendingNome)) {
-              unrecognized.push({
-                pageNumber: page.pageNumber,
-                text: pendingNome,
-                reason: 'Linha isolada antes de outro item completo.',
-              })
-            }
-            pendingNome = null
+          // Registrar o pendingNome órfão como não reconhecido se parecer medicamento
+          if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
+            unrecognized.push({
+              pageNumber: page.pageNumber,
+              text: pendingNome,
+              reason: 'Linha sem classe associada antes de outro medicamento.',
+            })
           }
+          pendingNome = null
         }
 
-        const nome = fullNome.toUpperCase()
+        const nome = match.restOfLine.trim().toUpperCase()
         const classe = match.className
 
         let observacao: string | undefined
@@ -660,62 +662,66 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
         continue
       }
 
-      // Se temos um pendingNome anterior e esta linha não é uma classe, pode ser:
-      // a) A continuação do nome anterior (nome longo em 2 linhas)
-      // b) Uma tentativa frustrada de casar
+      // Se temos um pendingNome anterior e esta linha não é uma classe:
+      // Avaliar estritamente se rawLine é um fragmento de continuação legítimo.
+      // Continuação legítima: linha curta SEM classe própria, contendo apenas complemento
+      // de apresentação/dosagem/forma farmacêutica (ex: "AMPOLA 10 ML", "COMPRIMIDO", "250MG/5ML", "120 ML").
       if (pendingNome) {
-        // Tentar juntar com a linha anterior
-        const combined = `${pendingNome} ${rawLine}`.replace(/\s+/g, ' ').trim()
-        const combinedMatch = findClassInLine(combined)
+        const isShortFragment =
+          rawLine.length < 35 &&
+          (/^(AMPOLA|FRASCO|ML|MG|G|COMPRIMIDO|GOTAS|POMADA|CREME|SUSPENSAO|SOLUCAO|CAPSULA|ADESIVO|SERINGA|ENVELOPE)\b/i.test(
+            rawLine,
+          ) ||
+            /(\d+\s*(MG|ML|G|UI|MCG|%))\b/i.test(rawLine) ||
+            rawLine === 'ML' ||
+            rawLine === 'G' ||
+            rawLine === 'COMPRIMIDO' ||
+            rawLine === 'AMPOLA' ||
+            rawLine.endsWith('ML') ||
+            rawLine.endsWith('G') ||
+            rawLine.endsWith('COMPRIMIDO'))
 
-        if (combinedMatch.matched && combinedMatch.restOfLine) {
-          let observacao: string | undefined
-          if (currentStatus === 'Não Padronizado') {
-            observacao =
-              'Os medicamentos não padronizados deverão ser solicitados mediante justificativa médica fundamentada.'
-          } else if (currentStatus === 'Inativo') {
-            observacao = 'Medicamento inativo no sistema da farmácia.'
-          }
+        if (isShortFragment) {
+          // Tentar ver se concatenando gera um match com classe
+          const combined = `${pendingNome} ${rawLine}`.replace(/\s+/g, ' ').trim()
+          const combMatch = findClassInLine(combined)
+          if (combMatch.matched && combMatch.restOfLine) {
+            let observacao: string | undefined
+            if (currentStatus === 'Não Padronizado') {
+              observacao =
+                'Os medicamentos não padronizados deverão ser solicitados mediante justificativa médica fundamentada.'
+            } else if (currentStatus === 'Inativo') {
+              observacao = 'Medicamento inativo no sistema da farmácia.'
+            }
 
-          items.push({
-            nome: combinedMatch.restOfLine.trim().toUpperCase(),
-            classe: combinedMatch.className,
-            status: currentStatus,
-            definicaoOriginal: combinedMatch.definicao,
-            observacao,
-            rawSourceLine: combined,
-            pageNumber: page.pageNumber,
-          })
-          pendingNome = null
-          continue
-        } else {
-          // Se for continuação de nome (ex: "ML" ou "COMPRIMIDO" ou "120 ML" ou segunda linha de nome dividido)
-          // mas ainda sem classe na mesma linha, agregamos ao pendingNome
-          if (
-            rawLine.length < 25 &&
-            (rawLine === 'ML' ||
-              rawLine === 'G' ||
-              rawLine === 'COMPRIMIDO' ||
-              rawLine === 'AMPOLA' ||
-              rawLine.endsWith('ML') ||
-              rawLine.endsWith('G') ||
-              rawLine.endsWith('COMPRIMIDO'))
-          ) {
-            pendingNome = `${pendingNome} ${rawLine}`
+            items.push({
+              nome: combMatch.restOfLine.trim().toUpperCase(),
+              classe: combMatch.className,
+              status: currentStatus,
+              definicaoOriginal: combMatch.definicao,
+              observacao,
+              rawSourceLine: combined,
+              pageNumber: page.pageNumber,
+            })
+            pendingNome = null
             continue
           }
 
-          // A linha anterior era órfã, registrar como não reconhecida se parecer um medicamento
-          if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|COMP|AMP/i.test(pendingNome)) {
-            unrecognized.push({
-              pageNumber: page.pageNumber,
-              text: pendingNome,
-              reason: 'Classe terapêutica não identificada para este item.',
-            })
-          }
-          pendingNome = rawLine
+          // Não casou classe ainda, acumular fragmento
+          pendingNome = `${pendingNome} ${rawLine}`
           continue
         }
+
+        // NÃO é fragmento curto: a linha anterior era um item órfão, não deve fundir com a linha atual!
+        if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
+          unrecognized.push({
+            pageNumber: page.pageNumber,
+            text: pendingNome,
+            reason: 'Classe terapêutica não identificada para este item.',
+          })
+        }
+        pendingNome = rawLine
+        continue
       }
 
       // Se não casou na mesma linha, armazenar como possível nome para a próxima linha
@@ -723,7 +729,11 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
     }
 
     // Fim da página com pendingNome não resolvido
-    if (pendingNome && pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|COMP|AMP/i.test(pendingNome)) {
+    if (
+      pendingNome &&
+      pendingNome.length > 4 &&
+      /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)
+    ) {
       unrecognized.push({
         pageNumber: page.pageNumber,
         text: pendingNome,
@@ -732,15 +742,79 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
     }
   }
 
-  // Deduplicação intra-arquivo mantendo a primeira ocorrência ou atualizando se tiver mais detalhes
+  // Deduplicação e sanitização de monstros
+  const sanitized = sanitizeAndFilterItems(items, unrecognized)
+
+  return {
+    items: sanitized,
+    unrecognized,
+    totalPages: pages.length,
+    totalItems: sanitized.length,
+  }
+}
+
+/**
+ * Sanitiza e valida itens extraídos, prevenindo registros "monstros"
+ * e deduplicando por nome + classe
+ */
+export function isMonsterItem(nome: string): boolean {
+  if (!nome) return false
+  const upper = nome.toUpperCase().trim()
+
+  // 1. Limiar de tamanho excessivo: um nome de medicamento legítimo raramente passa de 120 caracteres
+  // Exceções muito raras de fórmulas compostas não contêm 3+ repetições de formas
+  if (upper.length > 120) {
+    // Contar ocorrências de formas farmacêuticas comuns
+    const compCount = (upper.match(/\bCOMPRIMIDO\b/g) || []).length
+    const capsCount = (upper.match(/\bCAPSULA\b/g) || []).length
+    const ampCount = (upper.match(/\bAMPOLA\b/g) || []).length
+    const frascoCount = (upper.match(/\bFRASCO\b/g) || []).length
+    const totalForms = compCount + capsCount + ampCount + frascoCount
+    if (totalForms >= 2) return true
+  }
+
+  // 2. Se contém 3 ou mais "COMPRIMIDO" ou "CAPSULA" mesmo com tamanho menor
+  const compCount = (upper.match(/\bCOMPRIMIDO\b/g) || []).length
+  if (compCount >= 2) return true
+
+  const capsCount = (upper.match(/\bCAPSULA\b/g) || []).length
+  if (capsCount >= 2) return true
+
+  // 3. Padrões de cabeçalho Markdown residuais
+  if (upper.startsWith('###') || upper.startsWith('##') || upper.startsWith('||')) return true
+  if (upper.includes('NOME DO MEDICAMENTO') || upper.includes('ANTIBACTERIANO ANTIBACTERIANO'))
+    return true
+
+  return false
+}
+
+function sanitizeAndFilterItems(
+  items: ParsedMedicamento[],
+  unrecognized: UnrecognizedItem[],
+): ParsedMedicamento[] {
   const uniqueItems: ParsedMedicamento[] = []
   const seenMap = new Map<string, number>()
 
   for (const item of items) {
-    // Rejeitar ruídos e cabeçalhos residuais
-    if (!item.nome || item.nome.length < 3) continue
-    if (item.nome.startsWith('||') || item.nome.includes('ANTIBACTERIANO ANTIBACTERIANO')) continue
-    if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(item.nome)) continue
+    let nomeLimpo = (item.nome || '')
+      .replace(/^#+\s*/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!nomeLimpo || nomeLimpo.length < 3) continue
+    if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO')) continue
+    if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) continue
+
+    // Detecção de item monstro fundido indevidamente
+    if (isMonsterItem(nomeLimpo)) {
+      unrecognized.push({
+        pageNumber: item.pageNumber || 0,
+        text: nomeLimpo.substring(0, 100) + '...',
+        reason: 'Item rejeitado por fusão indevida de múltiplas linhas (item monstro detectado).',
+      })
+      continue
+    }
+
+    item.nome = nomeLimpo.toUpperCase()
 
     const key = makeMedicamentoKey(item.nome, item.classe)
     if (!seenMap.has(key)) {
@@ -749,10 +823,5 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
     }
   }
 
-  return {
-    items: uniqueItems,
-    unrecognized,
-    totalPages: pages.length,
-    totalItems: uniqueItems.length,
-  }
+  return uniqueItems
 }

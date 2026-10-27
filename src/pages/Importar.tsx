@@ -162,12 +162,15 @@ export default function Importar() {
     loadHistorico()
   }, [])
 
-  // Mapa de medicamentos existentes indexado pela chave normalizada (nome + classe)
+  // Mapa de medicamentos existentes indexado EXATAMENTE pelo nome normalizado
+  // (trim, colapsar espaços, maiúsculas, sem acentos)
   const existingMap = useMemo(() => {
     const map = new Map<string, MedicamentoRecord>()
     for (const med of existingMeds) {
-      const key = makeMedicamentoKey(med.nome, med.classe)
-      map.set(key, med)
+      const key = normalizeStr(med.nome)
+      if (key) {
+        map.set(key, med)
+      }
     }
     return map
   }, [existingMeds])
@@ -237,9 +240,9 @@ export default function Importar() {
       setExtractionProgress(90)
       setExtractionStage('Comparando com a base de dados Help Vida atual...')
 
-      // Cruzar com os dados existentes
+      // Cruzar com os dados existentes por casamento EXATO do nome normalizado
       const previews: PreviewItem[] = parseResult.items.map((item) => {
-        const key = makeMedicamentoKey(item.nome, item.classe)
+        const key = normalizeStr(item.nome)
         const existing = existingMap.get(key)
 
         let diffStatus: ItemDiffStatus = 'NOVO'
@@ -252,8 +255,10 @@ export default function Importar() {
           if (existing.status !== item.status) {
             diffStatus = 'EXISTENTE' // status mudou, precisa atualizar
           } else {
-            diffStatus = 'SEM_ALTERACAO' // dados idênticos
+            diffStatus = 'SEM_ALTERACAO' // exatamente igual em nome e status
           }
+        } else {
+          diffStatus = 'NOVO'
         }
 
         return {
@@ -394,13 +399,11 @@ export default function Importar() {
 
   // Selecionar / desselecionar todos os filtrados
   const handleSelectAllFiltered = (selected: boolean) => {
-    const filteredKeys = new Set(
-      filteredPreview.map((item) => makeMedicamentoKey(item.nome, item.classe)),
-    )
+    const filteredKeys = new Set(filteredPreview.map((item) => normalizeStr(item.nome)))
 
     setPreviewItems((prev) =>
       prev.map((item) => {
-        const key = makeMedicamentoKey(item.nome, item.classe)
+        const key = normalizeStr(item.nome)
         if (filteredKeys.has(key)) {
           return { ...item, selected }
         }
@@ -949,8 +952,8 @@ export default function Importar() {
                       {filteredPreview.map((item, idx) => {
                         const originalIndex = previewItems.findIndex(
                           (p) =>
-                            makeMedicamentoKey(p.nome, p.classe) ===
-                            makeMedicamentoKey(item.nome, item.classe),
+                            normalizeStr(p.nome) === normalizeStr(item.nome) &&
+                            normalizeStr(p.classe) === normalizeStr(item.classe),
                         )
 
                         return (
