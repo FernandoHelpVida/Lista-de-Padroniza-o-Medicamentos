@@ -3,6 +3,7 @@ import type { ExtractedPageText } from './pdfLoader'
 export type StatusPadronizacao = 'Padronizado' | 'Não Padronizado' | 'Inativo'
 
 export interface ParsedMedicamento {
+  pdfId?: number
   nome: string
   classe: string
   status: StatusPadronizacao
@@ -433,6 +434,31 @@ export function findClassInLine(line: string): {
 /**
  * Analisa markdown e linhas de texto
  */
+/**
+ * Extrai número de ID explícito no início ou coluna da linha (1 a 482)
+ */
+export function extractLineId(str: string): { pdfId?: number; cleanText: string } {
+  if (!str) return { cleanText: '' }
+  const trimmed = str.trim()
+  // Padrão: número de 1 a 482 seguido de espaço, tab, traço ou pipe
+  const prefixMatch = trimmed.match(/^(\d{1,3})\s*[-| \t]\s*(.*)$/)
+  if (prefixMatch) {
+    const idNum = parseInt(prefixMatch[1], 10)
+    if (idNum >= 1 && idNum <= 482) {
+      return { pdfId: idNum, cleanText: prefixMatch[2].trim() }
+    }
+  }
+  // Padrão: linha é apenas número de 1 a 482
+  const singleNumMatch = trimmed.match(/^(\d{1,3})$/)
+  if (singleNumMatch) {
+    const idNum = parseInt(singleNumMatch[1], 10)
+    if (idNum >= 1 && idNum <= 482) {
+      return { pdfId: idNum, cleanText: '' }
+    }
+  }
+  return { cleanText: trimmed }
+}
+
 export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult {
   const items: ParsedMedicamento[] = []
   const unrecognized: UnrecognizedItem[] = []
@@ -441,7 +467,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
   const lines = markdownText.split('\n')
 
   let pendingNome: string | null = null
-  let pendingClasse: string | null = null
+  let pendingId: number | undefined = undefined
 
   for (let i = 0; i < lines.length; i++) {
     let rawLine = lines[i].trim()
@@ -483,15 +509,38 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
       if (
         firstColNorm.includes('nome do medicamento') ||
         firstColNorm === 'medicamento' ||
-        firstColNorm === 'classe'
+        firstColNorm === 'classe' ||
+        firstColNorm === 'id'
       ) {
         continue
       }
 
       if (cols.length >= 1) {
-        let nome = cols[0] || ''
-        let classe = cols[1] || ''
-        let definicao = cols[2] || ''
+        let rowPdfId: number | undefined = undefined
+        let nomeColIndex = 0
+
+        // Se a primeira coluna for um ID numérico (ex: | 1 | AGUA DESTILADA 5L | Água/diluente | Padrão |)
+        const idColMatch = cols[0].match(/^(\d{1,3})$/)
+        if (idColMatch) {
+          const val = parseInt(idColMatch[1], 10)
+          if (val >= 1 && val <= 482) {
+            rowPdfId = val
+            nomeColIndex = 1
+          }
+        }
+
+        let nome = cols[nomeColIndex] || ''
+        let classe = cols[nomeColIndex + 1] || ''
+        let definicao = cols[nomeColIndex + 2] || ''
+
+        // Se o nome tinha ID prefixado
+        if (!rowPdfId) {
+          const extracted = extractLineId(nome)
+          if (extracted.pdfId) {
+            rowPdfId = extracted.pdfId
+            nome = extracted.cleanText
+          }
+        }
 
         // Tentar identificar se a definição define o status (ex: Padrão, NÃO padrão, Inativo)
         const defNorm = normalizeStr(definicao)
@@ -505,10 +554,6 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         }
 
         // Se a classe não está preenchida mas temos nome:
-        // Pode ser:
-        // (a) continuação do item anterior (ex: | SOLUCAO INJETAVEL BOLSA 250 ML | | |)
-        // (b) a classe veio embutida no próprio nome! Ex: | AGUA DESTILADA 5L Água/diluente | | Padrão |
-        // (c) pendingNome para a próxima linha
         if (nome && !classe) {
           const matchInCol = findClassInLine(nome)
           if (matchInCol.matched && matchInCol.restOfLine) {
@@ -519,7 +564,9 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
             if (items.length > 0) {
               const lastItem = items[items.length - 1]
               // Se o último item tem nome incompleto ou a linha atual é continuação
-              if (isContinuationLine(nome) || hasDanglingEnd(lastItem.nome)) {
+              // GARANTIA: Se esta linha tem um pdfId diferente do último item, NUNCA fundir!
+              const canMerge = !rowPdfId || (lastItem.pdfId && lastItem.pdfId === rowPdfId)
+              if (canMerge && (isContinuationLine(nome) || hasDanglingEnd(lastItem.nome))) {
                 const combinedNome = `${lastItem.nome} ${nome}`
                   .replace(/\s+/g, ' ')
                   .trim()
@@ -532,6 +579,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
               }
             }
             pendingNome = pendingNome ? `${pendingNome} ${nome}` : nome
+            if (rowPdfId && !pendingId) pendingId = rowPdfId
             continue
           }
         }
@@ -539,9 +587,11 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         // Se a classe está preenchida
         if (classe) {
           let fullNome = nome
+          const effectiveId = rowPdfId || pendingId
           if (pendingNome) {
             fullNome = fullNome ? `${pendingNome} ${fullNome}` : pendingNome
             pendingNome = null
+            pendingId = undefined
           }
 
           if (fullNome) {
@@ -561,16 +611,22 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
               continue
             }
 
-            // Se o nome atual começa com dosagem fragmentada (ex: "0,6UI + CLORANFENICOL...")
-            // e o item anterior não tem dosagem ou terminou pendente, fundir!
+            // Se o nome atual começa com dosagem fragmentada
+            // GARANTIA POR ID: Só funde se não houver conflito de IDs diferentes!
             if (isDosageFragmentStart(nomeClean) && items.length > 0) {
               const lastItem = items[items.length - 1]
-              if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+              const idMatchesOrMissing =
+                !effectiveId || !lastItem.pdfId || effectiveId === lastItem.pdfId
+              if (
+                idMatchesOrMissing &&
+                (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome))
+              ) {
                 lastItem.nome = `${lastItem.nome} ${nomeClean}`
                   .replace(/\s+/g, ' ')
                   .trim()
                   .toUpperCase()
                 if (classeClean) lastItem.classe = classeClean
+                if (effectiveId && !lastItem.pdfId) lastItem.pdfId = effectiveId
                 lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
                 continue
               }
@@ -585,6 +641,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
             }
 
             items.push({
+              pdfId: effectiveId,
               nome: nomeClean,
               classe: classeClean,
               status: rowStatus,
@@ -603,23 +660,45 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
       continue
     }
 
+    // Verificar se a linha avulsa é um ID numérico isolado
+    const isolatedIdMatch = rawLine.match(/^(\d{1,3})$/)
+    if (isolatedIdMatch) {
+      const val = parseInt(isolatedIdMatch[1], 10)
+      if (val >= 1 && val <= 482) {
+        pendingId = val
+        continue
+      }
+    }
+
+    // Extrair ID no início da linha de texto livre se houver
+    const extracted = extractLineId(rawLine)
+    let currentLineId = extracted.pdfId || pendingId
+    let effectiveLineText = extracted.cleanText
+
     // Se não for linha de tabela com pipes, processar como texto livre / linha estruturada
     if (
-      (isContinuationLine(rawLine) ||
+      (isContinuationLine(effectiveLineText) ||
         (items.length > 0 && hasDanglingEnd(items[items.length - 1].nome))) &&
       !pendingNome &&
       items.length > 0
     ) {
       const lastItem = items[items.length - 1]
-      const combinedNome = `${lastItem.nome} ${rawLine}`.replace(/\s+/g, ' ').trim().toUpperCase()
-      if (!isMonsterItem(combinedNome)) {
-        lastItem.nome = combinedNome
-        lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
-        continue
+      const idMatchesOrMissing =
+        !currentLineId || !lastItem.pdfId || currentLineId === lastItem.pdfId
+      if (idMatchesOrMissing) {
+        const combinedNome = `${lastItem.nome} ${effectiveLineText}`
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toUpperCase()
+        if (!isMonsterItem(combinedNome)) {
+          lastItem.nome = combinedNome
+          lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${effectiveLineText}`
+          continue
+        }
       }
     }
 
-    const match = findClassInLine(rawLine)
+    const match = findClassInLine(effectiveLineText)
     if (match.matched && match.restOfLine) {
       // Linha casou nome + classe
       let finalNome = match.restOfLine.trim().toUpperCase()
@@ -640,10 +719,14 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         pendingNome = null
       } else if (isDosageFragmentStart(finalNome) && items.length > 0) {
         const lastItem = items[items.length - 1]
-        if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+        const idMatchesOrMissing =
+          !currentLineId || !lastItem.pdfId || currentLineId === lastItem.pdfId
+        if (idMatchesOrMissing && (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome))) {
           lastItem.nome = `${lastItem.nome} ${finalNome}`.replace(/\s+/g, ' ').trim().toUpperCase()
           lastItem.classe = match.className
+          if (currentLineId && !lastItem.pdfId) lastItem.pdfId = currentLineId
           lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+          pendingId = undefined
           continue
         }
       }
@@ -659,6 +742,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
       }
 
       items.push({
+        pdfId: currentLineId,
         nome: finalNome,
         classe,
         status: currentStatus,
@@ -666,6 +750,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         observacao,
         rawSourceLine: rawLine,
       })
+      pendingId = undefined
       continue
     }
 
@@ -682,6 +767,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
       }
 
       items.push({
+        pdfId: currentLineId,
         nome,
         classe,
         status: currentStatus,
@@ -690,27 +776,28 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         rawSourceLine: `${pendingNome} -> ${rawLine}`,
       })
       pendingNome = null
+      pendingId = undefined
       continue
     }
 
     if (pendingNome) {
       // Avaliar se rawLine é fragmento curto de dosagem/apresentação
       const isShortFragment =
-        rawLine.length < 35 &&
+        effectiveLineText.length < 35 &&
         (/^(AMPOLA|FRASCO|ML|MG|G|COMPRIMIDO|GOTAS|POMADA|CREME|SUSPENSAO|SOLUCAO|CAPSULA|ADESIVO|SERINGA|ENVELOPE)\b/i.test(
-          rawLine,
+          effectiveLineText,
         ) ||
-          /(\d+\s*(MG|ML|G|UI|MCG|%))\b/i.test(rawLine) ||
-          rawLine === 'ML' ||
-          rawLine === 'G' ||
-          rawLine === 'COMPRIMIDO' ||
-          rawLine === 'AMPOLA' ||
-          rawLine.endsWith('ML') ||
-          rawLine.endsWith('G') ||
-          rawLine.endsWith('COMPRIMIDO'))
+          /(\d+\s*(MG|ML|G|UI|MCG|%))\b/i.test(effectiveLineText) ||
+          effectiveLineText === 'ML' ||
+          effectiveLineText === 'G' ||
+          effectiveLineText === 'COMPRIMIDO' ||
+          effectiveLineText === 'AMPOLA' ||
+          effectiveLineText.endsWith('ML') ||
+          effectiveLineText.endsWith('G') ||
+          effectiveLineText.endsWith('COMPRIMIDO'))
 
       if (isShortFragment) {
-        const combined = `${pendingNome} ${rawLine}`.replace(/\s+/g, ' ').trim()
+        const combined = `${pendingNome} ${effectiveLineText}`.replace(/\s+/g, ' ').trim()
         const combMatch = findClassInLine(combined)
         if (combMatch.matched && combMatch.restOfLine) {
           let observacao: string | undefined
@@ -722,6 +809,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           }
 
           items.push({
+            pdfId: currentLineId,
             nome: combMatch.restOfLine.trim().toUpperCase(),
             classe: combMatch.className,
             status: currentStatus,
@@ -730,9 +818,10 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
             rawSourceLine: combined,
           })
           pendingNome = null
+          pendingId = undefined
           continue
         } else {
-          pendingNome = `${pendingNome} ${rawLine}`
+          pendingNome = `${pendingNome} ${effectiveLineText}`
           continue
         }
       }
@@ -745,11 +834,11 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           reason: 'Classe terapêutica não identificada para este item.',
         })
       }
-      pendingNome = rawLine
+      pendingNome = effectiveLineText
       continue
     }
 
-    pendingNome = rawLine
+    pendingNome = effectiveLineText
   }
 
   // Deduplicação e sanitização de ruídos
@@ -773,12 +862,17 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
   // Status padrão inicial da página 1 (no documento Anexo I, inicia com Padronizados)
   let currentStatus: StatusPadronizacao = 'Padronizado'
 
-  // pendingNome pode atravessar páginas (ex: DIMENIDRINATO na pág. 3 -> B6 DL na pág. 4, EPISOL na pág. 13 -> G na pág. 14)
   let pendingNome: string | null = null
   let pendingPageNumber = 1
+  let pendingId: number | undefined = undefined
 
   for (const page of pages) {
     const lines = page.lines
+    // Fila de IDs isolados no rodapé desta página
+    const pageTrailingIds = [...(page.trailingNumbers || [])]
+
+    // Posição inicial de itens antes desta página
+    const pageStartItemIdx = items.length
 
     for (let i = 0; i < lines.length; i++) {
       let rawLine = lines[i].trim()
@@ -797,13 +891,12 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
             })
           }
           pendingNome = null
+          pendingId = undefined
         }
         continue
       }
 
       // Descartar ruídos, rodapés e cabeçalhos de coluna
-      // IMPORTANTE: Se tiver pendingNome e a linha for ruído (ex: rodapé de fim de página ou cabeçalho de início de página),
-      // o pendingNome é PRESERVADO para poder anexar a continuação que vem após o cabeçalho da próxima página!
       if (isNoiseLine(rawLine)) {
         continue
       }
@@ -811,42 +904,55 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
       // Limpar artefatos de extração '###' ou '##'
       rawLine = rawLine.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
 
-      // Verificar se a linha atual é uma continuação óbvia de um item anterior que já foi registrado
-      // CASO 1: A linha é classificada como continuação (isContinuationLine)
-      // CASO 2: O item anterior terminou com forma/termo incompleto pendente (hasDanglingEnd: ex. "PO PARA", "SUSPENSAO", "+")
+      // Verificar se a linha avulsa é um ID numérico isolado (ex: sequência no rodapé da página)
+      const isolatedIdMatch = rawLine.match(/^(\d{1,3})$/)
+      if (isolatedIdMatch) {
+        const val = parseInt(isolatedIdMatch[1], 10)
+        if (val >= 1 && val <= 482) {
+          // Linhas numéricas puras no final de página ou coluna
+          continue
+        }
+      }
+
+      // Extrair ID no início da linha se houver
+      const extracted = extractLineId(rawLine)
+      const linePdfId = extracted.pdfId || pendingId
+      const cleanLine = extracted.cleanText
+
+      // Verificar se a linha atual é uma continuação óbvia de um item anterior
       if (
-        (isContinuationLine(rawLine) ||
+        (isContinuationLine(cleanLine) ||
           (items.length > 0 && hasDanglingEnd(items[items.length - 1].nome))) &&
         !pendingNome &&
         items.length > 0
       ) {
         const lastItem = items[items.length - 1]
-        // Anexar ao nome do último item se não virar monstro
-        const combinedNome = `${lastItem.nome} ${rawLine}`.replace(/\s+/g, ' ').trim().toUpperCase()
-        if (!isMonsterItem(combinedNome)) {
-          lastItem.nome = combinedNome
-          lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
-          continue
+        // Se a linha tem um pdfId diferente do último item, NUNCA fundir!
+        const canMerge = !linePdfId || !lastItem.pdfId || linePdfId === lastItem.pdfId
+        if (canMerge) {
+          const combinedNome = `${lastItem.nome} ${cleanLine}`
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toUpperCase()
+          if (!isMonsterItem(combinedNome)) {
+            lastItem.nome = combinedNome
+            lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${cleanLine}`
+            continue
+          }
         }
       }
 
       // Tentar casar classe e nome na mesma linha
-      const match = findClassInLine(rawLine)
+      const match = findClassInLine(cleanLine)
 
       if (match.matched && match.restOfLine) {
-        // Se a linha casou nome + classe
         let finalNome = match.restOfLine.trim().toUpperCase()
 
-        // Se havia um pendingNome anterior e ele parece ser o início deste medicamento:
-        // ex: pendingNome = "TRAMADOL 100MG/ML GOTAS FRASCO 10", rawLine = "ML Analgésico opioide Padrão"
-        // ou pendingNome = "COLAGENASE", rawLine = "0,6UI + CLORANFENICOL 50MG/G (EPITEGEL) GEL Dermatológico Padrão"
-        // ou pendingNome = "ACIDO ACETILSALICILICO 100MG", rawLine = "COMPRIMIDO Antiagregante plaquetário Padrão"
         if (pendingNome) {
           const combined = `${pendingNome} ${finalNome}`.replace(/\s+/g, ' ').trim()
           if (!isMonsterItem(combined)) {
             finalNome = combined
           } else {
-            // Se virar monstro, pendingNome anterior era órfão
             if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
               unrecognized.push({
                 pageNumber: pendingPageNumber,
@@ -857,18 +963,17 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
           }
           pendingNome = null
         } else if (isDosageFragmentStart(finalNome) && items.length > 0) {
-          // CASO CRÍTICO: finalNome começa com fragmento de dosagem (ex: "0,6UI + CLORANFENICOL ...")
-          // e o item anterior na mesma página ou página anterior pode ser o princípio ativo!
-          // Ou a linha anterior era apenas o nome do princípio ativo sem classe
           const lastItem = items[items.length - 1]
-          // Se o último item não tem dosagem nem forma (ex: apenas "COLAGENASE"), fundir com ele!
-          if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+          const canMerge = !linePdfId || !lastItem.pdfId || linePdfId === lastItem.pdfId
+          if (canMerge && (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome))) {
             lastItem.nome = `${lastItem.nome} ${finalNome}`
               .replace(/\s+/g, ' ')
               .trim()
               .toUpperCase()
             lastItem.classe = match.className
+            if (linePdfId && !lastItem.pdfId) lastItem.pdfId = linePdfId
             lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+            pendingId = undefined
             continue
           }
         }
@@ -884,6 +989,7 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
         }
 
         items.push({
+          pdfId: linePdfId,
           nome: finalNome,
           classe,
           status: currentStatus,
@@ -892,10 +998,11 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
           rawSourceLine: rawLine,
           pageNumber: page.pageNumber,
         })
+        pendingId = undefined
         continue
       }
 
-      // Se a linha casou apenas com uma classe (ex: linha seguinte da tabela) e temos um pendingNome
+      // Se a linha casou apenas com uma classe e temos pendingNome
       if (match.matched && !match.restOfLine && pendingNome) {
         const nome = pendingNome.trim().toUpperCase()
         const classe = match.className
@@ -909,6 +1016,7 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
         }
 
         items.push({
+          pdfId: linePdfId,
           nome,
           classe,
           status: currentStatus,
@@ -918,14 +1026,14 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
           pageNumber: page.pageNumber,
         })
         pendingNome = null
+        pendingId = undefined
         continue
       }
 
-      // Se temos um pendingNome anterior e esta linha não casou classe:
+      // Se temos pendingNome e esta linha não casou classe
       if (pendingNome) {
-        if (isContinuationLine(rawLine)) {
-          // Tentar ver se concatenando gera um match com classe
-          const combined = `${pendingNome} ${rawLine}`.replace(/\s+/g, ' ').trim()
+        if (isContinuationLine(cleanLine)) {
+          const combined = `${pendingNome} ${cleanLine}`.replace(/\s+/g, ' ').trim()
           const combMatch = findClassInLine(combined)
           if (combMatch.matched && combMatch.restOfLine) {
             let observacao: string | undefined
@@ -937,6 +1045,7 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
             }
 
             items.push({
+              pdfId: linePdfId,
               nome: combMatch.restOfLine.trim().toUpperCase(),
               classe: combMatch.className,
               status: currentStatus,
@@ -946,15 +1055,14 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
               pageNumber: page.pageNumber,
             })
             pendingNome = null
+            pendingId = undefined
             continue
           }
 
-          // Não casou classe ainda, acumular fragmento
-          pendingNome = `${pendingNome} ${rawLine}`
+          pendingNome = `${pendingNome} ${cleanLine}`
           continue
         }
 
-        // NÃO é continuação: a linha anterior era um item órfão, não deve fundir com a linha atual!
         if (pendingNome.length > 4 && /[0-9]|MG|ML|G|UI|MCG|COMP|AMP/i.test(pendingNome)) {
           unrecognized.push({
             pageNumber: pendingPageNumber,
@@ -962,24 +1070,38 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
             reason: 'Classe terapêutica não identificada para este item.',
           })
         }
-        pendingNome = rawLine
+        pendingNome = cleanLine
         pendingPageNumber = page.pageNumber
+        pendingId = linePdfId
         continue
       }
 
-      // Se não casou na mesma linha nem temos pendingNome:
-      // Se for uma continuação solta (isContinuationLine) e temos items anteriores, já foi tratada acima.
-      // Se não, armazenar como possível início de nome para a próxima linha
-      pendingNome = rawLine
+      pendingNome = cleanLine
       pendingPageNumber = page.pageNumber
+      pendingId = linePdfId
+    }
+
+    // Se no final da página temos itens desta página sem pdfId, e a página tem trailingNumbers (a sequência 1..31, 32..70...)
+    // Associar os IDs da página na ordem aos itens extraídos na página que não têm pdfId
+    const pageItems = items.slice(pageStartItemIdx)
+    if (pageTrailingIds.length > 0) {
+      // Filtrar trailingIds para conter apenas números sequenciais válidos
+      let tidIdx = 0
+      for (const it of pageItems) {
+        if (!it.pdfId && tidIdx < pageTrailingIds.length) {
+          it.pdfId = pageTrailingIds[tidIdx]
+          tidIdx++
+        }
+      }
     }
   }
 
-  // Se sobrou um pendingNome com classe associável ou identificável
+  // Se sobrou pendingNome ao final
   if (pendingNome) {
     const lastMatch = findClassInLine(pendingNome)
     if (lastMatch.matched && lastMatch.restOfLine) {
       items.push({
+        pdfId: pendingId,
         nome: lastMatch.restOfLine.trim().toUpperCase(),
         classe: lastMatch.className,
         status: currentStatus,
@@ -996,7 +1118,7 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
     }
   }
 
-  // Deduplicação e sanitização de monstros
+  // Deduplicação e sanitização garantindo regras por pdfId
   const sanitized = sanitizeAndFilterItems(items, unrecognized)
 
   return {

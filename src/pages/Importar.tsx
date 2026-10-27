@@ -564,7 +564,10 @@ export default function Importar() {
 
     // Total de nomes únicos previstos para o catálogo final (considerando itens selecionados)
     const uniqueKeysSelected = new Set(
-      previewItems.filter((i) => i.selected).map((i) => normalizeStr(i.nome)).filter(Boolean),
+      previewItems
+        .filter((i) => i.selected)
+        .map((i) => normalizeStr(i.nome))
+        .filter(Boolean),
     )
     const catalogoFinalPrevisto = uniqueKeysSelected.size
 
@@ -775,7 +778,9 @@ export default function Importar() {
 
             // Se ainda não tinha observação ou classe, unificar observações relevantes
             if (item.observacao && !grp.observacao.includes(item.observacao)) {
-              grp.observacao = grp.observacao ? `${grp.observacao} | ${item.observacao}` : item.observacao
+              grp.observacao = grp.observacao
+                ? `${grp.observacao} | ${item.observacao}`
+                : item.observacao
             }
           }
         }
@@ -1300,7 +1305,8 @@ export default function Importar() {
                         </span>
                       </div>
                       <div className="text-[10px] text-slate-500">
-                        {counts.selecionados} extraídos − {duplicateStats.totalRepetitions} unificados
+                        {counts.selecionados} extraídos − {duplicateStats.totalRepetitions}{' '}
+                        unificados
                       </div>
                     </div>
                     <Button
@@ -1335,7 +1341,8 @@ export default function Importar() {
                           Catálogo final previsto: {duplicateStats.catalogoFinalPrevisto} itens
                         </span>
                         <Badge className="bg-[#0F5342] text-white text-[10px] font-bold">
-                          {counts.total} extraídos − {duplicateStats.totalRepetitions} duplicados unificados
+                          {counts.total} extraídos − {duplicateStats.totalRepetitions} duplicados
+                          unificados
                         </Badge>
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5">
@@ -1354,7 +1361,9 @@ export default function Importar() {
                       className="h-8 text-xs font-semibold border-emerald-950/20 text-[#0C4336] hover:bg-emerald-50"
                     >
                       <Copy size={13} className="mr-1.5 text-[#0D8272]" />
-                      {duplicatesTableExpanded ? 'Ocultar Relação de Duplicados' : 'Ver Relação de Duplicados'}
+                      {duplicatesTableExpanded
+                        ? 'Ocultar Relação de Duplicados'
+                        : 'Ver Relação de Duplicados'}
                       {duplicatesTableExpanded ? (
                         <ChevronUp size={14} className="ml-1" />
                       ) : (
@@ -1376,7 +1385,8 @@ export default function Importar() {
                       </h4>
                       {duplicateStats.totalDuplicatesCount > 0 ? (
                         <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
-                          {duplicateStats.totalDuplicatesCount} nomes com 2+ ocorrências ({duplicateStats.totalRepetitions} repetições)
+                          {duplicateStats.totalDuplicatesCount} nomes com 2+ ocorrências (
+                          {duplicateStats.totalRepetitions} repetições)
                         </Badge>
                       ) : (
                         <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold">
@@ -1407,10 +1417,12 @@ export default function Importar() {
                       {/* Resumo compacto dos duplicados e busca rápida */}
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
                         <div className="text-[11px] text-slate-600">
-                          Mostrando <strong>{duplicateStats.duplicates.length}</strong> medicamentos repetidos.
+                          Mostrando <strong>{duplicateStats.duplicates.length}</strong> medicamentos
+                          repetidos.
                           {duplicateStats.totalConflitosStatus > 0 && (
                             <span className="ml-1 text-amber-800 font-semibold">
-                              ({duplicateStats.totalConflitosStatus} com conflito de status entre seções)
+                              ({duplicateStats.totalConflitosStatus} com conflito de status entre
+                              seções)
                             </span>
                           )}
                         </div>
@@ -1484,7 +1496,8 @@ export default function Importar() {
                                       )}
                                     </div>
                                     <div className="text-[10px] text-slate-400 mt-0.5">
-                                      Páginas: {dup.items.map((it) => it.pageNumber || '?').join(', ')}
+                                      Páginas:{' '}
+                                      {dup.items.map((it) => it.pageNumber || '?').join(', ')}
                                     </div>
                                   </td>
                                   <td className="py-2 px-3 text-center">

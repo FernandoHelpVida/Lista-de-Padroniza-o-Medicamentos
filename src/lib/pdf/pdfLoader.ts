@@ -110,6 +110,7 @@ export interface ExtractedPageText {
   pageNumber: number
   lines: string[]
   rawText: string
+  trailingNumbers?: number[]
 }
 
 /**
@@ -139,7 +140,7 @@ export async function extractTextFromPdf(fileBuffer: ArrayBuffer): Promise<Extra
       }
     }
 
-    // Agrupar itens que estejam na mesma linha (y com tolerância adaptada <= 4 pontos)
+    // Agrupar itens que estejam na mesma linha (y com tolerância adaptada <= 4.5 pontos)
     const lineMap = new Map<number, ItemWithPos[]>()
     for (const item of itemsWithPos) {
       let foundKey: number | null = null
@@ -162,6 +163,8 @@ export async function extractTextFromPdf(fileBuffer: ArrayBuffer): Promise<Extra
     const sortedYKeys = Array.from(lineMap.keys()).sort((a, b) => b - a)
 
     const lines: string[] = []
+    const trailingNumbers: number[] = []
+
     for (const y of sortedYKeys) {
       const lineItems = lineMap.get(y)!
       // Ordenar itens da esquerda para a direita (x crescente)
@@ -172,6 +175,14 @@ export async function extractTextFromPdf(fileBuffer: ArrayBuffer): Promise<Extra
         .trim()
       if (lineStr) {
         lines.push(lineStr)
+        // Detectar se é linha puramente numérica isolada no fluxo (ex: IDs no final da página)
+        const pureNumMatch = lineStr.match(/^(\d{1,3})$/)
+        if (pureNumMatch) {
+          const numVal = parseInt(pureNumMatch[1], 10)
+          if (numVal >= 1 && numVal <= 482) {
+            trailingNumbers.push(numVal)
+          }
+        }
       }
     }
 
@@ -179,6 +190,7 @@ export async function extractTextFromPdf(fileBuffer: ArrayBuffer): Promise<Extra
       pageNumber: pageNum,
       lines,
       rawText: lines.join('\n'),
+      trailingNumbers,
     })
   }
 
