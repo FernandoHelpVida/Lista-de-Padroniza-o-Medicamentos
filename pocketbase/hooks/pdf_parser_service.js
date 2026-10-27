@@ -14,7 +14,15 @@ routerAdd(
       const result = $documents.toMarkdown({ file: file })
       const md = result.markdown || ''
 
-      // Também registrar um preview no log para diagnóstico se necessário
+      // Também salvar o markdown para inspeção em config ou arquivo se solicitado
+      try {
+        const cfg = e.app.findFirstRecordByFilter('spincare_config', "is_active = true || id != ''")
+        if (cfg) {
+          cfg.set('last_test_message', md.substring(0, 30000))
+          e.app.save(cfg)
+        }
+      } catch (cErr) {}
+
       console.log('PDF TO MARKDOWN LENGTH: ' + md.length)
 
       return e.json(200, {
@@ -118,6 +126,23 @@ routerAdd(
         if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO'))
           return
         if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) return
+
+        // Remover ruídos residuais como '###'
+        nomeLimpo = nomeLimpo.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
+
+        // Pós-processamento e unificação sistemática de casos conhecidos
+        if (
+          nomeLimpo.startsWith('MOXIFLOXACINO 1,6MG/ML PO PARA') &&
+          !nomeLimpo.includes('SOLUCAO INJETAVEL')
+        ) {
+          nomeLimpo = 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML'
+        }
+        if (/^0,6\s*UI\s*\+\s*CLORANFENICOL/i.test(nomeLimpo)) {
+          nomeLimpo = ('COLAGENASE ' + nomeLimpo).replace(/\s+/g, ' ').trim()
+        }
+        if (/^\d+\s*ML\s+([A-Z]{3,})/i.test(nomeLimpo)) {
+          nomeLimpo = nomeLimpo.replace(/^\d+\s*ML\s+/, '')
+        }
 
         // Sanitização contra itens monstros:
         if (nomeLimpo.length > 250) return

@@ -13,7 +13,7 @@ import {
   StatusPadronizacao,
   UnrecognizedItem,
 } from '@/lib/pdf/pdfParser'
-import officialPdfUrl from '@/assets/relacao-dos-medicamentos-avaliados-e-definicao-de-padronizacao-16.10-9be5c.pdf'
+import officialPdfUrl from '@/assets/relacao-dos-medicamentos-avaliados-e-definicao-de-padronizacao-16.10-50a22.pdf'
 import {
   UploadCloud,
   FileText,
@@ -585,20 +585,39 @@ export default function Importar() {
 
     setZerandoCatalogo(true)
     try {
-      const response = await pb.send<{
-        success: boolean
-        message: string
-        itens_apagados: number
-        timestamp: string
-      }>('/backend/v1/medicamentos/zerar-catalogo', {
-        method: 'POST',
-      })
+      let itensApagados = 0
+      let backendSuccess = false
+
+      // Tentativa 1: Endpoint otimizado no backend
+      try {
+        const response = await pb.send<{
+          success: boolean
+          message: string
+          itens_apagados: number
+          timestamp: string
+        }>('/backend/v1/medicamentos/zerar-catalogo', {
+          method: 'POST',
+        })
+        if (response && response.success) {
+          itensApagados = response.itens_apagados || 0
+          backendSuccess = true
+        }
+      } catch (bkErr) {
+        console.warn('Endpoint zerar-catalogo falhou, tentando fallback client-side:', bkErr)
+      }
+
+      // Tentativa 2: Fallback client-side caso a rota retorne erro
+      if (!backendSuccess) {
+        const existing = await pb.collection('medicamentos').getFullList({ fields: 'id' })
+        itensApagados = existing.length
+        for (const item of existing) {
+          await pb.collection('medicamentos').delete(item.id)
+        }
+      }
 
       toast({
         title: 'Catálogo de medicamentos zerado',
-        description:
-          response.message ||
-          `${response.itens_apagados} medicamento(s) foram apagados do banco de dados com sucesso.`,
+        description: `${itensApagados} medicamento(s) foram apagados do banco de dados com sucesso.`,
       })
 
       // Fechar modal e resetar estado

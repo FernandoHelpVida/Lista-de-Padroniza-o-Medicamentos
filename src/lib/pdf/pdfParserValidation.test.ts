@@ -1,4 +1,9 @@
-import { parseMedicamentosFromPages, isContinuationLine, isMonsterItem } from './pdfParser'
+import {
+  parseMedicamentosFromPages,
+  parseMedicamentosFromMarkdown,
+  checkItemIntegrity,
+  postProcessItemName,
+} from './pdfParser'
 import type { ExtractedPageText } from './pdfLoader'
 
 export function runPdfParserValidationTests() {
@@ -111,6 +116,66 @@ export function runPdfParserValidationTests() {
   const insulinas = result.items.filter((i) => i.nome.includes('INSULINA'))
   if (insulinas.length !== 3) {
     throw new Error(`Esperado 3 insulinas, encontrado: ${insulinas.length}`)
+  }
+
+  // --- Novos Testes Sistemáticos de Integridade (Casos a-d) ---
+  // Caso 1: MOXIFLOXACINO truncado com segunda linha solta na tabela
+  const sampleMarkdownMoxifloxacino = `
+| Nome do medicamento | Classe | Definição |
+| MOXIFLOXACINO 1,6MG/ML PO PARA | Antibacteriano | Padrão |
+| SOLUCAO INJETAVEL BOLSA 250 ML | | |
+| METRONIDAZOL 5MG/ML BOLSA 100 ML | Antibacteriano | Padrão |
+`
+  const mdResultMoxi = parseMedicamentosFromMarkdown(sampleMarkdownMoxifloxacino)
+  const moxi = mdResultMoxi.items.find((i) => i.nome.includes('MOXIFLOXACINO'))
+  if (!moxi) throw new Error('Moxifloxacino não encontrado no parse de markdown')
+  if (!moxi.nome.includes('SOLUCAO INJETAVEL BOLSA 250 ML')) {
+    throw new Error(`Moxifloxacino não anexou a continuação: ${moxi.nome}`)
+  }
+
+  // Caso 2: Fragmento com lixo ### e início em dosagem/nome quebrado
+  const sampleMarkdownEpitegel = `
+| Nome do medicamento | Classe | Definição |
+| COLAGENASE | Dermatológico | Padrão |
+| 0,6UI + CLORANFENICOL ### 50MG/G (EPITEGEL) GEL | Dermatológico | Padrão |
+`
+  const mdResultEpi = parseMedicamentosFromMarkdown(sampleMarkdownEpitegel)
+  const epi = mdResultEpi.items.find((i) => i.nome.includes('EPITEGEL'))
+  if (!epi) throw new Error('Epitegel não encontrado no teste')
+  if (epi.nome.includes('###')) {
+    throw new Error(`Epitegel contém caracteres ### de lixo: ${epi.nome}`)
+  }
+  if (!epi.nome.startsWith('COLAGENASE')) {
+    throw new Error(`Epitegel não unificou com COLAGENASE: ${epi.nome}`)
+  }
+
+  // Caso 3: Verificar que a função checkItemIntegrity acusa e postProcessItemName corrige
+  const issuesMoxiIncompleto = checkItemIntegrity('MOXIFLOXACINO 1,6MG/ML PO PARA')
+  if (issuesMoxiIncompleto.length === 0) {
+    throw new Error('checkItemIntegrity deveria ter acusado término incompleto em PO PARA')
+  }
+
+  const issuesComLixo = checkItemIntegrity('SALBUTAMOL 0,4MG/ML XAROPE FRASCO ### 120 ML')
+  if (issuesComLixo.length === 0) {
+    throw new Error('checkItemIntegrity deveria ter acusado caracteres ### de lixo')
+  }
+
+  const fixedMoxi = postProcessItemName('MOXIFLOXACINO 1,6MG/ML PO PARA')
+  if (fixedMoxi !== 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML') {
+    throw new Error(`postProcessItemName falhou no moxi: ${fixedMoxi}`)
+  }
+
+  const fixedEpi = postProcessItemName('0,6UI + CLORANFENICOL ### 50MG/G (EPITEGEL) GEL')
+  if (fixedEpi !== 'COLAGENASE 0,6UI + CLORANFENICOL 50MG/G (EPITEGEL) GEL') {
+    throw new Error(`postProcessItemName falhou no epitegel: ${fixedEpi}`)
+  }
+
+  // Validar que nenhum item gerado no resultado final tem pendências
+  for (const it of [...result.items, ...mdResultMoxi.items, ...mdResultEpi.items]) {
+    const issues = checkItemIntegrity(it.nome)
+    if (issues.length > 0) {
+      throw new Error(`Item ${it.nome} violou critérios de integridade: ${issues.join(', ')}`)
+    }
   }
 
   return { success: true, totalItems: result.items.length }

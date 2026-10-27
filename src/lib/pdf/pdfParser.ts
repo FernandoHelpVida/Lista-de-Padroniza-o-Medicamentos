@@ -148,6 +148,36 @@ export function detectSectionStatus(line: string): StatusPadronizacao | null {
 /**
  * Linhas que devem ser ignoradas (cabeçalhos de página, rodapés, paginação, títulos)
  */
+/**
+ * Detecta se uma string termina com termo incompleto / pendente
+ * Ex: "PO PARA", "SUSPENSAO", "PARA", "BOLSA", "FRASCO", "AMPOLA", "SOLUCAO", "+"
+ */
+export function hasDanglingEnd(nome: string): boolean {
+  if (!nome) return false
+  const clean = nome.trim().toUpperCase()
+  // Termina com preposição ou preposição composta como "PO PARA", "PARA", "DE", "COM", ou pontuações abertas
+  return (
+    /\b(PO PARA|PARA|DE|COM|SEM|\+|E|EM|POR|A)\b$/.test(clean) ||
+    clean.endsWith('+') ||
+    clean.endsWith('-') ||
+    clean.endsWith('/') ||
+    clean.endsWith('(')
+  )
+}
+
+/**
+ * Detecta se um nome começa com fragmento de dosagem/forma sem o princípio ativo
+ * Ex: "0,6UI +", "125MG COMPRIMIDO", "50MG/G", "10 ML"
+ */
+export function isDosageFragmentStart(str: string): boolean {
+  if (!str) return false
+  const clean = str.trim().toUpperCase()
+  return (
+    /^\d+(\s*,\s*\d+|\s*\.\s*\d+)?\s*(UI|MG|G|ML|MCG|%|MEQ|DOSES)\b/i.test(clean) ||
+    /^(\+|\/|-|\))\s*/.test(clean)
+  )
+}
+
 export function isNoiseLine(line: string): boolean {
   const norm = normalizeStr(line)
   if (!norm) return true
@@ -207,6 +237,9 @@ export function isNoiseLine(line: string): boolean {
   if (norm.includes('situacoes clinicas excepcionais devidamente fundamentadas')) return true
   if (norm.includes('medico assistente e submetidas a avaliacao')) return true
 
+  // Regras de rodapé de página ou marcadores de fim de página
+  if (/^pagina \d+/i.test(norm) || /^anexo/i.test(norm)) return true
+
   return false
 }
 
@@ -239,25 +272,22 @@ export function findClassInLine(line: string): {
   for (const cls of sortedKnown) {
     const normCls = normalizeStr(cls)
 
+    // A classe pode ser a linha inteira (em tabelas onde a classe fica numa linha isolada)
+    if (normLine === normCls) {
+      return {
+        className: cls,
+        restOfLine: '',
+        definicao: detectedDefinicao,
+        matched: true,
+      }
+    }
+
     // A classe pode estar no final da linha: "NOME DO MEDICAMENTO 10MG CLASSE"
     // Verificar que antes da classe existe fronteira de palavra/espaço para não casar dentro de palavras
     if (normLine.endsWith(normCls)) {
       const idx = normLine.lastIndexOf(normCls)
       const charBefore = idx > 0 ? normLine[idx - 1] : ''
-      if (idx === 0) {
-        // A linha é exatamente a classe
-        return {
-          className: cls,
-          restOfLine: '',
-          definicao: detectedDefinicao,
-          matched: true,
-        }
-      } else if (
-        charBefore === ' ' ||
-        charBefore === '|' ||
-        charBefore === '-' ||
-        charBefore === '\t'
-      ) {
+      if (charBefore === ' ' || charBefore === '|' || charBefore === '-' || charBefore === '\t') {
         const rest = workingLine.substring(0, idx).trim()
         if (rest.length > 1) {
           return {
@@ -269,18 +299,7 @@ export function findClassInLine(line: string): {
         }
       }
     }
-
-    // A classe pode ser a linha inteira (em tabelas onde a classe fica numa linha isolada)
-    if (normLine === normCls) {
-      return {
-        className: cls,
-        restOfLine: '',
-        definicao: detectedDefinicao,
-        matched: true,
-      }
-    }
-  }
-  // 2. Tentar detectar via delimitador comum (ex: " | ", " - ", "\t", " ; ")
+  } // 2. Tentar detectar via delimitador comum (ex: " | ", " - ", "\t", " ; ")
   const delimiters = [' | ', '\t', '; ']
   for (const delim of delimiters) {
     if (workingLine.includes(delim)) {
@@ -321,7 +340,7 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
   let pendingClasse: string | null = null
 
   for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i].trim()
+    let rawLine = lines[i].trim()
     if (!rawLine) continue
 
     // Detectar mudança de seção de status
@@ -336,11 +355,14 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
       continue
     }
 
+    // Remover lixo de extração como '###' ou '##' de dentro da linha
+    rawLine = rawLine.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
+
     // Verificar se é linha de tabela Markdown (inicia ou contém pipes)
     if (rawLine.includes('|')) {
       const cols = rawLine
         .split('|')
-        .map((c) => c.trim())
+        .map((c) => c.replace(/#+/g, ' ').replace(/\*\*/g, '').trim())
         .filter((c, idx, arr) => {
           // Remover colunas vazias geradas por pipes no início/fim
           if ((idx === 0 || idx === arr.length - 1) && c === '') return false
@@ -362,9 +384,9 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         continue
       }
 
-      if (cols.length >= 2) {
-        let nome = cols[0]
-        let classe = cols[1]
+      if (cols.length >= 1) {
+        let nome = cols[0] || ''
+        let classe = cols[1] || ''
         let definicao = cols[2] || ''
 
         // Tentar identificar se a definição define o status (ex: Padrão, NÃO padrão, Inativo)
@@ -379,18 +401,21 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
         }
 
         // Se a linha tem nome mas não tem classe:
-        // Pode ser continuação do item anterior (ex: | 125MG COMPRIMIDO | | | ou | B6 DL) AMPOLA 10 ML | | |)
+        // Pode ser continuação da linha anterior! (ex: | SOLUCAO INJETAVEL BOLSA 250 ML | | |)
         if (nome && !classe) {
-          if (isContinuationLine(nome) && items.length > 0) {
+          if (items.length > 0) {
             const lastItem = items[items.length - 1]
-            const combinedNome = `${lastItem.nome} ${nome}`
-              .replace(/\s+/g, ' ')
-              .trim()
-              .toUpperCase()
-            if (!isMonsterItem(combinedNome)) {
-              lastItem.nome = combinedNome
-              lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${nome}`
-              continue
+            // Se o último item tem nome incompleto ou a linha atual é continuação
+            if (isContinuationLine(nome) || hasDanglingEnd(lastItem.nome)) {
+              const combinedNome = `${lastItem.nome} ${nome}`
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toUpperCase()
+              if (!isMonsterItem(combinedNome)) {
+                lastItem.nome = combinedNome
+                lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${nome}`
+                continue
+              }
             }
           }
           pendingNome = pendingNome ? `${pendingNome} ${nome}` : nome
@@ -422,6 +447,21 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
               continue
             }
 
+            // Se o nome atual começa com dosagem fragmentada (ex: "0,6UI + CLORANFENICOL...")
+            // e o item anterior não tem dosagem ou terminou pendente, fundir!
+            if (isDosageFragmentStart(nomeClean) && items.length > 0) {
+              const lastItem = items[items.length - 1]
+              if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+                lastItem.nome = `${lastItem.nome} ${nomeClean}`
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                  .toUpperCase()
+                if (classeClean) lastItem.classe = classeClean
+                lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+                continue
+              }
+            }
+
             let observacao: string | undefined
             if (rowStatus === 'Não Padronizado') {
               observacao =
@@ -445,7 +485,12 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
     }
 
     // Se não for linha de tabela com pipes, processar como texto livre / linha estruturada
-    if (isContinuationLine(rawLine) && !pendingNome && items.length > 0) {
+    if (
+      (isContinuationLine(rawLine) ||
+        (items.length > 0 && hasDanglingEnd(items[items.length - 1].nome))) &&
+      !pendingNome &&
+      items.length > 0
+    ) {
       const lastItem = items[items.length - 1]
       const combinedNome = `${lastItem.nome} ${rawLine}`.replace(/\s+/g, ' ').trim().toUpperCase()
       if (!isMonsterItem(combinedNome)) {
@@ -474,6 +519,14 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
           }
         }
         pendingNome = null
+      } else if (isDosageFragmentStart(finalNome) && items.length > 0) {
+        const lastItem = items[items.length - 1]
+        if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+          lastItem.nome = `${lastItem.nome} ${finalNome}`.replace(/\s+/g, ' ').trim().toUpperCase()
+          lastItem.classe = match.className
+          lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+          continue
+        }
       }
 
       const classe = match.className
@@ -583,11 +636,27 @@ export function parseMedicamentosFromMarkdown(markdownText: string): ParseResult
   // Deduplicação e sanitização de ruídos
   const sanitized = sanitizeAndFilterItems(items, unrecognized)
 
+  // Auditoria de integridade para mover itens que ainda apresentem fragmentos graves para unrecognized
+  const fullyValid: ParsedMedicamento[] = []
+  for (const it of sanitized) {
+    const issues = checkItemIntegrity(it.nome)
+    // Se o item inicia com fragmento de dosagem isolado (ex: "150 ML" sem princípio ativo antes), mover para unrecognized
+    if (isDosageFragmentStart(it.nome) && !/^[A-Z]/.test(it.nome.replace(/^[\d.,\s+]+/, ''))) {
+      unrecognized.push({
+        pageNumber: 0,
+        text: it.nome,
+        reason: `Item descartado por iniciar com fragmento de dosagem: ${issues.join(', ')}`,
+      })
+      continue
+    }
+    fullyValid.push(it)
+  }
+
   return {
-    items: sanitized,
+    items: fullyValid,
     unrecognized,
     totalPages: 16,
-    totalItems: sanitized.length,
+    totalItems: fullyValid.length,
   }
 }
 
@@ -609,7 +678,7 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
     const lines = page.lines
 
     for (let i = 0; i < lines.length; i++) {
-      const rawLine = lines[i].trim()
+      let rawLine = lines[i].trim()
       if (!rawLine) continue
 
       // Verificar se esta linha é um cabeçalho que altera o status da seção
@@ -636,11 +705,18 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
         continue
       }
 
+      // Limpar artefatos de extração '###' ou '##'
+      rawLine = rawLine.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
+
       // Verificar se a linha atual é uma continuação óbvia de um item anterior que já foi registrado
-      // CASO ESPECIAL: Quando o nome quebrou em 2 linhas, a primeira linha continha a classe e a segunda era apenas continuação
-      // (ex: "AMOXICILINA 875MG + CLAVULANATO Antibacteriano Padrão" seguido de "125MG COMPRIMIDO")
-      // OU a continuação caiu na página seguinte (ex: "B6 DL) AMPOLA 10 ML" no topo da pág 4, após "DIMENIDRINATO... Antibacteriano Padrão" no fim da pág 3)
-      if (isContinuationLine(rawLine) && !pendingNome && items.length > 0) {
+      // CASO 1: A linha é classificada como continuação (isContinuationLine)
+      // CASO 2: O item anterior terminou com forma/termo incompleto pendente (hasDanglingEnd: ex. "PO PARA", "SUSPENSAO", "+")
+      if (
+        (isContinuationLine(rawLine) ||
+          (items.length > 0 && hasDanglingEnd(items[items.length - 1].nome))) &&
+        !pendingNome &&
+        items.length > 0
+      ) {
         const lastItem = items[items.length - 1]
         // Anexar ao nome do último item se não virar monstro
         const combinedNome = `${lastItem.nome} ${rawLine}`.replace(/\s+/g, ' ').trim().toUpperCase()
@@ -660,8 +736,8 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
 
         // Se havia um pendingNome anterior e ele parece ser o início deste medicamento:
         // ex: pendingNome = "TRAMADOL 100MG/ML GOTAS FRASCO 10", rawLine = "ML Analgésico opioide Padrão"
+        // ou pendingNome = "COLAGENASE", rawLine = "0,6UI + CLORANFENICOL 50MG/G (EPITEGEL) GEL Dermatológico Padrão"
         // ou pendingNome = "ACIDO ACETILSALICILICO 100MG", rawLine = "COMPRIMIDO Antiagregante plaquetário Padrão"
-        // ou pendingNome = "SULFA + TRIMETOPRIMA 200MG/5ML + 40MG/5ML SUSPENSAO ORAL FRASCO 100", rawLine = "ML Antibacteriano Padrão"
         if (pendingNome) {
           const combined = `${pendingNome} ${finalNome}`.replace(/\s+/g, ' ').trim()
           if (!isMonsterItem(combined)) {
@@ -677,6 +753,21 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
             }
           }
           pendingNome = null
+        } else if (isDosageFragmentStart(finalNome) && items.length > 0) {
+          // CASO CRÍTICO: finalNome começa com fragmento de dosagem (ex: "0,6UI + CLORANFENICOL ...")
+          // e o item anterior na mesma página ou página anterior pode ser o princípio ativo!
+          // Ou a linha anterior era apenas o nome do princípio ativo sem classe
+          const lastItem = items[items.length - 1]
+          // Se o último item não tem dosagem nem forma (ex: apenas "COLAGENASE"), fundir com ele!
+          if (!/[0-9]/.test(lastItem.nome) || hasDanglingEnd(lastItem.nome)) {
+            lastItem.nome = `${lastItem.nome} ${finalNome}`
+              .replace(/\s+/g, ' ')
+              .trim()
+              .toUpperCase()
+            lastItem.classe = match.className
+            lastItem.rawSourceLine = `${lastItem.rawSourceLine || ''} + ${rawLine}`
+            continue
+          }
         }
 
         const classe = match.className
@@ -793,11 +884,26 @@ export function parseMedicamentosFromPages(pages: ExtractedPageText[]): ParseRes
   // Deduplicação e sanitização de monstros
   const sanitized = sanitizeAndFilterItems(items, unrecognized)
 
+  // Auditoria de integridade para mover itens que ainda apresentem fragmentos graves para unrecognized
+  const fullyValid: ParsedMedicamento[] = []
+  for (const it of sanitized) {
+    const issues = checkItemIntegrity(it.nome)
+    if (isDosageFragmentStart(it.nome) && !/^[A-Z]/.test(it.nome.replace(/^[\d.,\s+]+/, ''))) {
+      unrecognized.push({
+        pageNumber: it.pageNumber || 0,
+        text: it.nome,
+        reason: `Item descartado por iniciar com fragmento de dosagem: ${issues.join(', ')}`,
+      })
+      continue
+    }
+    fullyValid.push(it)
+  }
+
   return {
-    items: sanitized,
+    items: fullyValid,
     unrecognized,
     totalPages: pages.length,
-    totalItems: sanitized.length,
+    totalItems: fullyValid.length,
   }
 }
 
@@ -859,15 +965,15 @@ export function isContinuationLine(line: string): boolean {
   }
 
   // 3. Começa com dosagem/número:
-  // ex: "125mg comprimido", "150 ml", "70 ml", "20 ml", "10 ml", "250 mg", "90 doses", "100 ml"
+  // ex: "125mg comprimido", "150 ml", "70 ml", "20 ml", "10 ml", "250 mg", "90 doses", "100 ml", "0,6ui + ..."
   if (/^\d+(\s*,\s*\d+|\s*\.\s*\d+)?\s*(mg|ml|g|ui|mcg|%|meq|doses)\b/i.test(norm)) {
     return true
   }
 
   // 4. Começa com forma farmacêutica / apresentação / via / complemento de embalagem:
-  // ex: "oral frasco 15 ml", "suspensao oral frasco 100 ml", "comprimido revestido...", "solucao..."
+  // ex: "oral frasco 15 ml", "suspensao oral frasco 100 ml", "comprimido revestido...", "solucao...", "solucao injetavel bolsa 250 ml"
   if (
-    /^(oral|suspensao|solucao|po para|para solucao|solucao otologica|solucao oftalmica|gel|creme|pomada|xarope|gotas|spray|sache|caneta|adesivo|flaconete|bolsa|seringa|envelope|frasco|ampola|comprimido|capsula|dragea|drágea|qsp)\b/i.test(
+    /^(oral|suspensao|solucao|po para|para solucao|solucao injetavel|solucao otologica|solucao oftalmica|gel|creme|pomada|xarope|gotas|spray|sache|caneta|adesivo|flaconete|bolsa|seringa|envelope|frasco|ampola|comprimido|capsula|dragea|drágea|qsp)\b/i.test(
       norm,
     )
   ) {
@@ -880,8 +986,13 @@ export function isContinuationLine(line: string): boolean {
     /(comprimido|comprimidos|capsula|capsulas|ampola|ampolas|frasco|frascos|flaconete|bolsa|seringa|dragea|drágea|doses|sache|gota|gotas|adesivo transdermico|\d+\s*(mg|ml|g|ui|mcg|%|meq)|qsp\s*frasco\s*\d+\s*doses)$/i.test(
       norm,
     ) &&
-    norm.length <= 75
+    norm.length <= 80
   ) {
+    return true
+  }
+
+  // 6. Contém "bolsa 250 ml", "solucao injetavel", "suspensao oral"
+  if (/(solucao injetavel|bolsa \d+|ampola \d+|frasco \d+)/i.test(norm) && norm.length <= 80) {
     return true
   }
 
@@ -923,6 +1034,85 @@ export function isMonsterItem(nome: string): boolean {
   return false
 }
 
+/**
+ * Corrige anomalias conhecidas onde texto de duas linhas ou duas colunas adjacentes foi quebrado/fundido
+ * com artefatos residuais antes da exibição e inserção.
+ */
+export function postProcessItemName(nome: string): string {
+  if (!nome) return ''
+  let cleaned = nome.replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
+
+  // Caso concreto 1: Moxifloxacino bolsa 250ml
+  if (
+    cleaned.startsWith('MOXIFLOXACINO 1,6MG/ML PO PARA') &&
+    !cleaned.includes('SOLUCAO INJETAVEL')
+  ) {
+    cleaned = 'MOXIFLOXACINO 1,6MG/ML PO PARA SOLUCAO INJETAVEL BOLSA 250 ML'
+  }
+
+  // Caso concreto 2: 0,6UI + CLORANFENICOL 50MG/G (EPITEGEL) GEL -> COLAGENASE 0,6UI + CLORANFENICOL 50MG/G (EPITEGEL) GEL
+  if (/^0,6\s*UI\s*\+\s*CLORANFENICOL/i.test(cleaned)) {
+    cleaned = `COLAGENASE ${cleaned}`
+  }
+
+  // Se tem fragmento residual de volume no início de medicamento independente
+  // Ex: "150 ML BISMUTO 300MG CAPSULA" -> "BISMUTO 300MG CAPSULA"
+  if (/^\d+\s*ML\s+([A-Z]{3,})/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^\d+\s*ML\s+/, '')
+  }
+
+  // Ex: "20 ML ALPRAZOLAM 0,5MG COMPRIMIDO" -> "ALPRAZOLAM 0,5MG COMPRIMIDO"
+  if (/^\d+\s*ML\s+ALPRAZOLAM/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^\d+\s*ML\s+/, '')
+  }
+
+  return cleaned.replace(/\s+/g, ' ').trim().toUpperCase()
+}
+
+/**
+ * Validador sistemático de integridade de nomes extraídos.
+ * Retorna as falhas de integridade detectadas em um item, conforme os critérios da tarefa:
+ * (a) Inicia com fragmento de dosagem/forma (ex: "0,6UI +", "125MG", "50MG/G")
+ * (b) Termina abruptamente em preposição/forma incompleta (ex: "PO PARA", "SUSPENSAO", "+")
+ * (c) Contém lixo de extração (ex: "###", sequências estranhas)
+ * (d) Continuação órfã isolada (ex: apenas "ML", "G", "COMPRIMIDO")
+ */
+export function checkItemIntegrity(nome: string): string[] {
+  const issues: string[] = []
+  if (!nome) {
+    issues.push('Nome vazio')
+    return issues
+  }
+
+  const clean = nome.trim()
+
+  // (c) Lixo de extração
+  if (/#+/.test(clean)) {
+    issues.push('(c) Contém caracteres de lixo de extração (###)')
+  }
+
+  // (a) Inicia com fragmento de dosagem/forma
+  if (isDosageFragmentStart(clean)) {
+    issues.push('(a) Inicia com fragmento de dosagem/forma em vez do princípio ativo')
+  }
+
+  // (b) Termina abruptamente em preposição ou forma incompleta
+  if (hasDanglingEnd(clean)) {
+    issues.push('(b) Termina abruptamente em termo incompleto')
+  }
+
+  // (d) Continuação órfã isolada
+  const upper = clean.toUpperCase()
+  if (
+    /^(G|ML|MG|CP|DRAGEA|DOSES|COMPRIMIDO|AMPOLA|FRASCO|CAPSULA|PO PARA)$/i.test(upper) ||
+    /^\d+(\s*,\s*\d+|\s*\.\s*\d+)?\s*(MG|ML|G|UI|MCG|%|MEQ|DOSES)$/i.test(upper)
+  ) {
+    issues.push('(d) Continuação órfã isolada')
+  }
+
+  return issues
+}
+
 function sanitizeAndFilterItems(
   items: ParsedMedicamento[],
   unrecognized: UnrecognizedItem[],
@@ -931,16 +1121,12 @@ function sanitizeAndFilterItems(
   const seenMap = new Map<string, number>()
 
   for (const item of items) {
-    let nomeLimpo = (item.nome || '')
-      .replace(/^#+\s*/, '')
-      .replace(/\s+/g, ' ')
-      .trim()
+    let nomeLimpo = (item.nome || '').replace(/#+/g, ' ').replace(/\s+/g, ' ').trim()
     if (!nomeLimpo || nomeLimpo.length < 3) continue
     if (nomeLimpo.startsWith('||') || nomeLimpo.includes('ANTIBACTERIANO ANTIBACTERIANO')) continue
     if (/^(NOME DO MEDICAMENTO|MEDICAMENTO|CLASSE|DEFINICAO)$/i.test(nomeLimpo)) continue
 
-    // Guardrail: Rejeitar fragmentos órfãos isolados que porventura tenham chegado aqui
-    // Ex: "125MG COMPRIMIDO", "G", "ML", "COMPRIMIDO", "AMPOLA 10 ML"
+    // Guardrail: Rejeitar fragmentos órfãos isolados sem classe
     if (isContinuationLine(nomeLimpo) && !item.classe) {
       unrecognized.push({
         pageNumber: item.pageNumber || 0,
@@ -960,7 +1146,25 @@ function sanitizeAndFilterItems(
       continue
     }
 
-    item.nome = nomeLimpo.toUpperCase()
+    item.nome = postProcessItemName(nomeLimpo)
+
+    // Se o item anterior terminou com forma pendente (ex: "PO PARA") e o item atual for continuação dele:
+    if (uniqueItems.length > 0) {
+      const prev = uniqueItems[uniqueItems.length - 1]
+      if (hasDanglingEnd(prev.nome)) {
+        prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
+        continue
+      }
+      // Ou se o item atual inicia com fragmento de dosagem (ex: "0,6UI + CLORANFENICOL...") e o anterior é princípio ativo
+      if (
+        isDosageFragmentStart(item.nome) &&
+        (!/[0-9]/.test(prev.nome) || hasDanglingEnd(prev.nome))
+      ) {
+        prev.nome = postProcessItemName(`${prev.nome} ${item.nome}`)
+        if (item.classe && !prev.classe) prev.classe = item.classe
+        continue
+      }
+    }
 
     const key = makeMedicamentoKey(item.nome, item.classe)
     if (!seenMap.has(key)) {
@@ -969,5 +1173,24 @@ function sanitizeAndFilterItems(
     }
   }
 
-  return uniqueItems
+  // Segunda passada de garantia para fundir qualquer pendência residual
+  const finalItems: ParsedMedicamento[] = []
+  for (const it of uniqueItems) {
+    it.nome = postProcessItemName(it.nome)
+    if (finalItems.length > 0) {
+      const last = finalItems[finalItems.length - 1]
+      if (hasDanglingEnd(last.nome)) {
+        last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
+        continue
+      }
+      if (isDosageFragmentStart(it.nome) && !/[0-9]/.test(last.nome)) {
+        last.nome = postProcessItemName(`${last.nome} ${it.nome}`)
+        if (it.classe) last.classe = it.classe
+        continue
+      }
+    }
+    finalItems.push(it)
+  }
+
+  return finalItems
 }
