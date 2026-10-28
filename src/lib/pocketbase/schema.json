@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-28T14:37:43.689Z",
+  "generatedAt": "2026-10-28T18:38:47.589Z",
   "collections": [
     {
       "name": "users",
@@ -117,6 +117,12 @@
         {
           "name": "pdfId",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "classe_detalhada",
+          "type": "text",
           "required": false,
           "system": false
         }

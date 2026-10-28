@@ -275,9 +275,15 @@ export default function Importar() {
           const classeMudou = Boolean(
             item.classe && normalizeStr(existing.classe) !== normalizeStr(item.classe),
           )
+          const itemClasseDetalhada = (item.classeDetalhada || '').trim()
+          const existingClasseDetalhada = (existing.classe_detalhada || '').trim()
+          const classeDetalhadaMudou = Boolean(
+            itemClasseDetalhada &&
+            normalizeStr(existingClasseDetalhada) !== normalizeStr(itemClasseDetalhada),
+          )
           const pdfIdMudou = !existing.pdfId && item.pdfId
 
-          if (statusMudou || nomeMudou || classeMudou || pdfIdMudou) {
+          if (statusMudou || nomeMudou || classeMudou || classeDetalhadaMudou || pdfIdMudou) {
             diffStatus = 'EXISTENTE' // dados mudaram, precisa atualizar
           } else {
             diffStatus = 'SEM_ALTERACAO' // exatamente igual
@@ -650,6 +656,7 @@ export default function Importar() {
               pdfId: i.pdfId,
               nome: i.nome.trim(),
               classe: i.classe.trim(),
+              classe_detalhada: (i.classeDetalhada || '').trim(),
               status: i.status,
               descricao: i.descricao || '',
               observacao: i.observacao || '',
@@ -680,16 +687,23 @@ export default function Importar() {
           nome: string
           status: string
           classe: string
+          classe_detalhada?: string
           observacao?: string
-        }>({ fields: 'id,pdfId,nome,status,classe,observacao' })
+        }>({ fields: 'id,pdfId,nome,status,classe,classe_detalhada,observacao' })
 
         const dbByPdfId = new Map<
           number,
-          { id: string; status: string; classe: string; nome: string }
+          { id: string; status: string; classe: string; classe_detalhada?: string; nome: string }
         >()
         for (const m of currentDbMeds) {
           if (m.pdfId) {
-            dbByPdfId.set(m.pdfId, { id: m.id, status: m.status, classe: m.classe, nome: m.nome })
+            dbByPdfId.set(m.pdfId, {
+              id: m.id,
+              status: m.status,
+              classe: m.classe,
+              classe_detalhada: m.classe_detalhada,
+              nome: m.nome,
+            })
           }
         }
 
@@ -701,6 +715,7 @@ export default function Importar() {
             pdfId: item.pdfId,
             nome: item.nome,
             classe: item.classe,
+            classe_detalhada: (item.classeDetalhada || '').trim(),
             status: item.status,
             descricao: item.descricao || '',
             observacao: item.observacao || '',
@@ -709,9 +724,11 @@ export default function Importar() {
           if (existing) {
             const mudouStatus = existing.status !== item.status
             const mudouClasse = existing.classe !== item.classe
+            const mudouClasseDetalhada =
+              (existing.classe_detalhada || '').trim() !== payload.classe_detalhada
             const mudouNome = existing.nome !== item.nome
 
-            if (mudouStatus || mudouClasse || mudouNome) {
+            if (mudouStatus || mudouClasse || mudouClasseDetalhada || mudouNome) {
               await pb.collection('medicamentos').update(existing.id, payload)
               countAtualizados++
             } else {
@@ -1523,7 +1540,17 @@ export default function Importar() {
                               )}
                             </td>
 
-                            <td className="py-2 px-3 text-slate-600 font-medium">{item.classe}</td>
+                            <td className="py-2 px-3 text-slate-600 font-medium">
+                              <div>{item.classe}</div>
+                              {item.classeDetalhada && (
+                                <div
+                                  className="text-[11px] text-[#0D8272] font-normal truncate max-w-xs mt-0.5"
+                                  title={item.classeDetalhada}
+                                >
+                                  {item.classeDetalhada}
+                                </div>
+                              )}
+                            </td>
 
                             <td className="py-2 px-3">
                               {item.status === 'Padronizado' && (

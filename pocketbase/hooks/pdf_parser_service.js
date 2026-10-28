@@ -640,6 +640,7 @@ routerAdd(
       items.forEach((item) => {
         let nomeLimpo = (item.nome || '').trim().toUpperCase()
         let classeLimpa = (item.classe || '').trim()
+        let classeDetalhadaLimpa = (item.classe_detalhada || item.classeDetalhada || '').trim()
         let statusLimpo = (item.status || 'Padronizado').trim()
         let itemPdfId = Number(item.pdfId || 0)
         if (!itemPdfId || itemPdfId < 1 || itemPdfId > 482) {
@@ -691,6 +692,7 @@ routerAdd(
           // ATUALIZAR registro existente
           const curStatus = existingRec.getString('status')
           const curClasse = existingRec.getString('classe')
+          const curClasseDetalhada = existingRec.getString('classe_detalhada')
           const curNome = existingRec.getString('nome')
           const curObs = existingRec.getString('observacao')
           const curPdfId = existingRec.getInt('pdfId')
@@ -707,6 +709,10 @@ routerAdd(
           }
           if (classeLimpa && curClasse !== classeLimpa) {
             existingRec.set('classe', classeLimpa)
+            hasChanges = true
+          }
+          if (curClasseDetalhada !== classeDetalhadaLimpa) {
+            existingRec.set('classe_detalhada', classeDetalhadaLimpa)
             hasChanges = true
           }
           if (curStatus !== statusLimpo) {
@@ -738,6 +744,7 @@ routerAdd(
           const newRec = new Record(medCol)
           newRec.set('nome', nomeLimpo)
           newRec.set('classe', classeLimpa)
+          newRec.set('classe_detalhada', classeDetalhadaLimpa)
           newRec.set('status', statusLimpo)
           newRec.set('descricao', item.descricao || '')
           newRec.set('observacao', obsFinal)

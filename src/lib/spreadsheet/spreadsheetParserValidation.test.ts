@@ -162,8 +162,53 @@ export function runSpreadsheetParserValidationTests() {
     throw new Error('Cabeçalho de exportação de CSV faltantes inválido')
   }
 
+  // Teste 7: Coluna opcional de classe detalhada / subclasse
+  const sampleWithSubclasse = [
+    {
+      ID: '1',
+      'Nome do medicamento': 'LOSARTANA 100MG COMPRIMIDO',
+      Classe: 'Anti-hipertensivo',
+      'Classe Detalhada': 'Antagonista do receptor angiotensina',
+      Definição: 'Padrão',
+    },
+    {
+      ID: '2',
+      'Nome do medicamento': 'CAPTOPRIL 25MG',
+      Classe: 'Anti-hipertensivo',
+      Subclasse: 'Inibidor da ECA',
+      Definição: 'Padrão',
+    },
+    {
+      ID: '3',
+      'Nome do medicamento': 'DIPIRONA 500MG',
+      Classe: 'Analgésico',
+      Definição: 'Padrão',
+    },
+  ]
+  const parsedSubclasse = parseRawSpreadsheetRows(sampleWithSubclasse)
+  if (parsedSubclasse.items.length !== 3) {
+    throw new Error(`Esperado 3 itens com subclasse, obtido: ${parsedSubclasse.items.length}`)
+  }
+  if (
+    parsedSubclasse.items[0].classeDetalhada !== 'Antagonista do receptor angiotensina' ||
+    parsedSubclasse.items[0].classe !== 'Anti-hipertensivo'
+  ) {
+    throw new Error(
+      `Falha ao extrair Classe Detalhada: "${parsedSubclasse.items[0].classeDetalhada}"`,
+    )
+  }
+  if (
+    parsedSubclasse.items[1].classeDetalhada !== 'Inibidor da ECA' ||
+    parsedSubclasse.items[1].classe !== 'Anti-hipertensivo'
+  ) {
+    throw new Error(`Falha ao extrair Subclasse: "${parsedSubclasse.items[1].classeDetalhada}"`)
+  }
+  if (parsedSubclasse.items[2].classeDetalhada) {
+    throw new Error('Item 3 não deveria ter classeDetalhada preenchida')
+  }
+
   return {
     success: true,
-    testsPassed: 6,
+    testsPassed: 7,
   }
 }

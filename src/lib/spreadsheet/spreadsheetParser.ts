@@ -6,6 +6,7 @@ export interface ParsedMedicamento {
   pdfId: number // ID oficial 1–482 (chave única do catálogo)
   nome: string
   classe: string
+  classeDetalhada?: string
   status: StatusPadronizacao
   definicaoOriginal?: string
   descricao?: string
@@ -154,7 +155,20 @@ interface ColumnMapping {
   idKey: string
   nomeKey: string
   classeKey: string
+  classeDetalhadaKey?: string
   definicaoKey: string
+}
+
+function isClasseDetalhadaHeader(key: string): boolean {
+  const norm = normalizeHeader(key)
+  // Aceita: "Classe Detalhada", "Classe detalhada", "Subclasse", "Subclasse Terapêutica", com/sem acento
+  return (
+    norm === 'classedetalhada' ||
+    norm === 'subclasse' ||
+    norm === 'subclasseterapeutica' ||
+    norm === 'subclassefarmacologica' ||
+    norm === 'mecanismo'
+  )
 }
 
 function detectColumnMapping(sampleRow: Record<string, unknown>): ColumnMapping | null {
@@ -162,11 +176,14 @@ function detectColumnMapping(sampleRow: Record<string, unknown>): ColumnMapping 
   let idKey = ''
   let nomeKey = ''
   let classeKey = ''
+  let classeDetalhadaKey = ''
   let definicaoKey = ''
 
   for (const k of keys) {
     const norm = normalizeHeader(k)
-    if (norm === 'id' || norm === 'idmedicamento' || norm === 'codigo' || norm === 'n') {
+    if (isClasseDetalhadaHeader(k)) {
+      classeDetalhadaKey = k
+    } else if (norm === 'id' || norm === 'idmedicamento' || norm === 'codigo' || norm === 'n') {
       idKey = k
     } else if (norm.includes('medicamento') || norm.includes('nome') || norm === 'produto') {
       nomeKey = k
@@ -181,7 +198,7 @@ function detectColumnMapping(sampleRow: Record<string, unknown>): ColumnMapping 
     }
   }
 
-  // Se não encontrou por nome, tentar deduzir por posição se tiver 4 colunas
+  // Se não encontrou por nome, tentar deduzir por posição se tiver pelo menos 4 colunas
   if ((!idKey || !nomeKey || !definicaoKey) && keys.length >= 4) {
     idKey = idKey || keys[0]
     nomeKey = nomeKey || keys[1]
@@ -193,7 +210,13 @@ function detectColumnMapping(sampleRow: Record<string, unknown>): ColumnMapping 
     return null
   }
 
-  return { idKey, nomeKey, classeKey: classeKey || keys[2] || '', definicaoKey }
+  return {
+    idKey,
+    nomeKey,
+    classeKey: classeKey || keys[2] || '',
+    classeDetalhadaKey: classeDetalhadaKey || undefined,
+    definicaoKey,
+  }
 }
 
 /**
@@ -247,6 +270,7 @@ export function parseRawSpreadsheetRows(
     const rawId = row[mapping.idKey]
     const rawNome = row[mapping.nomeKey]
     const rawClasse = row[mapping.classeKey]
+    const rawClasseDetalhada = mapping.classeDetalhadaKey ? row[mapping.classeDetalhadaKey] : ''
     const rawDefinicao = row[mapping.definicaoKey]
 
     const rawTextSnapshot = `ID: ${rawId ?? ''} | Nome: ${rawNome ?? ''} | Classe: ${rawClasse ?? ''} | Definição: ${rawDefinicao ?? ''}`
@@ -324,6 +348,10 @@ export function parseRawSpreadsheetRows(
       .replace(/\s+/g, ' ')
       .trim()
 
+    const classeDetalhadaLimpa = String(rawClasseDetalhada || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+
     let observacaoFinal = ''
     if (mappedStatus === 'Não Padronizado') {
       observacaoFinal =
@@ -338,6 +366,7 @@ export function parseRawSpreadsheetRows(
       pdfId: parsedId,
       nome: nomeLimpo,
       classe: classeLimpa,
+      ...(classeDetalhadaLimpa ? { classeDetalhada: classeDetalhadaLimpa } : {}),
       status: mappedStatus,
       definicaoOriginal: definicaoStr,
       observacao: observacaoFinal,

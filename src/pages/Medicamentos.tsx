@@ -125,6 +125,7 @@ export default function Medicamentos() {
   // Formulário de criar/editar
   const [formNome, setFormNome] = useState('')
   const [formClasse, setFormClasse] = useState('')
+  const [formClasseDetalhada, setFormClasseDetalhada] = useState('')
   const [formStatus, setFormStatus] = useState<'Padronizado' | 'Não Padronizado' | 'Inativo'>(
     'Padronizado',
   )
@@ -240,6 +241,7 @@ export default function Medicamentos() {
     const header = [
       'Nome do Medicamento',
       'Classe Terapêutica',
+      'Subclasse / Classe Detalhada',
       'Status de Padronização',
       'Descrição / Indicação',
       'Observações',
@@ -247,6 +249,7 @@ export default function Medicamentos() {
     const rows = filteredMedicamentos.map((m) => [
       `"${m.nome.replace(/"/g, '""')}"`,
       `"${m.classe.replace(/"/g, '""')}"`,
+      `"${(m.classe_detalhada || '').replace(/"/g, '""')}"`,
       `"${m.status}"`,
       `"${(m.descricao || '').replace(/"/g, '""')}"`,
       `"${(m.observacao || '').replace(/"/g, '""')}"`,
@@ -276,6 +279,7 @@ export default function Medicamentos() {
     setEditingRecord(null)
     setFormNome('')
     setFormClasse('')
+    setFormClasseDetalhada('')
     setFormStatus('Padronizado')
     setFormDescricao('')
     setFormObservacao('')
@@ -287,6 +291,7 @@ export default function Medicamentos() {
     setEditingRecord(med)
     setFormNome(med.nome)
     setFormClasse(med.classe)
+    setFormClasseDetalhada(med.classe_detalhada || '')
     setFormStatus(med.status)
     setFormDescricao(med.descricao || '')
     setFormObservacao(med.observacao || '')
@@ -313,6 +318,7 @@ export default function Medicamentos() {
       const payload = {
         nome: nomeLimpo,
         classe: classeLimpa,
+        classe_detalhada: formClasseDetalhada.trim(),
         status: formStatus,
         descricao: formDescricao.trim(),
         observacao:
@@ -720,7 +726,17 @@ export default function Medicamentos() {
                     {selectedMed.classe?.trim() ? (
                       <DialogDescription className="text-xs text-slate-600 font-medium pt-0.5">
                         Classe Terapêutica:{' '}
-                        <strong className="font-bold text-slate-900">{selectedMed.classe}</strong>
+                        <strong className="font-bold text-slate-900">
+                          {selectedMed.classe}
+                          {selectedMed.classe_detalhada?.trim() && (
+                            <>
+                              {' — '}
+                              <span className="font-semibold text-slate-700">
+                                {selectedMed.classe_detalhada.trim()}
+                              </span>
+                            </>
+                          )}
+                        </strong>
                       </DialogDescription>
                     ) : (
                       <DialogDescription className="sr-only">
@@ -884,7 +900,7 @@ export default function Medicamentos() {
                 </Label>
                 <Input
                   id="classe"
-                  placeholder="Ex: Antibacteriano"
+                  placeholder="Ex: Anti-hipertensivo"
                   value={formClasse}
                   onChange={(e) => setFormClasse(e.target.value)}
                   required
@@ -912,6 +928,19 @@ export default function Medicamentos() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="classe_detalhada" className="text-xs font-semibold text-slate-700">
+                Subclasse / Mecanismo (opcional)
+              </Label>
+              <Input
+                id="classe_detalhada"
+                placeholder="Ex: Antagonista do receptor angiotensina"
+                value={formClasseDetalhada}
+                onChange={(e) => setFormClasseDetalhada(e.target.value)}
+                className="h-10 text-xs"
+              />
             </div>
 
             <div className="space-y-1.5">

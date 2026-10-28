@@ -28,6 +28,7 @@ import type { RecordModel } from 'pocketbase'
 export interface MedicamentoRecord extends RecordModel {
   nome: string
   classe: string
+  classe_detalhada?: string
   status: 'Padronizado' | 'Não Padronizado' | 'Inativo'
   descricao?: string
   observacao?: string
