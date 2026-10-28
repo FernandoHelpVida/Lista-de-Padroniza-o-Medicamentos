@@ -37,7 +37,7 @@ import {
   ChevronsRight,
   Code2,
 } from 'lucide-react'
-import { pb } from '@/lib/pocketbase/client'
+import pb from '@/lib/pocketbase/client'
 import {
   triggerPrescriptionsSync,
   getPrescriptionsSyncStatus,
@@ -286,11 +286,9 @@ export default function Prescricoes() {
         if (!matchWords) return
       }
 
-      // 2. Filtro de período por vigência ou data da prescrição
+      // 2. Filtro de período por início da vigência (sem sobreposição parcial)
       const pDateInit =
-        parseDateToComparable(p.data_inicial) ||
-        parseDateToComparable(p.data_inicial_iso) ||
-        parseDateToComparable(p.data_prescricao)
+        parseDateToComparable(p.data_inicial_iso) || parseDateToComparable(p.data_inicial)
 
       let inPeriod = false
       if (pDateInit !== null) {
