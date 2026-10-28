@@ -710,20 +710,26 @@ export default function Medicamentos() {
             <div className="space-y-5">
               <DialogHeader>
                 <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-teal-700 bg-teal-50 px-2 py-0.5 rounded">
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded inline-block">
                       Ficha do Medicamento
                     </span>
-                    <DialogTitle className="text-lg font-bold text-slate-900 leading-snug pt-1">
+                    <DialogTitle className="text-lg sm:text-xl font-black text-slate-900 leading-snug tracking-tight">
                       {selectedMed.nome}
                     </DialogTitle>
+                    {selectedMed.classe?.trim() ? (
+                      <DialogDescription className="text-xs text-slate-600 font-medium pt-0.5">
+                        Classe Terapêutica:{' '}
+                        <strong className="font-bold text-slate-900">{selectedMed.classe}</strong>
+                      </DialogDescription>
+                    ) : (
+                      <DialogDescription className="sr-only">
+                        Detalhes do medicamento {selectedMed.nome}
+                      </DialogDescription>
+                    )}
                   </div>
-                  <div>{getStatusBadge(selectedMed.status)}</div>
+                  <div className="shrink-0">{getStatusBadge(selectedMed.status)}</div>
                 </div>
-                <DialogDescription className="text-xs text-slate-500 pt-1">
-                  Classe Terapêutica:{' '}
-                  <strong className="text-slate-800">{selectedMed.classe}</strong>
-                </DialogDescription>
               </DialogHeader>
 
               {/* Caixa Destacada Conforme o Status */}
