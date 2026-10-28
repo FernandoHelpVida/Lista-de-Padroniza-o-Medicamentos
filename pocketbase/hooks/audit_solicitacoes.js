@@ -23,35 +23,61 @@ onRecordAfterCreateSuccess((e) => {
       ? 'Solicitação de medicamento: ' + medNome
       : 'Solicitação de medicamento criada'
 
-    const auditCol = e.app.findCollectionByNameOrId('audit_logs')
-    const auditRecord = new Record(auditCol)
-    auditRecord.set('colecao', 'solicitacoes')
-    auditRecord.set('registro_id', record.id)
-    auditRecord.set('acao', 'SOLICITACAO_CRIADA')
+    let autorId = ''
+    let autorNome = ''
+    let autorEmail = ''
+    let autorRole = 'comum'
 
     if (authUser) {
-      auditRecord.set('usuario', authUser.id)
-      auditRecord.set('usuario_nome', authUser.getString('name') || '')
-      auditRecord.set('usuario_email', authUser.getString('email') || '')
-      auditRecord.set('usuario_role', authUser.getString('role') || 'comum')
+      autorId = authUser.id
+      autorNome = authUser.getString('name') || authUser.getString('email') || ''
+      autorEmail = authUser.getString('email') || ''
+      autorRole = authUser.getString('role') || 'comum'
     } else {
       const solicitanteId = record.getString('solicitante')
       if (solicitanteId) {
         try {
           const solUser = e.app.findRecordById('_pb_users_auth_', solicitanteId)
-          auditRecord.set('usuario', solUser.id)
-          auditRecord.set('usuario_nome', solUser.getString('name') || '')
-          auditRecord.set('usuario_email', solUser.getString('email') || '')
-          auditRecord.set('usuario_role', solUser.getString('role') || 'comum')
+          autorId = solUser.id
+          autorNome = solUser.getString('name') || solUser.getString('email') || ''
+          autorEmail = solUser.getString('email') || ''
+          autorRole = solUser.getString('role') || 'comum'
         } catch (_) {}
       }
     }
 
+    // 1. Gravar no audit_logs geral
+    const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+    const auditRecord = new Record(auditCol)
+    auditRecord.set('colecao', 'solicitacoes')
+    auditRecord.set('registro_id', record.id)
+    auditRecord.set('acao', 'SOLICITACAO_CRIADA')
+    if (autorId) auditRecord.set('usuario', autorId)
+    auditRecord.set('usuario_nome', autorNome)
+    auditRecord.set('usuario_email', autorEmail)
+    auditRecord.set('usuario_role', autorRole)
     auditRecord.set('status_anterior', '')
     auditRecord.set('status_novo', record.getString('status') || 'Pendente')
     auditRecord.set('detalhes', detalhes)
-
     e.app.save(auditRecord)
+
+    // 2. Gravar no histórico imutável da solicitação (solicitacao_historico)
+    try {
+      const histCol = e.app.findCollectionByNameOrId('solicitacao_historico')
+      const histRecord = new Record(histCol)
+      histRecord.set('solicitacao', record.id)
+      histRecord.set('status_anterior', '')
+      histRecord.set('status_novo', record.getString('status') || 'Pendente')
+      histRecord.set('acao', 'SOLICITACAO_CRIADA')
+      if (autorId) histRecord.set('autor', autorId)
+      histRecord.set('autor_nome', autorNome)
+      histRecord.set('autor_papel', autorRole)
+      histRecord.set('parecer', '')
+      histRecord.set('detalhes', detalhes)
+      e.app.save(histRecord)
+    } catch (histErr) {
+      console.error('Erro ao gravar solicitacao_historico na criação:', histErr)
+    }
   } catch (err) {
     console.error('Erro no hook onRecordAfterCreateSuccess de solicitacoes:', err)
   } finally {
@@ -96,35 +122,75 @@ onRecordAfterUpdateSuccess((e) => {
       detalhes = 'Dados da solicitação atualizados'
     }
 
+    let autorId = ''
+    let autorNome = ''
+    let autorEmail = ''
+    let autorRole = 'comum'
+
+    if (authUser) {
+      autorId = authUser.id
+      autorNome = authUser.getString('name') || authUser.getString('email') || ''
+      autorEmail = authUser.getString('email') || ''
+      autorRole = authUser.getString('role') || 'comum'
+    } else {
+      const avaliadorId = record.getString('avaliador')
+      if (avaliadorId) {
+        try {
+          const avalUser = e.app.findRecordById('_pb_users_auth_', avaliadorId)
+          autorId = avalUser.id
+          autorNome = avalUser.getString('name') || avalUser.getString('email') || ''
+          autorEmail = avalUser.getString('email') || ''
+          autorRole = avalUser.getString('role') || 'admin'
+        } catch (_) {}
+      } else {
+        const solicitanteId = record.getString('solicitante')
+        if (solicitanteId) {
+          try {
+            const solUser = e.app.findRecordById('_pb_users_auth_', solicitanteId)
+            autorId = solUser.id
+            autorNome = solUser.getString('name') || solUser.getString('email') || ''
+            autorEmail = solUser.getString('email') || ''
+            autorRole = solUser.getString('role') || 'comum'
+          } catch (_) {}
+        }
+      }
+    }
+
+    // 1. Gravar no audit_logs geral
     const auditCol = e.app.findCollectionByNameOrId('audit_logs')
     const auditRecord = new Record(auditCol)
     auditRecord.set('colecao', 'solicitacoes')
     auditRecord.set('registro_id', record.id)
     auditRecord.set('acao', acao)
-
-    if (authUser) {
-      auditRecord.set('usuario', authUser.id)
-      auditRecord.set('usuario_nome', authUser.getString('name') || '')
-      auditRecord.set('usuario_email', authUser.getString('email') || '')
-      auditRecord.set('usuario_role', authUser.getString('role') || 'comum')
-    } else {
-      const solicitanteId = record.getString('solicitante')
-      if (solicitanteId) {
-        try {
-          const solUser = e.app.findRecordById('_pb_users_auth_', solicitanteId)
-          auditRecord.set('usuario', solUser.id)
-          auditRecord.set('usuario_nome', solUser.getString('name') || '')
-          auditRecord.set('usuario_email', solUser.getString('email') || '')
-          auditRecord.set('usuario_role', solUser.getString('role') || 'comum')
-        } catch (_) {}
-      }
-    }
-
+    if (autorId) auditRecord.set('usuario', autorId)
+    auditRecord.set('usuario_nome', autorNome)
+    auditRecord.set('usuario_email', autorEmail)
+    auditRecord.set('usuario_role', autorRole)
     auditRecord.set('status_anterior', statusAnterior)
     auditRecord.set('status_novo', statusNovo)
     auditRecord.set('detalhes', detalhes)
-
     e.app.save(auditRecord)
+
+    // 2. Gravar no histórico imutável da solicitação (solicitacao_historico)
+    // Registra sempre que houver mudança de status OU inclusão/atualização de parecer
+    if (statusAnterior !== statusNovo || (respostaAnterior !== respostaNova && respostaNova)) {
+      try {
+        const histCol = e.app.findCollectionByNameOrId('solicitacao_historico')
+        const histRecord = new Record(histCol)
+        histRecord.set('solicitacao', record.id)
+        histRecord.set('status_anterior', statusAnterior)
+        histRecord.set('status_novo', statusNovo)
+        histRecord.set('acao', acao)
+        if (autorId) histRecord.set('autor', autorId)
+        histRecord.set('autor_nome', autorNome)
+        histRecord.set('autor_papel', autorRole)
+        histRecord.set('parecer', respostaNova || '')
+        histRecord.set('detalhes', detalhes)
+        e.app.save(histRecord)
+      } catch (histErr) {
+        console.error('Erro ao gravar solicitacao_historico no update:', histErr)
+      }
+    }
   } catch (err) {
     console.error('Erro no hook onRecordAfterUpdateSuccess de solicitacoes:', err)
   } finally {

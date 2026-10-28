@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-27T20:56:17.181Z",
+  "generatedAt": "2026-10-28T11:34:27.227Z",
   "collections": [
     {
       "name": "users",
@@ -499,6 +499,94 @@
         }
       ],
       "indexes": []
+    },
+    {
+      "name": "solicitacao_historico",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (solicitacao.solicitante = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
+        "view": "@request.auth.id != '' && (solicitacao.solicitante = @request.auth.id || @request.auth.email = 'fernandofernandes@helpvida.com.br' || @request.auth.role = 'admin')",
+        "create": "@request.auth.id != ''",
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "solicitacao",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "solicitacoes"
+        },
+        {
+          "name": "status_anterior",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_novo",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "acao",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "autor",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "autor_nome",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "autor_papel",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "parecer",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "detalhes",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_hist_solic ON solicitacao_historico (solicitacao)",
+        "CREATE INDEX idx_hist_autor ON solicitacao_historico (autor)",
+        "CREATE INDEX idx_hist_created ON solicitacao_historico (created DESC)"
+      ]
     }
   ]
 }

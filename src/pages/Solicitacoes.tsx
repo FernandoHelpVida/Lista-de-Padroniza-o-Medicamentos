@@ -24,6 +24,7 @@ import {
   Ban,
   PackageCheck,
   Building,
+  Download,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -77,6 +78,28 @@ export interface SolicitacaoRecord extends RecordModel {
   }
 }
 
+export interface SolicitacaoHistoricoRecord extends RecordModel {
+  solicitacao: string
+  status_anterior?: string
+  status_novo: string
+  acao: string
+  autor?: string
+  autor_nome?: string
+  autor_papel?: string
+  parecer?: string
+  detalhes?: string
+  created: string
+  updated: string
+  expand?: {
+    solicitacao?: SolicitacaoRecord
+    autor?: {
+      name?: string
+      email?: string
+      role?: string
+    }
+  }
+}
+
 export interface AuditLogRecord extends RecordModel {
   colecao: string
   registro_id: string
@@ -94,7 +117,9 @@ export default function Solicitacoes() {
   const { user, isAdmin, isMedicoVisitador } = useAuth()
   const { toast } = useToast()
 
-  const [activeTab, setActiveTab] = useState<'solicitacoes' | 'auditoria'>('solicitacoes')
+  const [activeTab, setActiveTab] = useState<'solicitacoes' | 'historico_aprovacoes' | 'auditoria'>(
+    'solicitacoes',
+  )
 
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -111,13 +136,22 @@ export default function Solicitacoes() {
   const [parecerTexto, setParecerTexto] = useState('')
   const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false)
 
-  // Timeline / Histórico de Auditoria do Item Selecionado
+  // Timeline / Histórico Imutável de Eventos do Item Selecionado (acessível por admins e solicitantes)
   const [timelineModalOpen, setTimelineModalOpen] = useState(false)
   const [timelineItem, setTimelineItem] = useState<SolicitacaoRecord | null>(null)
-  const [timelineLogs, setTimelineLogs] = useState<AuditLogRecord[]>([])
+  const [timelineHistorico, setTimelineHistorico] = useState<SolicitacaoHistoricoRecord[]>([])
   const [loadingTimeline, setLoadingTimeline] = useState(false)
 
-  // Aba Geral de Auditoria (Admin Only)
+  // Aba Consolidada de Histórico de Aprovações (Admins / Aprovadores)
+  const [todosHistoricos, setTodosHistoricos] = useState<SolicitacaoHistoricoRecord[]>([])
+  const [loadingHistoricos, setLoadingHistoricos] = useState(false)
+  const [histFiltroStatus, setHistFiltroStatus] = useState<string>('Todas')
+  const [histFiltroPeriodo, setHistFiltroPeriodo] = useState<
+    'todos' | '7dias' | '30dias' | '90dias'
+  >('todos')
+  const [histSearch, setHistSearch] = useState('')
+
+  // Aba Geral de Auditoria Técnica (Admin Only)
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([])
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [auditSearch, setAuditSearch] = useState('')
@@ -157,10 +191,28 @@ export default function Solicitacoes() {
     }
   }
 
+  const loadHistoricos = async () => {
+    setLoadingHistoricos(true)
+    try {
+      const records = await pb
+        .collection('solicitacao_historico')
+        .getFullList<SolicitacaoHistoricoRecord>({
+          sort: '-created',
+          expand: 'solicitacao.medicamento,solicitacao.solicitante,autor',
+        })
+      setTodosHistoricos(records)
+    } catch (err) {
+      console.error('Erro ao carregar histórico de aprovações:', err)
+    } finally {
+      setLoadingHistoricos(false)
+    }
+  }
+
   useEffect(() => {
     loadSolicitacoes()
     if (isAdmin) {
       loadAuditLogs()
+      loadHistoricos()
     }
   }, [isAdmin])
 
@@ -185,8 +237,15 @@ export default function Solicitacoes() {
   useRealtime<AuditLogRecord>('audit_logs', (event) => {
     if (event.action === 'create' && isAdmin) {
       setAuditLogs((prev) => [event.record, ...prev])
-      if (timelineItem && event.record.registro_id === timelineItem.id) {
-        setTimelineLogs((prev) => [event.record, ...prev])
+    }
+  })
+
+  // Tempo real para histórico imutável de aprovações
+  useRealtime<SolicitacaoHistoricoRecord>('solicitacao_historico', (event) => {
+    if (event.action === 'create') {
+      setTodosHistoricos((prev) => [event.record, ...prev])
+      if (timelineItem && event.record.solicitacao === timelineItem.id) {
+        setTimelineHistorico((prev) => [event.record, ...prev])
       }
     }
   })
@@ -354,21 +413,42 @@ export default function Solicitacoes() {
     }
   }
 
-  // Abrir Timeline de Auditoria de um item específico
+  // Abrir Linha do Tempo / Histórico de Eventos da Solicitação
   const openTimeline = async (item: SolicitacaoRecord) => {
     setTimelineItem(item)
     setTimelineModalOpen(true)
     setLoadingTimeline(true)
     try {
-      const records = await pb.collection('audit_logs').getFullList<AuditLogRecord>({
-        filter: `colecao = 'solicitacoes' && registro_id = '${item.id}'`,
-        sort: '-created',
-      })
-      setTimelineLogs(records)
+      const records = await pb
+        .collection('solicitacao_historico')
+        .getFullList<SolicitacaoHistoricoRecord>({
+          filter: `solicitacao = '${item.id}'`,
+          sort: '-created', // mais recente primeiro
+          expand: 'autor',
+        })
+      setTimelineHistorico(records)
     } catch (err) {
-      console.error('Erro ao buscar timeline:', err)
+      console.error('Erro ao buscar histórico de eventos:', err)
+      toast({
+        title: 'Não foi possível carregar o histórico',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      })
     } finally {
       setLoadingTimeline(false)
+    }
+  }
+
+  const formatPapelUsuario = (papel?: string) => {
+    switch (papel) {
+      case 'admin':
+        return 'Farmacêutica Clínica / Coordenação'
+      case 'medico_visitador':
+        return 'Médico Assistente (Visitador)'
+      case 'comum':
+        return 'Profissional Solicitante'
+      default:
+        return papel || 'Usuário'
     }
   }
 
@@ -402,6 +482,13 @@ export default function Solicitacoes() {
             Parecer
           </Badge>
         )
+      case 'STATUS_ALTERADO':
+      case 'SOLICITACAO_ATUALIZADA':
+        return (
+          <Badge className="bg-slate-100 text-slate-700 border border-slate-300 text-[10px] font-bold">
+            Atualização
+          </Badge>
+        )
       case 'SOLICITACAO_EXCLUIDA':
         return (
           <Badge className="bg-slate-100 text-slate-700 border border-slate-300 text-[10px] font-bold">
@@ -411,6 +498,141 @@ export default function Solicitacoes() {
       default:
         return <Badge className="bg-slate-100 text-slate-700 text-[10px] font-medium">{acao}</Badge>
     }
+  }
+
+  // Filtragem dos eventos de aprovações na aba consolidada
+  const historicosFiltrados = useMemo(() => {
+    let list = todosHistoricos
+
+    // Filtro por status resultante
+    if (histFiltroStatus !== 'Todas') {
+      list = list.filter((item) => item.status_novo === histFiltroStatus)
+    }
+
+    // Filtro por período
+    if (histFiltroPeriodo !== 'todos') {
+      const agora = new Date().getTime()
+      const dias = histFiltroPeriodo === '7dias' ? 7 : histFiltroPeriodo === '30dias' ? 30 : 90
+      const limiteMs = agora - dias * 24 * 60 * 60 * 1000
+
+      list = list.filter((item) => {
+        const itemData = new Date(item.created).getTime()
+        return !isNaN(itemData) && itemData >= limiteMs
+      })
+    }
+
+    // Busca textual
+    if (histSearch.trim()) {
+      const q = histSearch.toLowerCase().trim()
+      list = list.filter((item) => {
+        const medNome =
+          item.expand?.solicitacao?.expand?.medicamento?.nome?.toLowerCase() ||
+          item.expand?.solicitacao?.nome_medicamento_novo?.toLowerCase() ||
+          item.detalhes?.toLowerCase() ||
+          ''
+        const solicitanteNome =
+          item.expand?.solicitacao?.expand?.solicitante?.name?.toLowerCase() ||
+          item.expand?.solicitacao?.expand?.solicitante?.email?.toLowerCase() ||
+          ''
+        const autorNome =
+          item.autor_nome?.toLowerCase() ||
+          item.expand?.autor?.name?.toLowerCase() ||
+          item.expand?.autor?.email?.toLowerCase() ||
+          ''
+        const parecer = item.parecer?.toLowerCase() || ''
+        const detalhes = item.detalhes?.toLowerCase() || ''
+        const idSolicitacao = item.solicitacao?.toLowerCase() || ''
+
+        return (
+          medNome.includes(q) ||
+          solicitanteNome.includes(q) ||
+          autorNome.includes(q) ||
+          parecer.includes(q) ||
+          detalhes.includes(q) ||
+          idSolicitacao.includes(q)
+        )
+      })
+    }
+
+    return list
+  }, [todosHistoricos, histFiltroStatus, histFiltroPeriodo, histSearch])
+
+  // Exportação CSV do Histórico de Aprovações
+  const exportarHistoricoCsv = () => {
+    if (historicosFiltrados.length === 0) {
+      toast({
+        title: 'Nenhum histórico para exportar',
+        description: 'Ajuste os filtros de período e status antes de gerar o CSV.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const header = [
+      'Data/Hora',
+      'Medicamento',
+      'Status Anterior',
+      'Decisão / Status Novo',
+      'Ação',
+      'Autor da Ação',
+      'Papel do Autor',
+      'Solicitante Original',
+      'Parecer Técnico / Justificativa',
+      'ID Solicitação',
+    ]
+
+    const rows = historicosFiltrados.map((item) => {
+      const dataFormatada = formatarDataSegura(item.created, {
+        incluirHora: true,
+        incluirSegundos: true,
+        fallback: '',
+      })
+
+      const medNome =
+        item.expand?.solicitacao?.expand?.medicamento?.nome ||
+        item.expand?.solicitacao?.nome_medicamento_novo ||
+        'Medicamento não informado'
+
+      const solicitanteNome =
+        item.expand?.solicitacao?.expand?.solicitante?.name ||
+        item.expand?.solicitacao?.expand?.solicitante?.email ||
+        '—'
+
+      const autor = item.autor_nome || item.expand?.autor?.name || 'Sistema'
+      const papel = formatPapelUsuario(item.autor_papel || item.expand?.autor?.role)
+      const parecer = item.parecer || ''
+
+      return [
+        `"${dataFormatada}"`,
+        `"${medNome.replace(/"/g, '""')}"`,
+        `"${item.status_anterior || '—'}"`,
+        `"${item.status_novo || ''}"`,
+        `"${item.acao}"`,
+        `"${autor.replace(/"/g, '""')}"`,
+        `"${papel.replace(/"/g, '""')}"`,
+        `"${solicitanteNome.replace(/"/g, '""')}"`,
+        `"${parecer.replace(/"/g, '""')}"`,
+        `"${item.solicitacao}"`,
+      ]
+    })
+
+    const csvContent = '\uFEFF' + [header.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute(
+      'download',
+      `historico-aprovacoes-nao-padronizados-helpvida-${new Date().toISOString().slice(0, 10)}.csv`,
+    )
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    toast({
+      title: 'Exportação Concluída',
+      description: `${historicosFiltrados.length} eventos exportados com sucesso em CSV.`,
+    })
   }
 
   return (
@@ -448,32 +670,45 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* 2. TABS: SOLICITAÇÕES vs. AUDITORIA GERAL (ADMIN ONLY) */}
+      {/* 2. TABS: SOLICITAÇÕES vs. HISTÓRICO DE APROVAÇÕES vs. AUDITORIA GERAL (ADMIN ONLY) */}
       {isAdmin ? (
         <Tabs
           value={activeTab}
-          onValueChange={(val) => setActiveTab(val as 'solicitacoes' | 'auditoria')}
+          onValueChange={(val) =>
+            setActiveTab(val as 'solicitacoes' | 'historico_aprovacoes' | 'auditoria')
+          }
           className="space-y-4"
         >
-          <TabsList className="bg-emerald-950/10 p-1 rounded-xl">
+          <TabsList className="bg-emerald-950/10 p-1 rounded-xl flex flex-wrap h-auto gap-1">
             <TabsTrigger
               value="solicitacoes"
               className="text-xs font-semibold rounded-lg data-[state=active]:bg-white data-[state=active]:text-[#0C4336] data-[state=active]:shadow-xs"
             >
               <FileQuestion size={14} className="mr-1.5 text-[#0D8272]" />
-              Solicitações ({solicitacoes.length})
+              Solicitações Ativas ({solicitacoes.length})
+            </TabsTrigger>
+            <TabsTrigger
+              value="historico_aprovacoes"
+              className="text-xs font-semibold rounded-lg data-[state=active]:bg-white data-[state=active]:text-[#0C4336] data-[state=active]:shadow-xs"
+            >
+              <History size={14} className="mr-1.5 text-[#0D8272]" />
+              Histórico de Aprovações ({todosHistoricos.length})
             </TabsTrigger>
             <TabsTrigger
               value="auditoria"
               className="text-xs font-semibold rounded-lg data-[state=active]:bg-white data-[state=active]:text-[#0C4336] data-[state=active]:shadow-xs"
             >
-              <History size={14} className="mr-1.5 text-[#0D8272]" />
+              <ShieldCheck size={14} className="mr-1.5 text-[#0D8272]" />
               Trilha de Auditoria ({auditLogs.length})
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="solicitacoes" className="space-y-4 mt-0">
             {renderSolicitacoesSection()}
+          </TabsContent>
+
+          <TabsContent value="historico_aprovacoes" className="space-y-4 mt-0">
+            {renderHistoricoAprovacoesSection()}
           </TabsContent>
 
           <TabsContent value="auditoria" className="space-y-4 mt-0">
@@ -669,75 +904,122 @@ export default function Solicitacoes() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: TIMELINE DE AUDITORIA DO ITEM (ADMIN ONLY) */}
+      {/* MODAL: LINHA DO TEMPO / HISTÓRICO DE APROVAÇÃO DO ITEM (ACESSO APROVADOR E SOLICITANTE) */}
       <Dialog open={timelineModalOpen} onOpenChange={setTimelineModalOpen}>
-        <DialogContent className="max-w-lg p-6 rounded-2xl bg-white max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-xl p-6 rounded-2xl bg-white max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
               <History className="h-5 w-5 text-[#0D8272]" />
-              Trilha de Auditoria da Solicitação
+              Linha do Tempo e Histórico de Decisões
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500 pt-1">
-              Registro imutável no servidor de todas as ações tomadas sobre este medicamento.
+              Registro cronológico imutável com todos os pareceres, alterações de status e
+              responsáveis institucionais pela solicitação.
             </DialogDescription>
           </DialogHeader>
 
           {timelineItem && (
-            <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 text-xs">
-              <p className="font-bold text-slate-900">
-                {timelineItem.expand?.medicamento?.nome || timelineItem.nome_medicamento_novo}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                ID do Registro: <span className="font-mono">{timelineItem.id}</span>
-              </p>
+            <div className="p-3.5 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 text-xs space-y-1">
+              <div className="flex items-center gap-2">
+                <Pill size={15} className="text-[#0D8272]" />
+                <p className="font-bold text-slate-900">
+                  {timelineItem.expand?.medicamento?.nome ||
+                    timelineItem.nome_medicamento_novo ||
+                    'Medicamento Não Padronizado'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500 pt-0.5">
+                <span>
+                  Solicitante:{' '}
+                  <strong className="text-slate-700">
+                    {timelineItem.expand?.solicitante?.name ||
+                      timelineItem.expand?.solicitante?.email ||
+                      'Profissional Solicitante'}
+                  </strong>
+                </span>
+                <span>
+                  Status Atual: <strong>{timelineItem.status}</strong>
+                </span>
+              </div>
             </div>
           )}
 
           {loadingTimeline ? (
             <div className="py-12 flex flex-col items-center justify-center text-slate-400">
               <Loader2 className="h-6 w-6 animate-spin text-[#0D8272] mb-2" />
-              <p className="text-xs">Carregando eventos do servidor...</p>
+              <p className="text-xs">Carregando histórico do servidor...</p>
             </div>
-          ) : timelineLogs.length === 0 ? (
+          ) : timelineHistorico.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs">
-              Nenhum evento registrado até o momento para este item.
+              Nenhum evento registrado até o momento para este medicamento.
             </div>
           ) : (
             <div className="space-y-3 pt-2">
-              {timelineLogs.map((log, index) => {
-                const dataFormatada = formatarDataSegura(log.created, {
+              {timelineHistorico.map((item, index) => {
+                const dataFormatada = formatarDataSegura(item.created, {
                   incluirHora: true,
                   incluirSegundos: true,
                   fallback: 'Data indisponível',
                 })
 
+                const autorNome =
+                  item.autor_nome ||
+                  item.expand?.autor?.name ||
+                  item.expand?.autor?.email ||
+                  'Sistema'
+                const autorPapelFormatado = formatPapelUsuario(
+                  item.autor_papel || item.expand?.autor?.role,
+                )
+
                 return (
                   <div
-                    key={log.id}
-                    className="p-3 rounded-xl bg-white border border-slate-200 text-xs space-y-1.5 shadow-2xs relative"
+                    key={item.id}
+                    className="p-3.5 rounded-xl bg-white border border-slate-200 text-xs space-y-2 shadow-2xs relative"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {getAcaoBadge(log.acao)}
-                        <span className="font-semibold text-slate-800">
-                          {log.usuario_nome || log.usuario_email || 'Sistema'}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-slate-100 pb-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {getAcaoBadge(item.acao)}
+                        <span className="font-bold text-slate-900">{autorNome}</span>
+                        <span className="text-[10px] text-slate-400 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
+                          {autorPapelFormatado}
                         </span>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                        <Calendar size={11} />
+                      <span className="text-[10.5px] text-slate-400 font-mono flex items-center gap-1">
+                        <Calendar size={12} />
                         {dataFormatada}
                       </span>
                     </div>
 
-                    {log.detalhes && (
-                      <p className="text-slate-600 text-[11px] leading-relaxed">{log.detalhes}</p>
+                    {/* Transição de status */}
+                    {(item.status_anterior || item.status_novo) && (
+                      <div className="text-[11px] text-slate-600 flex items-center gap-1.5">
+                        <span className="text-slate-400 font-medium">Transição de status:</span>
+                        <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-700 font-medium">
+                          {item.status_anterior || 'Início'}
+                        </span>
+                        <span className="text-slate-400">&rarr;</span>
+                        <span className="bg-[#E6F5F2] text-[#0C4336] px-2 py-0.5 rounded font-bold border border-[#0D8272]/20">
+                          {item.status_novo}
+                        </span>
+                      </div>
                     )}
 
-                    {(log.status_anterior || log.status_novo) && (
-                      <div className="text-[10.5px] text-slate-500 font-mono bg-slate-50 px-2 py-1 rounded">
-                        Status: <span>{log.status_anterior || '—'}</span> &rarr;{' '}
-                        <strong className="text-slate-800">{log.status_novo}</strong>
+                    {/* Parecer Técnico emitido nesta ocasião */}
+                    {item.parecer && (
+                      <div className="p-2.5 rounded-lg bg-[#E6F5F2]/80 border border-[#0D8272]/20 space-y-0.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0C4336] flex items-center gap-1">
+                          <MessageSquare size={11} className="text-[#0D8272]" />
+                          Parecer Registrado na Ocasião:
+                        </span>
+                        <p className="text-xs text-[#0C4336] leading-relaxed whitespace-pre-wrap">
+                          {item.parecer}
+                        </p>
                       </div>
+                    )}
+
+                    {/* Detalhe complementar do evento */}
+                    {item.detalhes && !item.parecer && (
+                      <p className="text-slate-600 text-[11px] leading-relaxed">{item.detalhes}</p>
                     )}
                   </div>
                 )
@@ -886,31 +1168,35 @@ export default function Solicitacoes() {
                       <div className="flex flex-wrap items-center gap-2">
                         {getStatusBadge(item.status)}
 
-                        {/* Botões rápidos de decisão da Farmacêutica Clínica (Admin) */}
-                        {isAdmin && (
-                          <div className="flex items-center gap-1">
+                        {/* Ações da solicitação */}
+                        <div className="flex items-center gap-1">
+                          {isAdmin && (
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() => handleOpenAvaliacao(item, 'Aprovada')}
                               className="h-8 text-xs border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2]"
-                              title="Aprovar ou emitir parecer"
+                              title="Aprovar, negar ou emitir parecer"
                             >
                               <CheckCheck size={13} className="mr-1 text-[#0D8272]" />
                               Avaliar
                             </Button>
+                          )}
 
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openTimeline(item)}
-                              className="h-8 text-xs text-slate-500 hover:text-slate-800"
-                              title="Ver log de auditoria"
-                            >
-                              <History size={13} />
-                            </Button>
-                          </div>
-                        )}
+                          {/* Botão de Histórico visível para todos (solicitante vê a sua; admin vê tudo) */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openTimeline(item)}
+                            className="h-8 text-xs text-[#0D8272] hover:bg-[#E6F5F2] hover:text-[#0C4336] flex items-center gap-1"
+                            title="Ver histórico de aprovação e decisões"
+                          >
+                            <History size={13} />
+                            <span className="hidden sm:inline text-[11px] font-medium">
+                              Histórico
+                            </span>
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
@@ -980,6 +1266,217 @@ export default function Solicitacoes() {
     )
   }
 
+  // Sub-render: Seção Consolidada de Histórico de Aprovações (Admins / Aprovadores)
+  function renderHistoricoAprovacoesSection() {
+    return (
+      <Card className="border-emerald-950/10 bg-white shadow-xs">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
+                <History className="h-5 w-5 text-[#0D8272]" />
+                Histórico Consolidado de Aprovações
+              </CardTitle>
+              <CardDescription className="text-xs text-slate-500">
+                Linha do tempo institucional de decisões, pareceres técnicos e alterações de status
+                de medicamentos não padronizados.
+              </CardDescription>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportarHistoricoCsv}
+                disabled={historicosFiltrados.length === 0}
+                className="h-8 text-xs border-emerald-950/20 text-[#0C4336] hover:bg-[#E6F5F2]"
+              >
+                <Download size={13} className="mr-1.5 text-[#0D8272]" />
+                Exportar CSV
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadHistoricos}
+                disabled={loadingHistoricos}
+                className="h-8 text-xs border-emerald-950/20 text-[#0C4336]"
+              >
+                <RefreshCw
+                  size={12}
+                  className={cn('mr-1.5', loadingHistoricos && 'animate-spin')}
+                />
+                Atualizar
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          {/* Barra de Filtros e Busca */}
+          <div className="space-y-2.5">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  type="search"
+                  placeholder="Buscar por medicamento, parecer, aprovador ou solicitante..."
+                  value={histSearch}
+                  onChange={(e) => setHistSearch(e.target.value)}
+                  className="h-9 pl-9 text-xs bg-[#F4FAF8] border-emerald-950/15 rounded-xl"
+                />
+              </div>
+
+              {/* Filtro por Período */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline">
+                  Período:
+                </span>
+                <select
+                  value={histFiltroPeriodo}
+                  onChange={(e) =>
+                    setHistFiltroPeriodo(e.target.value as 'todos' | '7dias' | '30dias' | '90dias')
+                  }
+                  aria-label="Filtro por período"
+                  className="h-9 px-3 text-xs bg-[#F4FAF8] border border-emerald-950/15 rounded-xl font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0D8272]"
+                >
+                  <option value="todos">Todo o período</option>
+                  <option value="7dias">Últimos 7 dias</option>
+                  <option value="30dias">Últimos 30 dias</option>
+                  <option value="90dias">Últimos 90 dias</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Chips por Decisão / Status */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { id: 'Todas', label: 'Todos os Registros' },
+                { id: 'Aprovada', label: 'Aprovadas' },
+                { id: 'Negada', label: 'Negadas' },
+                { id: 'Atendida', label: 'Atendidas' },
+                { id: 'Pendente', label: 'Pendentes / Criações' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setHistFiltroStatus(opt.id)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-xs font-semibold transition',
+                    histFiltroStatus === opt.id
+                      ? 'bg-[#0F5342] text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Listagem Consolidada */}
+          {loadingHistoricos ? (
+            <div className="py-16 flex flex-col items-center justify-center text-slate-400">
+              <Loader2 className="h-6 w-6 animate-spin text-[#0D8272] mb-2" />
+              <p className="text-xs">Carregando histórico de aprovações...</p>
+            </div>
+          ) : historicosFiltrados.length === 0 ? (
+            <div className="py-12 text-center text-slate-400 text-xs">
+              Nenhum registro de histórico encontrado com os filtros selecionados.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {historicosFiltrados.map((item) => {
+                const dataFormatada = formatarDataSegura(item.created, {
+                  incluirHora: true,
+                  incluirSegundos: true,
+                  fallback: 'Data indisponível',
+                })
+
+                const medNome =
+                  item.expand?.solicitacao?.expand?.medicamento?.nome ||
+                  item.expand?.solicitacao?.nome_medicamento_novo ||
+                  item.detalhes ||
+                  'Medicamento Não Padronizado'
+
+                const solicitanteNome =
+                  item.expand?.solicitacao?.expand?.solicitante?.name ||
+                  item.expand?.solicitacao?.expand?.solicitante?.email ||
+                  'Profissional Solicitante'
+
+                const autorNome =
+                  item.autor_nome ||
+                  item.expand?.autor?.name ||
+                  item.expand?.autor?.email ||
+                  'Sistema'
+                const papelAutor = formatPapelUsuario(item.autor_papel || item.expand?.autor?.role)
+
+                return (
+                  <div
+                    key={item.id}
+                    className="p-3.5 rounded-xl bg-[#F4FAF8]/80 border border-emerald-950/10 text-xs space-y-2 hover:bg-[#F4FAF8] transition shadow-2xs"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Pill size={15} className="text-[#0D8272] shrink-0" />
+                        <span className="font-bold text-slate-900 text-sm">{medNome}</span>
+                        {getAcaoBadge(item.acao)}
+                      </div>
+
+                      <span className="text-[11px] text-slate-400 font-mono flex items-center gap-1 shrink-0">
+                        <Calendar size={12} />
+                        {dataFormatada}
+                      </span>
+                    </div>
+
+                    {/* Meta: Solicitante original e Autor desta decisão */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600 pt-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <UserIcon size={12} className="text-[#0D8272]" />
+                        <span>Solicitante Original:</span>
+                        <strong className="text-slate-800">{solicitanteNome}</strong>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <ShieldCheck size={12} className="text-[#0D8272]" />
+                        <span>Responsável pela Ação:</span>
+                        <strong className="text-slate-800">{autorNome}</strong>
+                        <span className="text-[10px] text-slate-400">({papelAutor})</span>
+                      </div>
+                    </div>
+
+                    {/* Transição de Status */}
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="text-slate-400 font-medium">Decisão:</span>
+                      <span className="bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-600 font-mono text-[10.5px]">
+                        {item.status_anterior || 'Início'}
+                      </span>
+                      <span className="text-slate-400">&rarr;</span>
+                      <span className="bg-[#E6F5F2] text-[#0C4336] px-2 py-0.5 rounded font-bold border border-[#0D8272]/20 font-mono text-[10.5px]">
+                        {item.status_novo}
+                      </span>
+                    </div>
+
+                    {/* Parecer Técnico da Ocasião */}
+                    {item.parecer && (
+                      <div className="p-2.5 rounded-lg bg-white border border-emerald-950/15 space-y-0.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0C4336] flex items-center gap-1">
+                          <MessageSquare size={11} className="text-[#0D8272]" />
+                          Parecer Técnico Registrado:
+                        </span>
+                        <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
+                          {item.parecer}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
   // Sub-render: Seção de Auditoria Geral (Admin Only)
   function renderAuditSection() {
     return (
@@ -988,12 +1485,12 @@ export default function Solicitacoes() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <CardTitle className="text-base font-bold text-[#0C4336] flex items-center gap-2">
-                <History className="h-5 w-5 text-[#0D8272]" />
-                Trilha de Auditoria do Servidor (Audit Logs)
+                <ShieldCheck className="h-5 w-5 text-[#0D8272]" />
+                Trilha de Auditoria Técnica Geral (Audit Logs)
               </CardTitle>
               <CardDescription className="text-xs text-slate-500">
-                Registro imutável gerado pelos hooks do servidor a cada ação tomada sobre
-                solicitações
+                Log do sistema para conformidade com a LGPD (referências de registros, sem dados
+                clínicos).
               </CardDescription>
             </div>
             <Button
