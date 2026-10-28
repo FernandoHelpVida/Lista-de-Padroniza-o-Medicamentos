@@ -206,6 +206,25 @@ export interface CheckMedicationResult {
   occurrences: CheckMedicationOccurrence[]
 }
 
+export interface SyncPrescriptionsResult {
+  success: boolean
+  trigger: 'manual' | 'cron'
+  totalFetched: number
+  created: number
+  updated: number
+  ignored: number
+  syncedAt: string
+  durationMs: number
+  alreadyRunning?: boolean
+  message?: string
+}
+
+export interface SyncStatusResult {
+  isRunning: boolean
+  totalPrescriptions: number
+  lastSyncedAt: string
+}
+
 /**
  * Recupera o status atual da configuração do SpinCare.
  */
@@ -356,4 +375,46 @@ export async function checkSpincareMedicationPrescribed(params: {
       },
     },
   )
+}
+
+/**
+ * Dispara manualmente a sincronização (CDC) de prescrições a partir de 2026.
+ */
+export async function triggerPrescriptionsSync(): Promise<SyncPrescriptionsResult> {
+  return await pb.send<SyncPrescriptionsResult>('/backend/v1/spincare/prescriptions/sync', {
+    method: 'POST',
+  })
+}
+
+/**
+ * Consulta o status atual da replicação de prescrições (se está em execução, total e última atualização).
+ */
+export async function getPrescriptionsSyncStatus(): Promise<SyncStatusResult> {
+  return await pb.send<SyncStatusResult>('/backend/v1/spincare/prescriptions/sync-status', {
+    method: 'GET',
+  })
+}
+
+export interface PrescricaoSyncRecord {
+  id: string
+  spincare_id: string
+  numero: string
+  paciente_id: string
+  paciente_nome: string
+  medico_prescritor: string
+  medico_id: string
+  data_prescricao: string
+  data_prescricao_iso: string
+  data_inicial: string
+  data_inicial_iso: string
+  data_final: string
+  data_final_iso: string
+  status: string
+  tipo: string
+  total_itens: number
+  itens: SpincarePrescriptionItem[]
+  payload: Record<string, unknown>
+  synced_at: string
+  created: string
+  updated: string
 }
