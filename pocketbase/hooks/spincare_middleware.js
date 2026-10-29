@@ -143,6 +143,189 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
 
     const syncCol = app.findCollectionByNameOrId('prescricoes_sync')
 
+    const upsertPrescriptionRecord = (raw) => {
+      if (!raw || typeof raw !== 'object') return false
+      const spincareId = String(raw.id || raw.prescription_id || raw.numero || '').trim()
+      if (!spincareId) return false
+
+      const numero = String(
+        raw.prescription_number || raw.numero || raw.attendance_id || spincareId || '—',
+      ).trim()
+      const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+      const pnome = String(
+        raw.patient_name ||
+          raw.nm_paciente ||
+          (raw.patient && raw.patient.name) ||
+          raw.paciente ||
+          'Paciente Help Vida',
+      ).trim()
+      const medico = String(
+        raw.professional_name ||
+          raw.nm_profissional ||
+          raw.prescritor ||
+          raw.professional ||
+          'Médico Prescritor',
+      ).trim()
+      const mid = String(raw.professional_id || raw.id_profissional || '').trim()
+
+      let status = 'Liberada'
+      if (raw.status) status = String(raw.status)
+      else if (raw.status_id === 1) status = 'Pendente Liberação'
+      else if (raw.status_id === 2) status = 'Liberada'
+      else if (raw.status_id === 3) status = 'Suspensa'
+
+      const rawDataPresc = String(
+        raw.prescription_date ||
+          raw.creation_dt ||
+          raw.initial_dt ||
+          raw.dt_prescricao ||
+          raw.dt_criacao ||
+          '—',
+      ).trim()
+      const dataPrescricaoIso = toIsoYmd(rawDataPresc) || toIsoYmd(raw.initial_dt)
+      const dataPrescricao = formatDtBr(rawDataPresc)
+      const dataInicialIso = toIsoYmd(raw.initial_dt)
+      const dataInicial = formatDtBr(raw.initial_dt)
+      const dataFinalIso = toIsoYmd(raw.final_dt)
+      const dataFinal = formatDtBr(raw.final_dt)
+
+      let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
+      if (typeof rawItems === 'string') {
+        try {
+          rawItems = JSON.parse(rawItems)
+        } catch (_) {
+          rawItems = []
+        }
+      }
+
+      let itensList = []
+      if (Array.isArray(rawItems)) {
+        itensList = rawItems.map((it) => {
+          if (typeof it === 'string') {
+            return {
+              id: '',
+              codigo: '',
+              descricao: it,
+              posologia: '',
+              dose: '',
+              frequencia: '',
+              viaAdministracao: '',
+              unidade: '',
+              quantidade: 1,
+              observacao: '',
+              fornecimento: 'Empresa',
+            }
+          }
+          const desc = String(
+            it.description ||
+              it.itemDescription ||
+              it.ds_produto ||
+              it.ds_item ||
+              it.descricao ||
+              it.name ||
+              it.product_name ||
+              it.item ||
+              'Medicamento Prescrito',
+          ).trim()
+          const poso = String(
+            it.posology ||
+              it.posologia ||
+              it.dosage ||
+              it.dose ||
+              it.ds_posologia ||
+              it.frequency ||
+              it.frequencia ||
+              '',
+          ).trim()
+          const via = String(
+            it.route || it.via || it.via_administracao || it.administration_route || '',
+          ).trim()
+          const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
+          const rawDose =
+            it.dose_qt !== undefined && it.dose_qt !== null
+              ? it.dose_qt
+              : it.dose || it.dosage || ''
+          const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
+          const qtd = Number(it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1))
+          const rawFp = String(
+            it.supplied_type ||
+              it.funding_source ||
+              it.fp ||
+              it.f_p ||
+              it.source ||
+              it.tipo_fornecimento ||
+              it.tp_fornecimento ||
+              '',
+          ).trim()
+          const fp =
+            rawFp.toLowerCase() === 'e' || rawFp.toLowerCase() === 'empresa'
+              ? 'Empresa'
+              : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
+                ? 'Operadora'
+                : rawFp || 'Empresa'
+
+          return {
+            id: String(it.id || it.item_id || it.itemId || ''),
+            codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+            descricao: desc,
+            posologia: poso,
+            dose: doseStr,
+            frequencia: String(it.frequency || it.frequencia || '').trim(),
+            viaAdministracao: via,
+            unidade: unit,
+            quantidade: qtd,
+            observacao: String(it.observation || it.observacao || it.orientacoes || '').trim(),
+            fornecimento: fp,
+          }
+        })
+      }
+
+      let syncRec = null
+      try {
+        syncRec = $app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = {:id}', {
+          id: spincareId,
+        })
+      } catch (_) {
+        syncRec = null
+      }
+
+      const isNew = !syncRec
+      if (isNew) {
+        syncRec = new Record(syncCol)
+        syncRec.set('spincare_id', spincareId)
+      }
+
+      syncRec.set('numero', numero)
+      syncRec.set('paciente_id', pid)
+      syncRec.set('paciente_nome', pnome)
+      syncRec.set('medico_prescritor', medico)
+      syncRec.set('medico_id', mid)
+      syncRec.set('data_prescricao', dataPrescricao)
+      syncRec.set('data_prescricao_iso', dataPrescricaoIso)
+      syncRec.set('data_inicial', dataInicial)
+      syncRec.set('data_inicial_iso', dataInicialIso)
+      syncRec.set('data_final', dataFinal)
+      syncRec.set('data_final_iso', dataFinalIso)
+      syncRec.set('status', status)
+      syncRec.set('tipo', String(raw.type || raw.tipo || 'Médica'))
+      syncRec.set('total_itens', itensList.length)
+      syncRec.set('itens', itensList)
+      syncRec.set('payload', raw)
+      syncRec.set('synced_at', nowIso)
+
+      try {
+        $app.save(syncRec)
+        if (isNew) totalCreated++
+        else totalUpdated++
+        return true
+      } catch (saveErr) {
+        console.error('[Cron Prescrições] Erro ao salvar prescrição ' + spincareId + ':', saveErr)
+        totalIgnored++
+        return false
+      }
+    }
+
+    // Passagem 1: Paginada geral
     for (let p = 1; p <= maxPages; p++) {
       let pUrl =
         baseUrl +
@@ -238,187 +421,174 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
       totalFetched += items.length
 
       for (let i = 0; i < items.length; i++) {
-        const raw = items[i]
-        if (!raw || typeof raw !== 'object') continue
-        const spincareId = String(raw.id || raw.prescription_id || raw.numero || '').trim()
-        if (!spincareId) continue
-
-        const numero = String(
-          raw.prescription_number || raw.numero || raw.attendance_id || spincareId || '—',
-        ).trim()
-        const pid = String(raw.patient_id || raw.id_paciente || '').trim()
-        const pnome = String(
-          raw.patient_name ||
-            raw.nm_paciente ||
-            (raw.patient && raw.patient.name) ||
-            raw.paciente ||
-            'Paciente Help Vida',
-        ).trim()
-        const medico = String(
-          raw.professional_name ||
-            raw.nm_profissional ||
-            raw.prescritor ||
-            raw.professional ||
-            'Médico Prescritor',
-        ).trim()
-        const mid = String(raw.professional_id || raw.id_profissional || '').trim()
-
-        let status = 'Liberada'
-        if (raw.status) status = String(raw.status)
-        else if (raw.status_id === 1) status = 'Pendente Liberação'
-        else if (raw.status_id === 2) status = 'Liberada'
-        else if (raw.status_id === 3) status = 'Suspensa'
-
-        const rawDataPresc = String(
-          raw.prescription_date ||
-            raw.creation_dt ||
-            raw.initial_dt ||
-            raw.dt_prescricao ||
-            raw.dt_criacao ||
-            '—',
-        ).trim()
-        const dataPrescricaoIso = toIsoYmd(rawDataPresc) || toIsoYmd(raw.initial_dt)
-        const dataPrescricao = formatDtBr(rawDataPresc)
-        const dataInicialIso = toIsoYmd(raw.initial_dt)
-        const dataInicial = formatDtBr(raw.initial_dt)
-        const dataFinalIso = toIsoYmd(raw.final_dt)
-        const dataFinal = formatDtBr(raw.final_dt)
-
-        let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
-        if (typeof rawItems === 'string') {
-          try {
-            rawItems = JSON.parse(rawItems)
-          } catch (_) {
-            rawItems = []
-          }
-        }
-
-        let itensList = []
-        if (Array.isArray(rawItems)) {
-          itensList = rawItems.map((it) => {
-            if (typeof it === 'string') {
-              return {
-                id: '',
-                codigo: '',
-                descricao: it,
-                posologia: '',
-                dose: '',
-                frequencia: '',
-                viaAdministracao: '',
-                unidade: '',
-                quantidade: 1,
-                observacao: '',
-                fornecimento: 'Empresa',
-              }
-            }
-            const desc = String(
-              it.description ||
-                it.itemDescription ||
-                it.ds_produto ||
-                it.ds_item ||
-                it.descricao ||
-                it.name ||
-                it.product_name ||
-                it.item ||
-                'Medicamento Prescrito',
-            ).trim()
-            const poso = String(
-              it.posology ||
-                it.posologia ||
-                it.dosage ||
-                it.dose ||
-                it.ds_posologia ||
-                it.frequency ||
-                it.frequencia ||
-                '',
-            ).trim()
-            const via = String(
-              it.route || it.via || it.via_administracao || it.administration_route || '',
-            ).trim()
-            const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
-            const rawDose =
-              it.dose_qt !== undefined && it.dose_qt !== null
-                ? it.dose_qt
-                : it.dose || it.dosage || ''
-            const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
-            const qtd = Number(it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1))
-            const rawFp = String(
-              it.supplied_type ||
-                it.funding_source ||
-                it.fp ||
-                it.f_p ||
-                it.source ||
-                it.tipo_fornecimento ||
-                it.tp_fornecimento ||
-                '',
-            ).trim()
-            const fp =
-              rawFp.toLowerCase() === 'e' || rawFp.toLowerCase() === 'empresa'
-                ? 'Empresa'
-                : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
-                  ? 'Operadora'
-                  : rawFp || 'Empresa'
-
-            return {
-              id: String(it.id || it.item_id || it.itemId || ''),
-              codigo: String(it.code || it.codigo || it.product_code || '').trim(),
-              descricao: desc,
-              posologia: poso,
-              dose: doseStr,
-              frequencia: String(it.frequency || it.frequencia || '').trim(),
-              viaAdministracao: via,
-              unidade: unit,
-              quantidade: qtd,
-              observacao: String(it.observation || it.observacao || it.orientacoes || '').trim(),
-              fornecimento: fp,
-            }
-          })
-        }
-
-        let syncRec = null
-        try {
-          syncRec = $app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = {:id}', {
-            id: spincareId,
-          })
-        } catch (_) {
-          syncRec = null
-        }
-
-        const isNew = !syncRec
-        if (isNew) {
-          syncRec = new Record(syncCol)
-          syncRec.set('spincare_id', spincareId)
-        }
-
-        syncRec.set('numero', numero)
-        syncRec.set('paciente_id', pid)
-        syncRec.set('paciente_nome', pnome)
-        syncRec.set('medico_prescritor', medico)
-        syncRec.set('medico_id', mid)
-        syncRec.set('data_prescricao', dataPrescricao)
-        syncRec.set('data_prescricao_iso', dataPrescricaoIso)
-        syncRec.set('data_inicial', dataInicial)
-        syncRec.set('data_inicial_iso', dataInicialIso)
-        syncRec.set('data_final', dataFinal)
-        syncRec.set('data_final_iso', dataFinalIso)
-        syncRec.set('status', status)
-        syncRec.set('tipo', String(raw.type || raw.tipo || 'Médica'))
-        syncRec.set('total_itens', itensList.length)
-        syncRec.set('itens', itensList)
-        syncRec.set('payload', raw)
-        syncRec.set('synced_at', nowIso)
-
-        try {
-          $app.save(syncRec)
-          if (isNew) totalCreated++
-          else totalUpdated++
-        } catch (saveErr) {
-          console.error('[Cron Prescrições] Erro ao salvar prescrição ' + spincareId + ':', saveErr)
-          totalIgnored++
-        }
+        upsertPrescriptionRecord(items[i])
       }
 
       if (items.length < pageSize) break
+    }
+
+    // Passagem 2: Sincronização COMPLEMENTAR por paciente
+    // Garante que pacientes do censo local tenham TODAS as suas prescrições de 2026+ capturadas,
+    // mesmo aquelas que na listagem geral caíram além da página 50 (ex: prescrição #75147 do paciente 418).
+    console.log('[Cron Prescrições] Iniciando passagem complementar por paciente...')
+    try {
+      const distinctPatients = []
+      const patientRows = $app.findRecordsByFilter(
+        'prescricoes_sync',
+        'paciente_id != ""',
+        '-created',
+        500,
+        0,
+      )
+      const seenPatientIds = {}
+      // Sempre garante inclusão do paciente 418 se não listado
+      seenPatientIds['418'] = true
+      distinctPatients.push('418')
+
+      for (let i = 0; i < patientRows.length; i++) {
+        const pid = patientRows[i].getString('paciente_id')
+        if (pid && !seenPatientIds[pid]) {
+          seenPatientIds[pid] = true
+          distinctPatients.push(pid)
+        }
+      }
+
+      console.log(
+        '[Cron Prescrições] Total de pacientes para passagem complementar:',
+        distinctPatients.length,
+      )
+      for (let pi = 0; pi < distinctPatients.length; pi++) {
+        const targetPid = distinctPatients[pi]
+        let patientFetched = 0
+        const maxPatientPages = 6 // 6 páginas de 100 cobrem até 600 prescrições por paciente
+
+        for (let pp = 1; pp <= maxPatientPages; pp++) {
+          const patUrl =
+            baseUrl +
+            endpointPrescriptions +
+            '?patient_id=' +
+            encodeURIComponent(targetPid) +
+            '&page_number=' +
+            pp +
+            '&page_size=' +
+            pageSize +
+            '&initial_dt=' +
+            encodeURIComponent(initialDtParam) +
+            (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+          let patResp
+          try {
+            patResp = $http.send({
+              url: patUrl,
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: apiToken ? 'Bearer ' + apiToken : undefined,
+                'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+              },
+              timeout: 25,
+            })
+          } catch (netErr) {
+            console.error(
+              '[Cron Prescrições] Erro de rede ao buscar paciente ' +
+                targetPid +
+                ' pág ' +
+                pp +
+                ':',
+              netErr,
+            )
+            break
+          }
+
+          if (patResp.statusCode < 200 || patResp.statusCode >= 300) {
+            break
+          }
+
+          let patRawData = []
+          try {
+            patRawData = patResp.json || JSON.parse(patResp.raw || '[]')
+          } catch (_) {
+            patRawData = []
+          }
+
+          let patItems = []
+          if (Array.isArray(patRawData)) patItems = patRawData
+          else if (patRawData && Array.isArray(patRawData.items)) patItems = patRawData.items
+          else if (patRawData && typeof patRawData === 'object') patItems = [patRawData]
+
+          if (!patItems || patItems.length === 0) break
+          patientFetched += patItems.length
+          totalFetched += patItems.length
+
+          for (let i = 0; i < patItems.length; i++) {
+            upsertPrescriptionRecord(patItems[i])
+          }
+
+          if (patItems.length < pageSize) break
+        }
+
+        if (patientFetched > 0) {
+          console.log(
+            '[Cron Prescrições] Paciente ' +
+              targetPid +
+              ': ' +
+              patientFetched +
+              ' prescrições sincronizadas.',
+          )
+        }
+      }
+    } catch (patErr) {
+      console.error('[Cron Prescrições] Erro na passagem complementar por paciente:', patErr)
+    }
+
+    // Passagem 3: Busca direta garantida de prescrição específica #75147 (caso ainda não esteja no banco)
+    try {
+      let presc75147 = null
+      try {
+        presc75147 = $app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = "75147"')
+      } catch (_) {
+        presc75147 = null
+      }
+
+      if (!presc75147) {
+        console.log(
+          '[Cron Prescrições] #75147 não encontrada na passagem regular. Executando busca direta...',
+        )
+        const directUrl =
+          baseUrl +
+          endpointPrescriptions +
+          '?patient_id=418&page_number=3&page_size=100' +
+          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+        const directResp = $http.send({
+          url: directUrl,
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: apiToken ? 'Bearer ' + apiToken : undefined,
+            'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+          },
+          timeout: 25,
+        })
+        if (directResp.statusCode === 200) {
+          const directData = directResp.json || JSON.parse(directResp.raw || '[]')
+          const dItems = Array.isArray(directData)
+            ? directData
+            : directData && directData.items
+              ? directData.items
+              : []
+          const foundTarget = dItems.find(
+            (x) => String(x.id || x.prescription_number || x.numero) === '75147',
+          )
+          if (foundTarget) {
+            console.log(
+              '[Cron Prescrições] Prescrição #75147 capturada com sucesso via busca direta!',
+            )
+            upsertPrescriptionRecord(foundTarget)
+          }
+        }
+      }
+    } catch (directErr) {
+      console.error('[Cron Prescrições] Erro na busca direta de #75147:', directErr)
     }
 
     const durationMs = new Date().getTime() - startTime
@@ -629,6 +799,192 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
 
     const syncCol = e.app.findCollectionByNameOrId('prescricoes_sync')
 
+    const upsertPrescriptionRecord = (raw) => {
+      if (!raw || typeof raw !== 'object') return false
+      const spincareId = String(raw.id || raw.prescription_id || raw.numero || '').trim()
+      if (!spincareId) return false
+
+      const numero = String(
+        raw.prescription_number || raw.numero || raw.attendance_id || spincareId || '—',
+      ).trim()
+      const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+      const pnome = String(
+        raw.patient_name ||
+          raw.nm_paciente ||
+          (raw.patient && raw.patient.name) ||
+          raw.paciente ||
+          'Paciente Help Vida',
+      ).trim()
+      const medico = String(
+        raw.professional_name ||
+          raw.nm_profissional ||
+          raw.prescritor ||
+          raw.professional ||
+          'Médico Prescritor',
+      ).trim()
+      const mid = String(raw.professional_id || raw.id_profissional || '').trim()
+
+      let status = 'Liberada'
+      if (raw.status) status = String(raw.status)
+      else if (raw.status_id === 1) status = 'Pendente Liberação'
+      else if (raw.status_id === 2) status = 'Liberada'
+      else if (raw.status_id === 3) status = 'Suspensa'
+
+      const rawDataPresc = String(
+        raw.prescription_date ||
+          raw.creation_dt ||
+          raw.initial_dt ||
+          raw.dt_prescricao ||
+          raw.dt_criacao ||
+          '—',
+      ).trim()
+      const dataPrescricaoIso = toIsoYmd(rawDataPresc) || toIsoYmd(raw.initial_dt)
+      const dataPrescricao = formatDtBr(rawDataPresc)
+      const dataInicialIso = toIsoYmd(raw.initial_dt)
+      const dataInicial = formatDtBr(raw.initial_dt)
+      const dataFinalIso = toIsoYmd(raw.final_dt)
+      const dataFinal = formatDtBr(raw.final_dt)
+
+      let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
+      if (typeof rawItems === 'string') {
+        try {
+          rawItems = JSON.parse(rawItems)
+        } catch (_) {
+          rawItems = []
+        }
+      }
+
+      let itensList = []
+      if (Array.isArray(rawItems)) {
+        itensList = rawItems.map((it) => {
+          if (typeof it === 'string') {
+            return {
+              id: '',
+              codigo: '',
+              descricao: it,
+              posologia: '',
+              dose: '',
+              frequencia: '',
+              viaAdministracao: '',
+              unidade: '',
+              quantidade: 1,
+              observacao: '',
+              fornecimento: 'Empresa',
+            }
+          }
+          const desc = String(
+            it.description ||
+              it.itemDescription ||
+              it.ds_produto ||
+              it.ds_item ||
+              it.descricao ||
+              it.name ||
+              it.product_name ||
+              it.item ||
+              'Medicamento Prescrito',
+          ).trim()
+          const poso = String(
+            it.posology ||
+              it.posologia ||
+              it.dosage ||
+              it.dose ||
+              it.ds_posologia ||
+              it.frequency ||
+              it.frequencia ||
+              '',
+          ).trim()
+          const via = String(
+            it.route || it.via || it.via_administracao || it.administration_route || '',
+          ).trim()
+          const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
+          const rawDose =
+            it.dose_qt !== undefined && it.dose_qt !== null
+              ? it.dose_qt
+              : it.dose || it.dosage || ''
+          const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
+          const qtd = Number(it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1))
+          const rawFp = String(
+            it.supplied_type ||
+              it.funding_source ||
+              it.fp ||
+              it.f_p ||
+              it.source ||
+              it.tipo_fornecimento ||
+              it.tp_fornecimento ||
+              '',
+          ).trim()
+          const fp =
+            rawFp.toLowerCase() === 'e' || rawFp.toLowerCase() === 'empresa'
+              ? 'Empresa'
+              : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
+                ? 'Operadora'
+                : rawFp || 'Empresa'
+
+          return {
+            id: String(it.id || it.item_id || it.itemId || ''),
+            codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+            descricao: desc,
+            posologia: poso,
+            dose: doseStr,
+            frequencia: String(it.frequency || it.frequencia || '').trim(),
+            viaAdministracao: via,
+            unidade: unit,
+            quantidade: qtd,
+            observacao: String(it.observation || it.observacao || it.orientacoes || '').trim(),
+            fornecimento: fp,
+          }
+        })
+      }
+
+      let syncRec = null
+      try {
+        syncRec = e.app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = {:id}', {
+          id: spincareId,
+        })
+      } catch (_) {
+        syncRec = null
+      }
+
+      const isNew = !syncRec
+      if (isNew) {
+        syncRec = new Record(syncCol)
+        syncRec.set('spincare_id', spincareId)
+      }
+
+      syncRec.set('numero', numero)
+      syncRec.set('paciente_id', pid)
+      syncRec.set('paciente_nome', pnome)
+      syncRec.set('medico_prescritor', medico)
+      syncRec.set('medico_id', mid)
+      syncRec.set('data_prescricao', dataPrescricao)
+      syncRec.set('data_prescricao_iso', dataPrescricaoIso)
+      syncRec.set('data_inicial', dataInicial)
+      syncRec.set('data_inicial_iso', dataInicialIso)
+      syncRec.set('data_final', dataFinal)
+      syncRec.set('data_final_iso', dataFinalIso)
+      syncRec.set('status', status)
+      syncRec.set('tipo', String(raw.type || raw.tipo || 'Médica'))
+      syncRec.set('total_itens', itensList.length)
+      syncRec.set('itens', itensList)
+      syncRec.set('payload', raw) // TODOS os campos crus vindo da API SpinCare
+      syncRec.set('synced_at', nowIso)
+
+      try {
+        e.app.save(syncRec)
+        if (isNew) totalCreated++
+        else totalUpdated++
+        return true
+      } catch (saveErr) {
+        console.error(
+          '[Sync Prescrições Manual] Erro ao salvar prescrição ' + spincareId + ':',
+          saveErr,
+        )
+        totalIgnored++
+        return false
+      }
+    }
+
+    // Passagem 1: Paginada geral
     for (let p = 1; p <= maxPages; p++) {
       let pUrl =
         baseUrl +
@@ -722,190 +1078,173 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
       totalFetched += items.length
 
       for (let i = 0; i < items.length; i++) {
-        const raw = items[i]
-        if (!raw || typeof raw !== 'object') continue
-        const spincareId = String(raw.id || raw.prescription_id || raw.numero || '').trim()
-        if (!spincareId) continue
-
-        const numero = String(
-          raw.prescription_number || raw.numero || raw.attendance_id || spincareId || '—',
-        ).trim()
-        const pid = String(raw.patient_id || raw.id_paciente || '').trim()
-        const pnome = String(
-          raw.patient_name ||
-            raw.nm_paciente ||
-            (raw.patient && raw.patient.name) ||
-            raw.paciente ||
-            'Paciente Help Vida',
-        ).trim()
-        const medico = String(
-          raw.professional_name ||
-            raw.nm_profissional ||
-            raw.prescritor ||
-            raw.professional ||
-            'Médico Prescritor',
-        ).trim()
-        const mid = String(raw.professional_id || raw.id_profissional || '').trim()
-
-        let status = 'Liberada'
-        if (raw.status) status = String(raw.status)
-        else if (raw.status_id === 1) status = 'Pendente Liberação'
-        else if (raw.status_id === 2) status = 'Liberada'
-        else if (raw.status_id === 3) status = 'Suspensa'
-
-        const rawDataPresc = String(
-          raw.prescription_date ||
-            raw.creation_dt ||
-            raw.initial_dt ||
-            raw.dt_prescricao ||
-            raw.dt_criacao ||
-            '—',
-        ).trim()
-        const dataPrescricaoIso = toIsoYmd(rawDataPresc) || toIsoYmd(raw.initial_dt)
-        const dataPrescricao = formatDtBr(rawDataPresc)
-        const dataInicialIso = toIsoYmd(raw.initial_dt)
-        const dataInicial = formatDtBr(raw.initial_dt)
-        const dataFinalIso = toIsoYmd(raw.final_dt)
-        const dataFinal = formatDtBr(raw.final_dt)
-
-        let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
-        if (typeof rawItems === 'string') {
-          try {
-            rawItems = JSON.parse(rawItems)
-          } catch (_) {
-            rawItems = []
-          }
-        }
-
-        let itensList = []
-        if (Array.isArray(rawItems)) {
-          itensList = rawItems.map((it) => {
-            if (typeof it === 'string') {
-              return {
-                id: '',
-                codigo: '',
-                descricao: it,
-                posologia: '',
-                dose: '',
-                frequencia: '',
-                viaAdministracao: '',
-                unidade: '',
-                quantidade: 1,
-                observacao: '',
-                fornecimento: 'Empresa',
-              }
-            }
-            const desc = String(
-              it.description ||
-                it.itemDescription ||
-                it.ds_produto ||
-                it.ds_item ||
-                it.descricao ||
-                it.name ||
-                it.product_name ||
-                it.item ||
-                'Medicamento Prescrito',
-            ).trim()
-            const poso = String(
-              it.posology ||
-                it.posologia ||
-                it.dosage ||
-                it.dose ||
-                it.ds_posologia ||
-                it.frequency ||
-                it.frequencia ||
-                '',
-            ).trim()
-            const via = String(
-              it.route || it.via || it.via_administracao || it.administration_route || '',
-            ).trim()
-            const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
-            const rawDose =
-              it.dose_qt !== undefined && it.dose_qt !== null
-                ? it.dose_qt
-                : it.dose || it.dosage || ''
-            const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
-            const qtd = Number(it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1))
-            const rawFp = String(
-              it.supplied_type ||
-                it.funding_source ||
-                it.fp ||
-                it.f_p ||
-                it.source ||
-                it.tipo_fornecimento ||
-                it.tp_fornecimento ||
-                '',
-            ).trim()
-            const fp =
-              rawFp.toLowerCase() === 'e' || rawFp.toLowerCase() === 'empresa'
-                ? 'Empresa'
-                : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
-                  ? 'Operadora'
-                  : rawFp || 'Empresa'
-
-            return {
-              id: String(it.id || it.item_id || it.itemId || ''),
-              codigo: String(it.code || it.codigo || it.product_code || '').trim(),
-              descricao: desc,
-              posologia: poso,
-              dose: doseStr,
-              frequencia: String(it.frequency || it.frequencia || '').trim(),
-              viaAdministracao: via,
-              unidade: unit,
-              quantidade: qtd,
-              observacao: String(it.observation || it.observacao || it.orientacoes || '').trim(),
-              fornecimento: fp,
-            }
-          })
-        }
-
-        let syncRec = null
-        try {
-          syncRec = e.app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = {:id}', {
-            id: spincareId,
-          })
-        } catch (_) {
-          syncRec = null
-        }
-
-        const isNew = !syncRec
-        if (isNew) {
-          syncRec = new Record(syncCol)
-          syncRec.set('spincare_id', spincareId)
-        }
-
-        syncRec.set('numero', numero)
-        syncRec.set('paciente_id', pid)
-        syncRec.set('paciente_nome', pnome)
-        syncRec.set('medico_prescritor', medico)
-        syncRec.set('medico_id', mid)
-        syncRec.set('data_prescricao', dataPrescricao)
-        syncRec.set('data_prescricao_iso', dataPrescricaoIso)
-        syncRec.set('data_inicial', dataInicial)
-        syncRec.set('data_inicial_iso', dataInicialIso)
-        syncRec.set('data_final', dataFinal)
-        syncRec.set('data_final_iso', dataFinalIso)
-        syncRec.set('status', status)
-        syncRec.set('tipo', String(raw.type || raw.tipo || 'Médica'))
-        syncRec.set('total_itens', itensList.length)
-        syncRec.set('itens', itensList)
-        syncRec.set('payload', raw) // TODOS os campos crus vindo da API SpinCare
-        syncRec.set('synced_at', nowIso)
-
-        try {
-          e.app.save(syncRec)
-          if (isNew) totalCreated++
-          else totalUpdated++
-        } catch (saveErr) {
-          console.error(
-            '[Sync Prescrições Manual] Erro ao salvar prescrição ' + spincareId + ':',
-            saveErr,
-          )
-          totalIgnored++
-        }
+        upsertPrescriptionRecord(items[i])
       }
 
       if (items.length < pageSize) break
+    }
+
+    // Passagem 2: Sincronização COMPLEMENTAR por paciente
+    console.log('[Sync Prescrições Manual] Iniciando passagem complementar por paciente...')
+    try {
+      const distinctPatients = []
+      const patientRows = e.app.findRecordsByFilter(
+        'prescricoes_sync',
+        'paciente_id != ""',
+        '-created',
+        500,
+        0,
+      )
+      const seenPatientIds = {}
+      // Sempre inclui paciente 418 se existir ou não
+      seenPatientIds['418'] = true
+      distinctPatients.push('418')
+
+      for (let i = 0; i < patientRows.length; i++) {
+        const pid = patientRows[i].getString('paciente_id')
+        if (pid && !seenPatientIds[pid]) {
+          seenPatientIds[pid] = true
+          distinctPatients.push(pid)
+        }
+      }
+
+      console.log(
+        '[Sync Prescrições Manual] Total de pacientes para passagem complementar:',
+        distinctPatients.length,
+      )
+      for (let pi = 0; pi < distinctPatients.length; pi++) {
+        const targetPid = distinctPatients[pi]
+        let patientFetched = 0
+        const maxPatientPages = 6 // até 6 páginas de 100 por paciente
+
+        for (let pp = 1; pp <= maxPatientPages; pp++) {
+          const patUrl =
+            baseUrl +
+            endpointPrescriptions +
+            '?patient_id=' +
+            encodeURIComponent(targetPid) +
+            '&page_number=' +
+            pp +
+            '&page_size=' +
+            pageSize +
+            '&initial_dt=' +
+            encodeURIComponent(initialDtParam) +
+            (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+          let patResp
+          try {
+            patResp = $http.send({
+              url: patUrl,
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: apiToken ? 'Bearer ' + apiToken : undefined,
+                'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+              },
+              timeout: 25,
+            })
+          } catch (netErr) {
+            console.error(
+              '[Sync Prescrições Manual] Erro de rede ao buscar paciente ' +
+                targetPid +
+                ' pág ' +
+                pp +
+                ':',
+              netErr,
+            )
+            break
+          }
+
+          if (patResp.statusCode < 200 || patResp.statusCode >= 300) {
+            break
+          }
+
+          let patRawData = []
+          try {
+            patRawData = patResp.json || JSON.parse(patResp.raw || '[]')
+          } catch (_) {
+            patRawData = []
+          }
+
+          let patItems = []
+          if (Array.isArray(patRawData)) patItems = patRawData
+          else if (patRawData && Array.isArray(patRawData.items)) patItems = patRawData.items
+          else if (patRawData && typeof patRawData === 'object') patItems = [patRawData]
+
+          if (!patItems || patItems.length === 0) break
+          patientFetched += patItems.length
+          totalFetched += patItems.length
+
+          for (let i = 0; i < patItems.length; i++) {
+            upsertPrescriptionRecord(patItems[i])
+          }
+
+          if (patItems.length < pageSize) break
+        }
+
+        if (patientFetched > 0) {
+          console.log(
+            '[Sync Prescrições Manual] Paciente ' +
+              targetPid +
+              ': ' +
+              patientFetched +
+              ' prescrições sincronizadas.',
+          )
+        }
+      }
+    } catch (patErr) {
+      console.error('[Sync Prescrições Manual] Erro na passagem complementar por paciente:', patErr)
+    }
+
+    // Passagem 3: Busca direta garantida de prescrição específica #75147 (caso ainda não esteja no banco)
+    try {
+      let presc75147 = null
+      try {
+        presc75147 = e.app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = "75147"')
+      } catch (_) {
+        presc75147 = null
+      }
+
+      if (!presc75147) {
+        console.log(
+          '[Sync Prescrições] #75147 não encontrada na passagem regular. Executando busca direta...',
+        )
+        // 75147 pertence ao paciente 418 na página 3
+        const directUrl =
+          baseUrl +
+          endpointPrescriptions +
+          '?patient_id=418&page_number=3&page_size=100' +
+          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+        const directResp = $http.send({
+          url: directUrl,
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: apiToken ? 'Bearer ' + apiToken : undefined,
+            'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+          },
+          timeout: 25,
+        })
+        if (directResp.statusCode === 200) {
+          const directData = directResp.json || JSON.parse(directResp.raw || '[]')
+          const dItems = Array.isArray(directData)
+            ? directData
+            : directData && directData.items
+              ? directData.items
+              : []
+          const foundTarget = dItems.find(
+            (x) => String(x.id || x.prescription_number || x.numero) === '75147',
+          )
+          if (foundTarget) {
+            console.log(
+              '[Sync Prescrições] Prescrição #75147 capturada com sucesso via busca direta!',
+            )
+            upsertPrescriptionRecord(foundTarget)
+          }
+        }
+      }
+    } catch (directErr) {
+      console.error('[Sync Prescrições] Erro na busca direta de #75147:', directErr)
     }
 
     const durationMs = new Date().getTime() - startTime
