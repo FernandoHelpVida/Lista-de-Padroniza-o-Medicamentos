@@ -15,11 +15,17 @@
 // ----------------------------------------------------------------------------
 // CRON DIÁRIO DE SINCRONIZAÇÃO (Às 03:00 todo dia)
 // ----------------------------------------------------------------------------
-cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
-  console.log('[Cron] Iniciando sincronização diária de prescrições SpinCare...')
+cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
+  console.log('[Cron] Iniciando sincronização diária de prescrições SpinCare (03:00)...')
   const startTime = new Date().getTime()
   try {
-    const records = $app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+    const app = typeof $app !== 'undefined' ? $app : null
+    if (!app) {
+      console.error('[Cron] $app não está disponível.')
+      return
+    }
+
+    const records = app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
     if (!records || records.length === 0) {
       console.error('[Cron] Configuração do SpinCare não encontrada.')
       return
@@ -33,12 +39,17 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
       .replace(/\/+$/, '')
     const login = (cfgRec.getString('api_login') || '').trim()
     const password = (cfgRec.getString('api_password') || '').trim()
-    let apiToken = (cfgRec.getString('api_token') || '').trim()
+    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+    let apiToken = rawStoredToken.startsWith('Bearer ')
+      ? rawStoredToken.substring(7).trim()
+      : rawStoredToken
     const endpointPrescriptions = '/integration-engine/get/prescriptions'
 
-    const getValidToken = () => {
-      if (apiToken) return apiToken
-      if (!login || !password) return ''
+    const fetchFreshToken = () => {
+      if (!login || !password) {
+        console.warn('[Cron Auth] Login ou senha não configurados.')
+        return ''
+      }
       try {
         const tokenUrl =
           baseUrl +
@@ -46,12 +57,14 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
           encodeURIComponent(login) +
           '&password=' +
           encodeURIComponent(password)
+        console.log('[Cron Auth] Solicitando token em:', baseUrl + '/token/v1')
         const resToken = $http.send({
           url: tokenUrl,
           method: 'GET',
           headers: { Accept: '*/*' },
           timeout: 15,
         })
+        console.log('[Cron Auth] Resposta auth SpinCare status:', resToken.statusCode)
         if (resToken.statusCode === 200) {
           let t = ''
           if (typeof resToken.json === 'string') t = resToken.json
@@ -60,17 +73,33 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
           }
           if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
           if (t) {
+            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
             apiToken = t
             cfgRec.set('api_token', t)
-            $app.save(cfgRec)
+            app.save(cfgRec)
+            console.log('[Cron Auth] Novo token SpinCare obtido e salvo com sucesso.')
             return t
           }
+        } else {
+          console.error(
+            '[Cron Auth] Falha ao obter token SpinCare. Status:',
+            resToken.statusCode,
+            'Corpo:',
+            resToken.raw ? String(resToken.raw).slice(0, 300) : '',
+          )
         }
-      } catch (_) {}
+      } catch (authErr) {
+        console.error('[Cron Auth] Exceção ao obter token:', authErr)
+      }
       return ''
     }
 
-    apiToken = getValidToken()
+    const getValidToken = (forceRefresh) => {
+      if (!forceRefresh && apiToken) return apiToken
+      return fetchFreshToken()
+    }
+
+    apiToken = getValidToken(false)
 
     const toIsoYmd = (val) => {
       if (!val || val === '—') return ''
@@ -112,7 +141,7 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
     const pageSize = 100
     const maxPages = 50
 
-    const syncCol = $app.findCollectionByNameOrId('prescricoes_sync')
+    const syncCol = app.findCollectionByNameOrId('prescricoes_sync')
 
     for (let p = 1; p <= maxPages; p++) {
       let pUrl =
@@ -148,7 +177,10 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
       }
 
       if (resp.statusCode === 401 && login && password) {
-        apiToken = getValidToken()
+        console.warn(
+          '[Cron Prescrições] Recebeu 401 na pág ' + p + ', forçando renovação de token...',
+        )
+        apiToken = getValidToken(true)
         if (apiToken) {
           try {
             const retryUrl =
@@ -172,12 +204,21 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
               },
               timeout: 30,
             })
-          } catch (_) {}
+          } catch (retryErr) {
+            console.error('[Cron Prescrições] Erro no retry após renovação:', retryErr)
+          }
         }
       }
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        console.error('[Cron Prescrições] SpinCare retornou status ' + resp.statusCode)
+        console.error(
+          '[Cron Prescrições] SpinCare retornou status ' +
+            resp.statusCode +
+            ' na pág ' +
+            p +
+            '. Corpo:',
+          resp.raw ? String(resp.raw).slice(0, 300) : '',
+        )
         break
       }
 
@@ -447,7 +488,10 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
       .replace(/\/+$/, '')
     const login = (cfgRec.getString('api_login') || '').trim()
     const password = (cfgRec.getString('api_password') || '').trim()
-    let apiToken = (cfgRec.getString('api_token') || '').trim()
+    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+    let apiToken = rawStoredToken.startsWith('Bearer ')
+      ? rawStoredToken.substring(7).trim()
+      : rawStoredToken
     const endpointPrescriptions = '/integration-engine/get/prescriptions'
 
     // Proteção contra concorrência: verifica se há sincronização recente ativa (menos de 60s)
@@ -477,17 +521,19 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
       inProgressRec.set('colecao', 'prescricoes_sync')
       inProgressRec.set('registro_id', 'sync_cdc')
       inProgressRec.set('acao', 'SPINCARE_SYNC_IN_PROGRESS')
-      inProgressRec.set('usuario', authUser.id)
-      inProgressRec.set('usuario_nome', authUser.getString('name') || '')
-      inProgressRec.set('usuario_email', authUser.getString('email') || '')
-      inProgressRec.set('usuario_role', authUser.getString('role') || 'admin')
+      inProgressRec.set('usuario', authUser ? authUser.id : '')
+      inProgressRec.set('usuario_nome', authUser ? authUser.getString('name') || '' : 'sistema')
+      inProgressRec.set('usuario_email', authUser ? authUser.getString('email') || '' : '')
+      inProgressRec.set('usuario_role', authUser ? authUser.getString('role') || 'admin' : 'admin')
       inProgressRec.set('status_novo', 'in_progress')
       e.app.save(inProgressRec)
     } catch (_) {}
 
-    const getValidToken = () => {
-      if (apiToken) return apiToken
-      if (!login || !password) return ''
+    const fetchFreshToken = () => {
+      if (!login || !password) {
+        console.warn('[Sync Prescrições Manual Auth] Login ou senha não configurados.')
+        return ''
+      }
       try {
         const tokenUrl =
           baseUrl +
@@ -495,12 +541,14 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
           encodeURIComponent(login) +
           '&password=' +
           encodeURIComponent(password)
+        console.log('[Sync Prescrições Manual Auth] Solicitando token em:', baseUrl + '/token/v1')
         const resToken = $http.send({
           url: tokenUrl,
           method: 'GET',
           headers: { Accept: '*/*' },
           timeout: 15,
         })
+        console.log('[Sync Prescrições Manual Auth] Resposta auth status:', resToken.statusCode)
         if (resToken.statusCode === 200) {
           let t = ''
           if (typeof resToken.json === 'string') t = resToken.json
@@ -509,17 +557,35 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
           }
           if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
           if (t) {
+            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
             apiToken = t
             cfgRec.set('api_token', t)
             e.app.save(cfgRec)
+            console.log(
+              '[Sync Prescrições Manual Auth] Novo token SpinCare obtido e salvo com sucesso.',
+            )
             return t
           }
+        } else {
+          console.error(
+            '[Sync Prescrições Manual Auth] Falha ao obter token. Status:',
+            resToken.statusCode,
+            'Corpo:',
+            resToken.raw ? String(resToken.raw).slice(0, 300) : '',
+          )
         }
-      } catch (_) {}
+      } catch (authErr) {
+        console.error('[Sync Prescrições Manual Auth] Exceção ao obter token:', authErr)
+      }
       return ''
     }
 
-    apiToken = getValidToken()
+    const getValidToken = (forceRefresh) => {
+      if (!forceRefresh && apiToken) return apiToken
+      return fetchFreshToken()
+    }
+
+    apiToken = getValidToken(false)
 
     const toIsoYmd = (val) => {
       if (!val || val === '—') return ''
@@ -597,7 +663,8 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
       }
 
       if (resp.statusCode === 401 && login && password) {
-        apiToken = getValidToken()
+        console.warn('[Sync Prescrições Manual] Status 401 na página ' + p + ', renovando token...')
+        apiToken = getValidToken(true)
         if (apiToken) {
           try {
             const retryUrl =
@@ -621,12 +688,21 @@ routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
               },
               timeout: 30,
             })
-          } catch (_) {}
+          } catch (retryErr) {
+            console.error('[Sync Prescrições Manual] Erro no retry após renovação:', retryErr)
+          }
         }
       }
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        console.error('[Sync Prescrições Manual] Status ' + resp.statusCode)
+        console.error(
+          '[Sync Prescrições Manual] SpinCare retornou status ' +
+            resp.statusCode +
+            ' na pág ' +
+            p +
+            '. Corpo:',
+          resp.raw ? String(resp.raw).slice(0, 300) : '',
+        )
         break
       }
 
@@ -956,12 +1032,13 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
       .replace(/\/+$/, '')
     const login = (cfgRec.getString('api_login') || '').trim()
     const password = (cfgRec.getString('api_password') || '').trim()
-    let apiToken = (cfgRec.getString('api_token') || '').trim()
-    if (apiToken.startsWith('Bearer ')) apiToken = apiToken.substring(7).trim()
+    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+    let apiToken = rawStoredToken.startsWith('Bearer ')
+      ? rawStoredToken.substring(7).trim()
+      : rawStoredToken
     const endpointPrescriptions = '/integration-engine/get/prescriptions'
 
-    const getValidToken = () => {
-      if (apiToken) return apiToken
+    const fetchFreshToken = () => {
       if (!login || !password) return ''
       try {
         const tokenUrl =
@@ -984,6 +1061,7 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
           }
           if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
           if (t) {
+            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
             apiToken = t
             cfgRec.set('api_token', t)
             e.app.save(cfgRec)
@@ -994,7 +1072,12 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
       return ''
     }
 
-    apiToken = getValidToken()
+    const getValidToken = (forceRefresh) => {
+      if (!forceRefresh && apiToken) return apiToken
+      return fetchFreshToken()
+    }
+
+    apiToken = getValidToken(false)
 
     const toIsoYmd = (val) => {
       if (!val || val === '—') return ''
@@ -1072,7 +1155,7 @@ routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
       }
 
       if (resp.statusCode === 401 && login && password) {
-        apiToken = getValidToken()
+        apiToken = getValidToken(true)
         if (apiToken) {
           try {
             const retryUrl =
