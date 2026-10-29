@@ -419,475 +419,469 @@ cronAdd('spincare_prescriptions_daily_sync', '* * * * *', () => {
 // ----------------------------------------------------------------------------
 // ROTA: POST /backend/v1/spincare/prescriptions/sync (Gatilho Manual Admin/Clínico)
 // ----------------------------------------------------------------------------
-routerAdd(
-  'POST',
-  '/backend/v1/spincare/prescriptions/sync',
-  (e) => {
-    try {
-      const authUser = e.auth
-      const role = authUser ? (authUser.getString('role') || 'comum') : 'admin'
-      if (authUser && role === 'medico_visitador') {
-        return e.forbiddenError(
-          'Acesso restrito: Médicos Visitadores não possuem autorização para disparar sincronização.',
-        )
-      }
-
-      const startTime = new Date().getTime()
-
-      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
-      if (!records || records.length === 0) {
-        return e.json(503, {
-          success: false,
-          message: 'Configuração do SpinCare não encontrada.',
-        })
-      }
-
-      const cfgRec = records[0]
-      const baseUrl = (
-        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+routerAdd('POST', '/backend/v1/spincare/prescriptions/sync', (e) => {
+  try {
+    const authUser = e.auth
+    const role = authUser ? authUser.getString('role') || 'comum' : 'admin'
+    if (authUser && role === 'medico_visitador') {
+      return e.forbiddenError(
+        'Acesso restrito: Médicos Visitadores não possuem autorização para disparar sincronização.',
       )
-        .trim()
-        .replace(/\/+$/, '')
-      const login = (cfgRec.getString('api_login') || '').trim()
-      const password = (cfgRec.getString('api_password') || '').trim()
-      let apiToken = (cfgRec.getString('api_token') || '').trim()
-      const endpointPrescriptions = '/integration-engine/get/prescriptions'
+    }
 
-      // Proteção contra concorrência: verifica se há sincronização recente ativa (menos de 60s)
-      const lastAudit = e.app.findRecordsByFilter(
-        'audit_logs',
-        'colecao = "prescricoes_sync" && acao = "SPINCARE_SYNC_IN_PROGRESS"',
-        '-created',
-        1,
-        0,
-      )
-      if (lastAudit && lastAudit.length > 0) {
-        const lastCreated = new Date(lastAudit[0].getString('created')).getTime()
-        if (startTime - lastCreated < 60000) {
-          return e.json(409, {
-            success: false,
-            alreadyRunning: true,
-            message: 'Uma sincronização de prescrições já está em andamento. Aguarde a conclusão.',
-          })
-        }
-      }
+    const startTime = new Date().getTime()
 
-      // Marca em progresso na auditoria
-      let inProgressRec = null
-      try {
-        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
-        inProgressRec = new Record(auditCol)
-        inProgressRec.set('colecao', 'prescricoes_sync')
-        inProgressRec.set('registro_id', 'sync_cdc')
-        inProgressRec.set('acao', 'SPINCARE_SYNC_IN_PROGRESS')
-        inProgressRec.set('usuario', authUser.id)
-        inProgressRec.set('usuario_nome', authUser.getString('name') || '')
-        inProgressRec.set('usuario_email', authUser.getString('email') || '')
-        inProgressRec.set('usuario_role', authUser.getString('role') || 'admin')
-        inProgressRec.set('status_novo', 'in_progress')
-        e.app.save(inProgressRec)
-      } catch (_) {}
-
-      const getValidToken = () => {
-        if (apiToken) return apiToken
-        if (!login || !password) return ''
-        try {
-          const tokenUrl =
-            baseUrl +
-            '/token/v1?login=' +
-            encodeURIComponent(login) +
-            '&password=' +
-            encodeURIComponent(password)
-          const resToken = $http.send({
-            url: tokenUrl,
-            method: 'GET',
-            headers: { Accept: '*/*' },
-            timeout: 15,
-          })
-          if (resToken.statusCode === 200) {
-            let t = ''
-            if (typeof resToken.json === 'string') t = resToken.json
-            else if (resToken.json && typeof resToken.json === 'object') {
-              t = resToken.json.token || resToken.json.access_token || ''
-            }
-            if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
-            if (t) {
-              apiToken = t
-              cfgRec.set('api_token', t)
-              e.app.save(cfgRec)
-              return t
-            }
-          }
-        } catch (_) {}
-        return ''
-      }
-
-      apiToken = getValidToken()
-
-      const toIsoYmd = (val) => {
-        if (!val || val === '—') return ''
-        const s = String(val).trim().split(' ')[0]
-        if (s.includes('/')) {
-          const parts = s.split('/')
-          if (parts.length === 3) {
-            return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
-          }
-        } else if (s.includes('-')) {
-          const parts = s.split('-')
-          if (parts.length === 3) {
-            if (parts[0].length === 4) {
-              return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
-            } else if (parts[2].length === 4) {
-              return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
-            }
-          }
-        }
-        return ''
-      }
-
-      const formatDtBr = (val) => {
-        if (!val || val === '—') return '—'
-        const iso = toIsoYmd(val)
-        if (iso && iso.length === 10) {
-          const parts = iso.split('-')
-          return parts[2] + '/' + parts[1] + '/' + parts[0]
-        }
-        return String(val).trim()
-      }
-
-      const initialDtParam = '2026-01-01 00:00:00'
-      let totalFetched = 0
-      let totalCreated = 0
-      let totalUpdated = 0
-      let totalIgnored = 0
-      const nowIso = new Date().toISOString()
-      const pageSize = 100
-      const maxPages = 50
-
-      const syncCol = e.app.findCollectionByNameOrId('prescricoes_sync')
-
-      for (let p = 1; p <= maxPages; p++) {
-        let pUrl =
-          baseUrl +
-          endpointPrescriptions +
-          '?page_number=' +
-          p +
-          '&page_size=' +
-          pageSize +
-          '&initial_dt=' +
-          encodeURIComponent(initialDtParam) +
-          (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
-
-        const reqHeaders = {
-          Accept: 'application/json',
-          'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
-        }
-        if (apiToken) {
-          reqHeaders['Authorization'] = 'Bearer ' + apiToken
-        }
-
-        let resp
-        try {
-          resp = $http.send({
-            url: pUrl,
-            method: 'GET',
-            headers: reqHeaders,
-            timeout: 30,
-          })
-        } catch (netErr) {
-          console.error('[Sync Prescrições Manual] Falha na página ' + p + ':', netErr)
-          break
-        }
-
-        if (resp.statusCode === 401 && login && password) {
-          apiToken = getValidToken()
-          if (apiToken) {
-            try {
-              const retryUrl =
-                baseUrl +
-                endpointPrescriptions +
-                '?page_number=' +
-                p +
-                '&page_size=' +
-                pageSize +
-                '&initial_dt=' +
-                encodeURIComponent(initialDtParam) +
-                '&token=' +
-                encodeURIComponent(apiToken)
-              resp = $http.send({
-                url: retryUrl,
-                method: 'GET',
-                headers: {
-                  Accept: 'application/json',
-                  Authorization: 'Bearer ' + apiToken,
-                  'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
-                },
-                timeout: 30,
-              })
-            } catch (_) {}
-          }
-        }
-
-        if (resp.statusCode < 200 || resp.statusCode >= 300) {
-          console.error('[Sync Prescrições Manual] Status ' + resp.statusCode)
-          break
-        }
-
-        let rawData = []
-        try {
-          rawData = resp.json || JSON.parse(resp.raw || '[]')
-        } catch (_) {
-          rawData = []
-        }
-
-        let items = []
-        if (Array.isArray(rawData)) items = rawData
-        else if (rawData && Array.isArray(rawData.items)) items = rawData.items
-        else if (rawData && typeof rawData === 'object') items = [rawData]
-
-        if (!items || items.length === 0) break
-        totalFetched += items.length
-
-        for (let i = 0; i < items.length; i++) {
-          const raw = items[i]
-          if (!raw || typeof raw !== 'object') continue
-          const spincareId = String(raw.id || raw.prescription_id || raw.numero || '').trim()
-          if (!spincareId) continue
-
-          const numero = String(
-            raw.prescription_number || raw.numero || raw.attendance_id || spincareId || '—',
-          ).trim()
-          const pid = String(raw.patient_id || raw.id_paciente || '').trim()
-          const pnome = String(
-            raw.patient_name ||
-              raw.nm_paciente ||
-              (raw.patient && raw.patient.name) ||
-              raw.paciente ||
-              'Paciente Help Vida',
-          ).trim()
-          const medico = String(
-            raw.professional_name ||
-              raw.nm_profissional ||
-              raw.prescritor ||
-              raw.professional ||
-              'Médico Prescritor',
-          ).trim()
-          const mid = String(raw.professional_id || raw.id_profissional || '').trim()
-
-          let status = 'Liberada'
-          if (raw.status) status = String(raw.status)
-          else if (raw.status_id === 1) status = 'Pendente Liberação'
-          else if (raw.status_id === 2) status = 'Liberada'
-          else if (raw.status_id === 3) status = 'Suspensa'
-
-          const rawDataPresc = String(
-            raw.prescription_date ||
-              raw.creation_dt ||
-              raw.initial_dt ||
-              raw.dt_prescricao ||
-              raw.dt_criacao ||
-              '—',
-          ).trim()
-          const dataPrescricaoIso = toIsoYmd(rawDataPresc) || toIsoYmd(raw.initial_dt)
-          const dataPrescricao = formatDtBr(rawDataPresc)
-          const dataInicialIso = toIsoYmd(raw.initial_dt)
-          const dataInicial = formatDtBr(raw.initial_dt)
-          const dataFinalIso = toIsoYmd(raw.final_dt)
-          const dataFinal = formatDtBr(raw.final_dt)
-
-          let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
-          if (typeof rawItems === 'string') {
-            try {
-              rawItems = JSON.parse(rawItems)
-            } catch (_) {
-              rawItems = []
-            }
-          }
-
-          let itensList = []
-          if (Array.isArray(rawItems)) {
-            itensList = rawItems.map((it) => {
-              if (typeof it === 'string') {
-                return {
-                  id: '',
-                  codigo: '',
-                  descricao: it,
-                  posologia: '',
-                  dose: '',
-                  frequencia: '',
-                  viaAdministracao: '',
-                  unidade: '',
-                  quantidade: 1,
-                  observacao: '',
-                  fornecimento: 'Empresa',
-                }
-              }
-              const desc = String(
-                it.description ||
-                  it.itemDescription ||
-                  it.ds_produto ||
-                  it.ds_item ||
-                  it.descricao ||
-                  it.name ||
-                  it.product_name ||
-                  it.item ||
-                  'Medicamento Prescrito',
-              ).trim()
-              const poso = String(
-                it.posology ||
-                  it.posologia ||
-                  it.dosage ||
-                  it.dose ||
-                  it.ds_posologia ||
-                  it.frequency ||
-                  it.frequencia ||
-                  '',
-              ).trim()
-              const via = String(
-                it.route || it.via || it.via_administracao || it.administration_route || '',
-              ).trim()
-              const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
-              const rawDose =
-                it.dose_qt !== undefined && it.dose_qt !== null
-                  ? it.dose_qt
-                  : it.dose || it.dosage || ''
-              const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
-              const qtd = Number(
-                it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1),
-              )
-              const rawFp = String(
-                it.supplied_type ||
-                  it.funding_source ||
-                  it.fp ||
-                  it.f_p ||
-                  it.source ||
-                  it.tipo_fornecimento ||
-                  it.tp_fornecimento ||
-                  '',
-              ).trim()
-              const fp =
-                rawFp.toLowerCase() === 'e' || rawFp.toLowerCase() === 'empresa'
-                  ? 'Empresa'
-                  : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
-                    ? 'Operadora'
-                    : rawFp || 'Empresa'
-
-              return {
-                id: String(it.id || it.item_id || it.itemId || ''),
-                codigo: String(it.code || it.codigo || it.product_code || '').trim(),
-                descricao: desc,
-                posologia: poso,
-                dose: doseStr,
-                frequencia: String(it.frequency || it.frequencia || '').trim(),
-                viaAdministracao: via,
-                unidade: unit,
-                quantidade: qtd,
-                observacao: String(it.observation || it.observacao || it.orientacoes || '').trim(),
-                fornecimento: fp,
-              }
-            })
-          }
-
-          let syncRec = null
-          try {
-            syncRec = e.app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = {:id}', {
-              id: spincareId,
-            })
-          } catch (_) {
-            syncRec = null
-          }
-
-          const isNew = !syncRec
-          if (isNew) {
-            syncRec = new Record(syncCol)
-            syncRec.set('spincare_id', spincareId)
-          }
-
-          syncRec.set('numero', numero)
-          syncRec.set('paciente_id', pid)
-          syncRec.set('paciente_nome', pnome)
-          syncRec.set('medico_prescritor', medico)
-          syncRec.set('medico_id', mid)
-          syncRec.set('data_prescricao', dataPrescricao)
-          syncRec.set('data_prescricao_iso', dataPrescricaoIso)
-          syncRec.set('data_inicial', dataInicial)
-          syncRec.set('data_inicial_iso', dataInicialIso)
-          syncRec.set('data_final', dataFinal)
-          syncRec.set('data_final_iso', dataFinalIso)
-          syncRec.set('status', status)
-          syncRec.set('tipo', String(raw.type || raw.tipo || 'Médica'))
-          syncRec.set('total_itens', itensList.length)
-          syncRec.set('itens', itensList)
-          syncRec.set('payload', raw) // TODOS os campos crus vindo da API SpinCare
-          syncRec.set('synced_at', nowIso)
-
-          try {
-            e.app.save(syncRec)
-            if (isNew) totalCreated++
-            else totalUpdated++
-          } catch (saveErr) {
-            console.error(
-              '[Sync Prescrições Manual] Erro ao salvar prescrição ' + spincareId + ':',
-              saveErr,
-            )
-            totalIgnored++
-          }
-        }
-
-        if (items.length < pageSize) break
-      }
-
-      const durationMs = new Date().getTime() - startTime
-
-      // Registro final de auditoria LGPD
-      try {
-        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
-        const auditRecord = new Record(auditCol)
-        auditRecord.set('colecao', 'prescricoes_sync')
-        auditRecord.set('registro_id', 'sync_cdc')
-        auditRecord.set('acao', 'SPINCARE_SYNC_MANUAL')
-        auditRecord.set('usuario', authUser.id)
-        auditRecord.set('usuario_nome', authUser.getString('name') || '')
-        auditRecord.set('usuario_email', authUser.getString('email') || '')
-        auditRecord.set('usuario_role', authUser.getString('role') || 'admin')
-        auditRecord.set('status_anterior', '')
-        auditRecord.set('status_novo', 'sucesso')
-        auditRecord.set(
-          'detalhes',
-          'Replicação CDC concluída (manual): buscadas=' +
-            totalFetched +
-            ', criadas=' +
-            totalCreated +
-            ', atualizadas=' +
-            totalUpdated +
-            ', falhas=' +
-            totalIgnored +
-            ', duração=' +
-            Math.round(durationMs / 1000) +
-            's',
-        )
-        e.app.save(auditRecord)
-      } catch (_) {}
-
-      return e.json(200, {
-        success: true,
-        trigger: 'manual',
-        totalFetched: totalFetched,
-        created: totalCreated,
-        updated: totalUpdated,
-        ignored: totalIgnored,
-        syncedAt: nowIso,
-        durationMs: durationMs,
-      })
-    } catch (err) {
-      console.error('Erro na rota POST /spincare/prescriptions/sync:', err)
-      return e.json(500, {
+    const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+    if (!records || records.length === 0) {
+      return e.json(503, {
         success: false,
-        message: 'Não foi possível concluir a sincronização agora: ' + String(err),
+        message: 'Configuração do SpinCare não encontrada.',
       })
     }
-  },
-)
+
+    const cfgRec = records[0]
+    const baseUrl = (
+      cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    const login = (cfgRec.getString('api_login') || '').trim()
+    const password = (cfgRec.getString('api_password') || '').trim()
+    let apiToken = (cfgRec.getString('api_token') || '').trim()
+    const endpointPrescriptions = '/integration-engine/get/prescriptions'
+
+    // Proteção contra concorrência: verifica se há sincronização recente ativa (menos de 60s)
+    const lastAudit = e.app.findRecordsByFilter(
+      'audit_logs',
+      'colecao = "prescricoes_sync" && acao = "SPINCARE_SYNC_IN_PROGRESS"',
+      '-created',
+      1,
+      0,
+    )
+    if (lastAudit && lastAudit.length > 0) {
+      const lastCreated = new Date(lastAudit[0].getString('created')).getTime()
+      if (startTime - lastCreated < 60000) {
+        return e.json(409, {
+          success: false,
+          alreadyRunning: true,
+          message: 'Uma sincronização de prescrições já está em andamento. Aguarde a conclusão.',
+        })
+      }
+    }
+
+    // Marca em progresso na auditoria
+    let inProgressRec = null
+    try {
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      inProgressRec = new Record(auditCol)
+      inProgressRec.set('colecao', 'prescricoes_sync')
+      inProgressRec.set('registro_id', 'sync_cdc')
+      inProgressRec.set('acao', 'SPINCARE_SYNC_IN_PROGRESS')
+      inProgressRec.set('usuario', authUser.id)
+      inProgressRec.set('usuario_nome', authUser.getString('name') || '')
+      inProgressRec.set('usuario_email', authUser.getString('email') || '')
+      inProgressRec.set('usuario_role', authUser.getString('role') || 'admin')
+      inProgressRec.set('status_novo', 'in_progress')
+      e.app.save(inProgressRec)
+    } catch (_) {}
+
+    const getValidToken = () => {
+      if (apiToken) return apiToken
+      if (!login || !password) return ''
+      try {
+        const tokenUrl =
+          baseUrl +
+          '/token/v1?login=' +
+          encodeURIComponent(login) +
+          '&password=' +
+          encodeURIComponent(password)
+        const resToken = $http.send({
+          url: tokenUrl,
+          method: 'GET',
+          headers: { Accept: '*/*' },
+          timeout: 15,
+        })
+        if (resToken.statusCode === 200) {
+          let t = ''
+          if (typeof resToken.json === 'string') t = resToken.json
+          else if (resToken.json && typeof resToken.json === 'object') {
+            t = resToken.json.token || resToken.json.access_token || ''
+          }
+          if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+          if (t) {
+            apiToken = t
+            cfgRec.set('api_token', t)
+            e.app.save(cfgRec)
+            return t
+          }
+        }
+      } catch (_) {}
+      return ''
+    }
+
+    apiToken = getValidToken()
+
+    const toIsoYmd = (val) => {
+      if (!val || val === '—') return ''
+      const s = String(val).trim().split(' ')[0]
+      if (s.includes('/')) {
+        const parts = s.split('/')
+        if (parts.length === 3) {
+          return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+        }
+      } else if (s.includes('-')) {
+        const parts = s.split('-')
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+          } else if (parts[2].length === 4) {
+            return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+          }
+        }
+      }
+      return ''
+    }
+
+    const formatDtBr = (val) => {
+      if (!val || val === '—') return '—'
+      const iso = toIsoYmd(val)
+      if (iso && iso.length === 10) {
+        const parts = iso.split('-')
+        return parts[2] + '/' + parts[1] + '/' + parts[0]
+      }
+      return String(val).trim()
+    }
+
+    const initialDtParam = '2026-01-01 00:00:00'
+    let totalFetched = 0
+    let totalCreated = 0
+    let totalUpdated = 0
+    let totalIgnored = 0
+    const nowIso = new Date().toISOString()
+    const pageSize = 100
+    const maxPages = 50
+
+    const syncCol = e.app.findCollectionByNameOrId('prescricoes_sync')
+
+    for (let p = 1; p <= maxPages; p++) {
+      let pUrl =
+        baseUrl +
+        endpointPrescriptions +
+        '?page_number=' +
+        p +
+        '&page_size=' +
+        pageSize +
+        '&initial_dt=' +
+        encodeURIComponent(initialDtParam) +
+        (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+      const reqHeaders = {
+        Accept: 'application/json',
+        'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+      }
+      if (apiToken) {
+        reqHeaders['Authorization'] = 'Bearer ' + apiToken
+      }
+
+      let resp
+      try {
+        resp = $http.send({
+          url: pUrl,
+          method: 'GET',
+          headers: reqHeaders,
+          timeout: 30,
+        })
+      } catch (netErr) {
+        console.error('[Sync Prescrições Manual] Falha na página ' + p + ':', netErr)
+        break
+      }
+
+      if (resp.statusCode === 401 && login && password) {
+        apiToken = getValidToken()
+        if (apiToken) {
+          try {
+            const retryUrl =
+              baseUrl +
+              endpointPrescriptions +
+              '?page_number=' +
+              p +
+              '&page_size=' +
+              pageSize +
+              '&initial_dt=' +
+              encodeURIComponent(initialDtParam) +
+              '&token=' +
+              encodeURIComponent(apiToken)
+            resp = $http.send({
+              url: retryUrl,
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: 'Bearer ' + apiToken,
+                'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+              },
+              timeout: 30,
+            })
+          } catch (_) {}
+        }
+      }
+
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        console.error('[Sync Prescrições Manual] Status ' + resp.statusCode)
+        break
+      }
+
+      let rawData = []
+      try {
+        rawData = resp.json || JSON.parse(resp.raw || '[]')
+      } catch (_) {
+        rawData = []
+      }
+
+      let items = []
+      if (Array.isArray(rawData)) items = rawData
+      else if (rawData && Array.isArray(rawData.items)) items = rawData.items
+      else if (rawData && typeof rawData === 'object') items = [rawData]
+
+      if (!items || items.length === 0) break
+      totalFetched += items.length
+
+      for (let i = 0; i < items.length; i++) {
+        const raw = items[i]
+        if (!raw || typeof raw !== 'object') continue
+        const spincareId = String(raw.id || raw.prescription_id || raw.numero || '').trim()
+        if (!spincareId) continue
+
+        const numero = String(
+          raw.prescription_number || raw.numero || raw.attendance_id || spincareId || '—',
+        ).trim()
+        const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+        const pnome = String(
+          raw.patient_name ||
+            raw.nm_paciente ||
+            (raw.patient && raw.patient.name) ||
+            raw.paciente ||
+            'Paciente Help Vida',
+        ).trim()
+        const medico = String(
+          raw.professional_name ||
+            raw.nm_profissional ||
+            raw.prescritor ||
+            raw.professional ||
+            'Médico Prescritor',
+        ).trim()
+        const mid = String(raw.professional_id || raw.id_profissional || '').trim()
+
+        let status = 'Liberada'
+        if (raw.status) status = String(raw.status)
+        else if (raw.status_id === 1) status = 'Pendente Liberação'
+        else if (raw.status_id === 2) status = 'Liberada'
+        else if (raw.status_id === 3) status = 'Suspensa'
+
+        const rawDataPresc = String(
+          raw.prescription_date ||
+            raw.creation_dt ||
+            raw.initial_dt ||
+            raw.dt_prescricao ||
+            raw.dt_criacao ||
+            '—',
+        ).trim()
+        const dataPrescricaoIso = toIsoYmd(rawDataPresc) || toIsoYmd(raw.initial_dt)
+        const dataPrescricao = formatDtBr(rawDataPresc)
+        const dataInicialIso = toIsoYmd(raw.initial_dt)
+        const dataInicial = formatDtBr(raw.initial_dt)
+        const dataFinalIso = toIsoYmd(raw.final_dt)
+        const dataFinal = formatDtBr(raw.final_dt)
+
+        let rawItems = raw.items || raw.itens || raw.prescription_items || raw.products || []
+        if (typeof rawItems === 'string') {
+          try {
+            rawItems = JSON.parse(rawItems)
+          } catch (_) {
+            rawItems = []
+          }
+        }
+
+        let itensList = []
+        if (Array.isArray(rawItems)) {
+          itensList = rawItems.map((it) => {
+            if (typeof it === 'string') {
+              return {
+                id: '',
+                codigo: '',
+                descricao: it,
+                posologia: '',
+                dose: '',
+                frequencia: '',
+                viaAdministracao: '',
+                unidade: '',
+                quantidade: 1,
+                observacao: '',
+                fornecimento: 'Empresa',
+              }
+            }
+            const desc = String(
+              it.description ||
+                it.itemDescription ||
+                it.ds_produto ||
+                it.ds_item ||
+                it.descricao ||
+                it.name ||
+                it.product_name ||
+                it.item ||
+                'Medicamento Prescrito',
+            ).trim()
+            const poso = String(
+              it.posology ||
+                it.posologia ||
+                it.dosage ||
+                it.dose ||
+                it.ds_posologia ||
+                it.frequency ||
+                it.frequencia ||
+                '',
+            ).trim()
+            const via = String(
+              it.route || it.via || it.via_administracao || it.administration_route || '',
+            ).trim()
+            const unit = String(it.unit || it.measure_unit || it.unidade || '').trim()
+            const rawDose =
+              it.dose_qt !== undefined && it.dose_qt !== null
+                ? it.dose_qt
+                : it.dose || it.dosage || ''
+            const doseStr = rawDose !== '' ? String(rawDose).trim() : ''
+            const qtd = Number(it.quantity || it.qtd || it.amount || (it.dose_qt ? it.dose_qt : 1))
+            const rawFp = String(
+              it.supplied_type ||
+                it.funding_source ||
+                it.fp ||
+                it.f_p ||
+                it.source ||
+                it.tipo_fornecimento ||
+                it.tp_fornecimento ||
+                '',
+            ).trim()
+            const fp =
+              rawFp.toLowerCase() === 'e' || rawFp.toLowerCase() === 'empresa'
+                ? 'Empresa'
+                : rawFp.toLowerCase() === 'o' || rawFp.toLowerCase() === 'operadora'
+                  ? 'Operadora'
+                  : rawFp || 'Empresa'
+
+            return {
+              id: String(it.id || it.item_id || it.itemId || ''),
+              codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+              descricao: desc,
+              posologia: poso,
+              dose: doseStr,
+              frequencia: String(it.frequency || it.frequencia || '').trim(),
+              viaAdministracao: via,
+              unidade: unit,
+              quantidade: qtd,
+              observacao: String(it.observation || it.observacao || it.orientacoes || '').trim(),
+              fornecimento: fp,
+            }
+          })
+        }
+
+        let syncRec = null
+        try {
+          syncRec = e.app.findFirstRecordByFilter('prescricoes_sync', 'spincare_id = {:id}', {
+            id: spincareId,
+          })
+        } catch (_) {
+          syncRec = null
+        }
+
+        const isNew = !syncRec
+        if (isNew) {
+          syncRec = new Record(syncCol)
+          syncRec.set('spincare_id', spincareId)
+        }
+
+        syncRec.set('numero', numero)
+        syncRec.set('paciente_id', pid)
+        syncRec.set('paciente_nome', pnome)
+        syncRec.set('medico_prescritor', medico)
+        syncRec.set('medico_id', mid)
+        syncRec.set('data_prescricao', dataPrescricao)
+        syncRec.set('data_prescricao_iso', dataPrescricaoIso)
+        syncRec.set('data_inicial', dataInicial)
+        syncRec.set('data_inicial_iso', dataInicialIso)
+        syncRec.set('data_final', dataFinal)
+        syncRec.set('data_final_iso', dataFinalIso)
+        syncRec.set('status', status)
+        syncRec.set('tipo', String(raw.type || raw.tipo || 'Médica'))
+        syncRec.set('total_itens', itensList.length)
+        syncRec.set('itens', itensList)
+        syncRec.set('payload', raw) // TODOS os campos crus vindo da API SpinCare
+        syncRec.set('synced_at', nowIso)
+
+        try {
+          e.app.save(syncRec)
+          if (isNew) totalCreated++
+          else totalUpdated++
+        } catch (saveErr) {
+          console.error(
+            '[Sync Prescrições Manual] Erro ao salvar prescrição ' + spincareId + ':',
+            saveErr,
+          )
+          totalIgnored++
+        }
+      }
+
+      if (items.length < pageSize) break
+    }
+
+    const durationMs = new Date().getTime() - startTime
+
+    // Registro final de auditoria LGPD
+    try {
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      const auditRecord = new Record(auditCol)
+      auditRecord.set('colecao', 'prescricoes_sync')
+      auditRecord.set('registro_id', 'sync_cdc')
+      auditRecord.set('acao', 'SPINCARE_SYNC_MANUAL')
+      auditRecord.set('usuario', authUser.id)
+      auditRecord.set('usuario_nome', authUser.getString('name') || '')
+      auditRecord.set('usuario_email', authUser.getString('email') || '')
+      auditRecord.set('usuario_role', authUser.getString('role') || 'admin')
+      auditRecord.set('status_anterior', '')
+      auditRecord.set('status_novo', 'sucesso')
+      auditRecord.set(
+        'detalhes',
+        'Replicação CDC concluída (manual): buscadas=' +
+          totalFetched +
+          ', criadas=' +
+          totalCreated +
+          ', atualizadas=' +
+          totalUpdated +
+          ', falhas=' +
+          totalIgnored +
+          ', duração=' +
+          Math.round(durationMs / 1000) +
+          's',
+      )
+      e.app.save(auditRecord)
+    } catch (_) {}
+
+    return e.json(200, {
+      success: true,
+      trigger: 'manual',
+      totalFetched: totalFetched,
+      created: totalCreated,
+      updated: totalUpdated,
+      ignored: totalIgnored,
+      syncedAt: nowIso,
+      durationMs: durationMs,
+    })
+  } catch (err) {
+    console.error('Erro na rota POST /spincare/prescriptions/sync:', err)
+    return e.json(500, {
+      success: false,
+      message: 'Não foi possível concluir a sincronização agora: ' + String(err),
+    })
+  }
+})
 
 // ----------------------------------------------------------------------------
 // ROTA: GET /backend/v1/spincare/prescriptions/sync-status
