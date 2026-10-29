@@ -106,10 +106,11 @@ export default function Prescricoes() {
       .trim()
       .toUpperCase()
 
-  // Converte data dd/mm/aaaa ou yyyy-mm-dd para número comparável yyyymmdd
+  // Converte data dd/mm/aaaa ou yyyy-mm-dd (ou ISO 8601 com T/Z/espaço) para número comparável yyyymmdd
   const parseDateToComparable = (dateStr: string): number | null => {
     if (!dateStr || dateStr === '—') return null
-    const s = dateStr.trim().split(' ')[0]
+    // Remove qualquer porção de horário ("T..." ou " ...")
+    const s = dateStr.trim().split('T')[0].split(' ')[0]
     if (s.includes('/')) {
       const parts = s.split('/')
       if (parts.length === 3) {
