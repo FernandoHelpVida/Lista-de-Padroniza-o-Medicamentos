@@ -286,18 +286,22 @@ export default function Prescricoes() {
         if (!matchWords) return
       }
 
-      // 2. Filtro de período por início da vigência (sem sobreposição parcial)
+      // 2. Filtro de período por vigência ATIVA (sobreposição de intervalos — semântica SpinCare):
+      // a prescrição entra no resultado quando a vigência COBRE o período:
+      // começa antes do fim do período E termina depois do início dele.
       const pDateInit =
         parseDateToComparable(p.data_inicial_iso) || parseDateToComparable(p.data_inicial)
+      const pDateEnd =
+        parseDateToComparable(p.data_final_iso) || parseDateToComparable(p.data_final)
 
       let inPeriod = false
-      if (pDateInit !== null) {
-        if (
-          (startComp === null || pDateInit >= startComp) &&
-          (endComp === null || pDateInit <= endComp)
-        ) {
-          inPeriod = true
-        }
+      if (startComp === null && endComp === null) {
+        inPeriod = true
+      } else if (pDateInit !== null || pDateEnd !== null) {
+        const startsBeforePeriodEnd = endComp === null || pDateInit === null || pDateInit <= endComp
+        const endsAfterPeriodStart =
+          startComp === null || pDateEnd === null || pDateEnd >= startComp
+        inPeriod = startsBeforePeriodEnd && endsAfterPeriodStart
       }
 
       if (!inPeriod && (startComp !== null || endComp !== null)) return

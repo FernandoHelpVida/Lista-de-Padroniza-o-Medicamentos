@@ -2429,18 +2429,14 @@ routerAdd(
         }
 
         // Verifica VIGÊNCIA da prescrição para admissão do paciente candidato no período:
-        // Regra oficial SpinCare: a prescrição pertence ao período se e somente se
-        // a DATA DE INÍCIO DA VIGÊNCIA (initial_dt) estiver DENTRO do período pesquisado:
-        // initial_dt >= isoStart && initial_dt <= isoEnd
         if (hasPeriodFilter) {
+          // Vigência ATIVA no período (sobreposição de intervalos — semântica SpinCare)
           const dtInitIso = toIsoYmd(raw.initial_dt)
-          let inPeriod = false
-          if (dtInitIso) {
-            if (dtInitIso >= isoStart && dtInitIso <= isoEnd) {
-              inPeriod = true
-            }
-          }
-          if (!inPeriod) continue
+          const dtFinalIso = toIsoYmd(raw.final_dt)
+          const hasVigencia = dtInitIso || dtFinalIso
+          const startsBeforePeriodEnd = !isoEnd || !dtInitIso || dtInitIso <= isoEnd
+          const endsAfterPeriodStart = !isoStart || !dtFinalIso || dtFinalIso >= isoStart
+          if (!(hasVigencia && startsBeforePeriodEnd && endsAfterPeriodStart)) continue
         }
 
         // Verifica itens da prescrição para o medicamento buscado
@@ -2568,21 +2564,18 @@ routerAdd(
 
         if (!patientMatches) continue
 
-        // Filtro de período por VIGÊNCIA da prescrição:
-        // Regra oficial SpinCare: a prescrição pertence ao período pesquisado se e somente se
-        // a DATA DE INÍCIO DA VIGÊNCIA (initial_dt) estiver DENTRO do período pesquisado:
-        // initial_dt >= isoStart && initial_dt <= isoEnd (NUNCA por interseção de intervalos nem criação).
+        // Filtro de período por VIGÊNCIA ATIVA (sobreposição de intervalos — semântica SpinCare):
+        // a prescrição pertence ao período quando a vigência cobre o intervalo pesquisado:
+        // começa antes do fim do período E termina depois do início dele.
         let periodMatches = true
-        const dtInitIso = toIsoYmd(raw.initial_dt)
 
         if (hasPeriodFilter) {
-          let inPeriod = false
-          if (dtInitIso) {
-            if (dtInitIso >= isoStart && dtInitIso <= isoEnd) {
-              inPeriod = true
-            }
-          }
-          periodMatches = inPeriod
+          const dtInitIso = toIsoYmd(raw.initial_dt)
+          const dtFinalIso = toIsoYmd(raw.final_dt)
+          const hasVigencia = dtInitIso || dtFinalIso
+          const startsBeforePeriodEnd = !isoEnd || !dtInitIso || dtInitIso <= isoEnd
+          const endsAfterPeriodStart = !isoStart || !dtFinalIso || dtFinalIso >= isoStart
+          periodMatches = hasVigencia && startsBeforePeriodEnd && endsAfterPeriodStart
         }
 
         if (!periodMatches) continue
