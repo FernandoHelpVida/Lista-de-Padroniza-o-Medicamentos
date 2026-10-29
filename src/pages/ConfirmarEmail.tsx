@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useParams, useLocation } from 'react-router-dom'
 import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, CheckCircle2, Loader2, ArrowLeft } from 'lucide-react'
@@ -8,7 +8,30 @@ import pb from '@/lib/pocketbase/client'
 
 export default function ConfirmarEmail() {
   const [searchParams] = useSearchParams()
-  const token = searchParams.get('token') || ''
+  const params = useParams<{ token?: string }>()
+  const location = useLocation()
+
+  const resolveToken = (): string => {
+    const fromQuery = searchParams.get('token')
+    if (fromQuery) return fromQuery.trim()
+
+    if (params.token) return params.token.trim()
+
+    if (location.hash) {
+      const matchHashPath = location.hash.match(/confirm-email-change\/([a-zA-Z0-9_\-.]+)/)
+      if (matchHashPath && matchHashPath[1]) return matchHashPath[1]
+
+      const matchHashQuery = location.hash.match(/[?&]token=([a-zA-Z0-9_\-.]+)/)
+      if (matchHashQuery && matchHashQuery[1]) return matchHashQuery[1]
+    }
+
+    const matchPath = location.pathname.match(/confirm-email-change\/([a-zA-Z0-9_\-.]+)/)
+    if (matchPath && matchPath[1]) return matchPath[1]
+
+    return ''
+  }
+
+  const token = resolveToken()
 
   const [loading, setLoading] = useState(true)
   const [success, setSuccess] = useState(false)

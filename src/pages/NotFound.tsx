@@ -1,13 +1,42 @@
 /* 404 Page - Displays when a user attempts to access a non-existent route - translate to the language of the user */
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useEffect } from 'react'
 
 const NotFound = () => {
   const location = useLocation()
+  const navigate = useNavigate()
 
   useEffect(() => {
+    // Interceptar se veio por URL com hash do PocketBase (ex: /_/#/auth/confirm-password-reset/TOKEN)
+    const fullHash = window.location.hash || ''
+    const fullPath = location.pathname || ''
+
+    if (
+      fullPath.includes('confirm-password-reset') ||
+      fullHash.includes('confirm-password-reset')
+    ) {
+      const matchToken = (fullPath + fullHash).match(/confirm-password-reset\/([a-zA-Z0-9_\-.]+)/)
+      const token = matchToken ? matchToken[1] : ''
+      navigate(token ? `/redefinir-senha?token=${token}` : '/redefinir-senha', { replace: true })
+      return
+    }
+
+    if (fullPath.includes('confirm-verification') || fullHash.includes('confirm-verification')) {
+      const matchToken = (fullPath + fullHash).match(/confirm-verification\/([a-zA-Z0-9_\-.]+)/)
+      const token = matchToken ? matchToken[1] : ''
+      navigate(token ? `/verificar-email?token=${token}` : '/verificar-email', { replace: true })
+      return
+    }
+
+    if (fullPath.includes('confirm-email-change') || fullHash.includes('confirm-email-change')) {
+      const matchToken = (fullPath + fullHash).match(/confirm-email-change\/([a-zA-Z0-9_\-.]+)/)
+      const token = matchToken ? matchToken[1] : ''
+      navigate(token ? `/confirmar-email?token=${token}` : '/confirmar-email', { replace: true })
+      return
+    }
+
     console.error('404 Error: User attempted to access non-existent route:', location.pathname)
-  }, [location.pathname])
+  }, [location.pathname, navigate])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">

@@ -40,8 +40,20 @@ const App = () => (
           <Route path="/cadastro" element={<Cadastro />} />
           <Route path="/esqueci-senha" element={<EsqueciSenha />} />
           <Route path="/redefinir-senha" element={<RedefinirSenha />} />
+          <Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
           <Route path="/verificar-email" element={<VerificarEmail />} />
+          <Route path="/verificar-email/:token" element={<VerificarEmail />} />
           <Route path="/confirmar-email" element={<ConfirmarEmail />} />
+          <Route path="/confirmar-email/:token" element={<ConfirmarEmail />} />
+
+          {/* Rotas legadas e compatibilidade com URLs padrão do PocketBase (/_/#/auth/...) */}
+          <Route path="/auth/confirm-password-reset/:token" element={<RedefinirSenha />} />
+          <Route path="/auth/confirm-password-reset" element={<RedefinirSenha />} />
+          <Route path="/auth/confirm-verification/:token" element={<VerificarEmail />} />
+          <Route path="/auth/confirm-verification" element={<VerificarEmail />} />
+          <Route path="/auth/confirm-email-change/:token" element={<ConfirmarEmail />} />
+          <Route path="/auth/confirm-email-change" element={<ConfirmarEmail />} />
+          <Route path="/_/*" element={<Navigate to="/redefinir-senha" replace />} />
 
           {/* Rotas Protegidas no Layout Autenticado */}
           <Route

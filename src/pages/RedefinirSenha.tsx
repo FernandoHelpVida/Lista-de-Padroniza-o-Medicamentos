@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams, useParams, useLocation } from 'react-router-dom'
 import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,7 +10,37 @@ import pb from '@/lib/pocketbase/client'
 
 export default function RedefinirSenha() {
   const [searchParams] = useSearchParams()
-  const token = searchParams.get('token') || ''
+  const params = useParams<{ token?: string }>()
+  const location = useLocation()
+
+  // Extrair token de múltiplos formatos possíveis:
+  // 1. ?token=...
+  // 2. useParams() /:token
+  // 3. Hash fragment (ex: #/auth/confirm-password-reset/TOKEN ou #token=...)
+  // 4. Path direto /auth/confirm-password-reset/TOKEN
+  const resolveToken = (): string => {
+    const fromQuery = searchParams.get('token')
+    if (fromQuery) return fromQuery.trim()
+
+    if (params.token) return params.token.trim()
+
+    // Verificar no location.hash
+    if (location.hash) {
+      const matchHashPath = location.hash.match(/confirm-password-reset\/([a-zA-Z0-9_\-.]+)/)
+      if (matchHashPath && matchHashPath[1]) return matchHashPath[1]
+
+      const matchHashQuery = location.hash.match(/[?&]token=([a-zA-Z0-9_\-.]+)/)
+      if (matchHashQuery && matchHashQuery[1]) return matchHashQuery[1]
+    }
+
+    // Verificar no location.pathname caso caia direto
+    const matchPath = location.pathname.match(/confirm-password-reset\/([a-zA-Z0-9_\-.]+)/)
+    if (matchPath && matchPath[1]) return matchPath[1]
+
+    return ''
+  }
+
+  const token = resolveToken()
 
   const [password, setPassword] = useState('')
   const [passwordConfirm, setPasswordConfirm] = useState('')
