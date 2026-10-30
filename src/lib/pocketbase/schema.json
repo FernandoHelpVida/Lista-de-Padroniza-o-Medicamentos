@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T11:52:08.971Z",
+  "generatedAt": "2026-10-30T12:07:49.340Z",
   "collections": [
     {
       "name": "users",
@@ -735,6 +735,155 @@
         "CREATE INDEX idx_presc_sync_medico ON prescricoes_sync (medico_prescritor)",
         "CREATE INDEX idx_presc_sync_dt_ini_iso ON prescricoes_sync (data_inicial_iso DESC)",
         "CREATE INDEX idx_presc_sync_synced_at ON prescricoes_sync (synced_at DESC)"
+      ]
+    },
+    {
+      "name": "orcamentos_sync",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role != 'medico_visitador'",
+        "view": "@request.auth.id != '' && @request.auth.role != 'medico_visitador'",
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "spincare_id",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "numero",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "paciente_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "paciente_nome",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_aprovacao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_aprovacao_iso",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_inicial",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_inicial_iso",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_final",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_final_iso",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ano_aprovacao",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "valor_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "convenio",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "observacao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "total_itens",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "itens",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "payload",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "synced_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_orc_sync_spincare_id ON orcamentos_sync (spincare_id)",
+        "CREATE INDEX idx_orc_sync_numero ON orcamentos_sync (numero)",
+        "CREATE INDEX idx_orc_sync_paciente ON orcamentos_sync (paciente_nome)",
+        "CREATE INDEX idx_orc_sync_status ON orcamentos_sync (status)",
+        "CREATE INDEX idx_orc_sync_dt_aprov_iso ON orcamentos_sync (data_aprovacao_iso DESC)",
+        "CREATE INDEX idx_orc_sync_synced_at ON orcamentos_sync (synced_at DESC)"
       ]
     }
   ]

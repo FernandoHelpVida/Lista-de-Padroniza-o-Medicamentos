@@ -418,3 +418,65 @@ export interface PrescricaoSyncRecord {
   created: string
   updated: string
 }
+
+export interface SyncBudgetsResult {
+  success: boolean
+  trigger?: string
+  totalFetched: number
+  created: number
+  updated: number
+  ignored: number
+  syncedAt: string
+  durationMs: number
+  alreadyRunning?: boolean
+  message?: string
+}
+
+export interface BudgetSyncStatusResult {
+  isRunning: boolean
+  totalBudgets: number
+  lastSyncedAt: string
+}
+
+export interface OrcamentoSyncRecord {
+  id: string
+  spincare_id: string
+  numero: string
+  paciente_id: string
+  paciente_nome: string
+  status: string
+  data_aprovacao: string
+  data_aprovacao_iso: string
+  data_inicial: string
+  data_inicial_iso: string
+  data_final: string
+  data_final_iso: string
+  ano_aprovacao: number
+  valor_total: number
+  convenio: string
+  observacao: string
+  total_itens: number
+  itens: SpincareBudgetItem[]
+  payload: Record<string, unknown>
+  synced_at: string
+  created: string
+  updated: string
+}
+
+/**
+ * Dispara manualmente a sincronização (CDC) de orçamentos a partir de 2026.
+ */
+export async function triggerBudgetsSync(): Promise<SyncBudgetsResult> {
+  return await pb.send<SyncBudgetsResult>('/backend/v1/spincare/budgets/sync', {
+    method: 'POST',
+  })
+}
+
+/**
+ * Consulta o status atual da replicação de orçamentos (se está em execução, total e última atualização).
+ */
+export async function getBudgetsSyncStatus(): Promise<BudgetSyncStatusResult> {
+  return await pb.send<BudgetSyncStatusResult>('/backend/v1/spincare/budgets/sync-status', {
+    method: 'GET',
+  })
+}

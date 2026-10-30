@@ -625,6 +625,369 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
   } catch (err) {
     console.error('[Cron] Erro fatal no job de sincronização:', err)
   }
+
+  // Sincronização diária de orçamentos às 03:00 (junto com prescrições)
+  try {
+    console.log('[Cron] Iniciando sincronização diária de orçamentos SpinCare (03:00)...')
+    const app = typeof $app !== 'undefined' ? $app : null
+    if (!app) return
+
+    const records = app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+    if (!records || records.length === 0) return
+
+    const cfgRec = records[0]
+    const baseUrl = (
+      cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    const login = (cfgRec.getString('api_login') || '').trim()
+    const password = (cfgRec.getString('api_password') || '').trim()
+    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+    let apiToken = rawStoredToken.startsWith('Bearer ')
+      ? rawStoredToken.substring(7).trim()
+      : rawStoredToken
+    const endpointBudgets = (
+      cfgRec.getString('endpoint_budgets') || '/integration-engine/get/budgets'
+    ).trim()
+
+    const fetchFreshToken = () => {
+      if (!login || !password) return ''
+      try {
+        const tokenUrl =
+          baseUrl +
+          '/token/v1?login=' +
+          encodeURIComponent(login) +
+          '&password=' +
+          encodeURIComponent(password)
+        const resToken = $http.send({
+          url: tokenUrl,
+          method: 'GET',
+          headers: { Accept: '*/*' },
+          timeout: 15,
+        })
+        if (resToken.statusCode === 200) {
+          let t = ''
+          if (typeof resToken.json === 'string') t = resToken.json
+          else if (resToken.json && typeof resToken.json === 'object') {
+            t = resToken.json.token || resToken.json.access_token || ''
+          }
+          if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+          if (t) {
+            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
+            apiToken = t
+            cfgRec.set('api_token', t)
+            app.save(cfgRec)
+            return t
+          }
+        }
+      } catch (_) {}
+      return ''
+    }
+
+    if (!apiToken) apiToken = fetchFreshToken()
+
+    const toIsoYmd = (val) => {
+      if (!val || val === '—') return ''
+      const s = String(val).trim().split(' ')[0]
+      if (s.includes('/')) {
+        const parts = s.split('/')
+        if (parts.length === 3) {
+          return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+        }
+      } else if (s.includes('-')) {
+        const parts = s.split('-')
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+          } else if (parts[2].length === 4) {
+            return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+          }
+        }
+      }
+      return ''
+    }
+
+    const formatDtBr = (val) => {
+      if (!val || val === '—') return '—'
+      const iso = toIsoYmd(val)
+      if (iso && iso.length === 10) {
+        const parts = iso.split('-')
+        return parts[2] + '/' + parts[1] + '/' + parts[0]
+      }
+      return String(val).trim()
+    }
+
+    const initialDtParam = '2026-01-01'
+    let totalFetched = 0
+    let totalCreated = 0
+    let totalUpdated = 0
+    let totalIgnored = 0
+    const nowIso = new Date().toISOString()
+    const pageSize = 100
+    const maxPages = 50
+
+    const syncCol = app.findCollectionByNameOrId('orcamentos_sync')
+
+    const upsertBudgetRecord = (raw) => {
+      if (!raw || typeof raw !== 'object') return false
+      const spincareId = String(
+        raw.id || raw.budget_id || raw.numero || raw.authorization_number || '',
+      ).trim()
+      if (!spincareId) return false
+
+      const numero = String(
+        raw.authorization_number || raw.budget_number || raw.numero || spincareId || '—',
+      ).trim()
+      const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+      const pnome = String(
+        raw.patient_name ||
+          raw.nm_paciente ||
+          (raw.patient && raw.patient.name) ||
+          raw.paciente ||
+          'Paciente Help Vida',
+      ).trim()
+
+      let status = 'Aprovado'
+      if (raw.status) status = String(raw.status)
+      else if (raw.authorization_dt) status = 'Aprovado'
+
+      const rawDataAprov = String(
+        raw.authorization_dt || raw.creation_dt || raw.initial_dt || raw.dt_aprovacao || '—',
+      ).trim()
+      const dataAprovacaoIso = toIsoYmd(rawDataAprov) || toIsoYmd(raw.initial_dt)
+      const dataAprovacao = formatDtBr(rawDataAprov)
+      const dataInicialIso = toIsoYmd(raw.initial_dt)
+      const dataInicial = formatDtBr(raw.initial_dt)
+      const dataFinalIso = toIsoYmd(raw.final_dt)
+      const dataFinal = formatDtBr(raw.final_dt)
+
+      let ano = null
+      if (dataAprovacaoIso && dataAprovacaoIso.length >= 4) {
+        ano = parseInt(dataAprovacaoIso.substring(0, 4), 10)
+      }
+
+      let valor = 0
+      if (typeof raw.total === 'number') valor = raw.total
+      else if (typeof raw.total_value === 'number') valor = raw.total_value
+      else if (typeof raw.total === 'string') {
+        const cl = raw.total.replace(/[^\d.,-]/g, '').replace(',', '.')
+        valor = parseFloat(cl) || 0
+      }
+
+      const rawConvBudget =
+        raw.health_insurance_name ||
+        raw.insurance_name ||
+        raw.insurance ||
+        raw.convenio ||
+        raw.observacao ||
+        '—'
+      const convenio = String(rawConvBudget || '—').trim()
+      const observacao =
+        raw.observacao ||
+        raw.notes ||
+        raw.observation ||
+        (convenio !== '—' ? 'Convênio: ' + convenio : '—')
+
+      let rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []
+      if (typeof rawIt === 'string') {
+        try {
+          rawIt = JSON.parse(rawIt)
+        } catch (_) {
+          rawIt = []
+        }
+      }
+
+      let itensList = []
+      if (Array.isArray(rawIt)) {
+        itensList = rawIt.map((it) => {
+          if (typeof it === 'string') {
+            return {
+              id: '',
+              codigo: '',
+              descricao: it,
+              unidade: '',
+              quantidade: 1,
+              valorUnitario: 0,
+              valorTotal: 0,
+            }
+          }
+          const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+          const valUnit = Number(
+            it.unitary_value ||
+              it.unit_value ||
+              it.valor_unitario ||
+              it.valorUnitario ||
+              it.price ||
+              0,
+          )
+          const valTot = Number(
+            it.total || it.total_value || it.valor_total || it.cost || qtd * valUnit,
+          )
+          return {
+            id: String(it.id || it.item_id || ''),
+            codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+            descricao: String(
+              it.description ||
+                it.product_description ||
+                it.descricao ||
+                it.name ||
+                it.item ||
+                'Item de Orçamento',
+            ).trim(),
+            unidade: String(it.unit || it.unidade || it.measure_unit || '').trim(),
+            quantidade: qtd,
+            valorUnitario: valUnit,
+            valorTotal: valTot,
+          }
+        })
+      }
+
+      let syncRec = null
+      try {
+        syncRec = app.findFirstRecordByFilter('orcamentos_sync', 'spincare_id = {:id}', {
+          id: spincareId,
+        })
+      } catch (_) {
+        syncRec = null
+      }
+
+      const isNew = !syncRec
+      if (isNew) {
+        syncRec = new Record(syncCol)
+        syncRec.set('spincare_id', spincareId)
+      }
+
+      syncRec.set('numero', numero)
+      syncRec.set('paciente_id', pid)
+      syncRec.set('paciente_nome', pnome)
+      syncRec.set('status', status)
+      syncRec.set('data_aprovacao', dataAprovacao)
+      syncRec.set('data_aprovacao_iso', dataAprovacaoIso)
+      syncRec.set('data_inicial', dataInicial)
+      syncRec.set('data_inicial_iso', dataInicialIso)
+      syncRec.set('data_final', dataFinal)
+      syncRec.set('data_final_iso', dataFinalIso)
+      if (ano) syncRec.set('ano_aprovacao', ano)
+      syncRec.set('valor_total', valor)
+      syncRec.set('convenio', convenio)
+      syncRec.set('observacao', observacao)
+      syncRec.set('total_itens', itensList.length)
+      syncRec.set('itens', itensList)
+      syncRec.set('payload', raw)
+      syncRec.set('synced_at', nowIso)
+
+      try {
+        app.save(syncRec)
+        if (isNew) totalCreated++
+        else totalUpdated++
+        return true
+      } catch (saveErr) {
+        totalIgnored++
+        return false
+      }
+    }
+
+    const normalizedPath = endpointBudgets.startsWith('/') ? endpointBudgets : '/' + endpointBudgets
+
+    for (let p = 1; p <= maxPages; p++) {
+      let pUrl =
+        baseUrl +
+        normalizedPath +
+        '?page_number=' +
+        p +
+        '&page_size=' +
+        pageSize +
+        '&initial_dt=' +
+        encodeURIComponent(initialDtParam) +
+        '&start_date=' +
+        encodeURIComponent(initialDtParam) +
+        (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+      const reqHeaders = {
+        Accept: 'application/json',
+        'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+      }
+      if (apiToken) reqHeaders['Authorization'] = 'Bearer ' + apiToken
+
+      let resp
+      try {
+        resp = $http.send({
+          url: pUrl,
+          method: 'GET',
+          headers: reqHeaders,
+          timeout: 30,
+        })
+      } catch (_) {
+        break
+      }
+
+      if (resp.statusCode === 401 && login && password) {
+        apiToken = fetchFreshToken()
+        if (apiToken) {
+          try {
+            const retryUrl =
+              baseUrl +
+              normalizedPath +
+              '?page_number=' +
+              p +
+              '&page_size=' +
+              pageSize +
+              '&initial_dt=' +
+              encodeURIComponent(initialDtParam) +
+              '&start_date=' +
+              encodeURIComponent(initialDtParam) +
+              '&token=' +
+              encodeURIComponent(apiToken)
+            resp = $http.send({
+              url: retryUrl,
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: 'Bearer ' + apiToken,
+                'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+              },
+              timeout: 30,
+            })
+          } catch (_) {}
+        }
+      }
+
+      if (resp.statusCode < 200 || resp.statusCode >= 300) break
+
+      let rawData = []
+      try {
+        rawData = resp.json || JSON.parse(resp.raw || '[]')
+      } catch (_) {
+        rawData = []
+      }
+
+      let items = []
+      if (Array.isArray(rawData)) items = rawData
+      else if (rawData && Array.isArray(rawData.items)) items = rawData.items
+      else if (rawData && typeof rawData === 'object') items = [rawData]
+
+      if (!items || items.length === 0) break
+      totalFetched += items.length
+
+      for (let i = 0; i < items.length; i++) {
+        upsertBudgetRecord(items[i])
+      }
+
+      if (items.length < pageSize) break
+    }
+
+    console.log(
+      '[Cron Orçamentos] Concluído com sucesso:',
+      totalFetched,
+      'buscados, criados:',
+      totalCreated,
+      'atualizados:',
+      totalUpdated,
+    )
+  } catch (orcCronErr) {
+    console.error('[Cron Orçamentos] Erro:', orcCronErr)
+  }
 })
 
 // ----------------------------------------------------------------------------
@@ -1345,6 +1708,843 @@ routerAdd(
       return e.json(200, {
         isRunning: isRunning,
         totalPrescriptions: count,
+        lastSyncedAt: lastSyncedAt,
+      })
+    } catch (err) {
+      return e.json(500, { error: String(err) })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// ----------------------------------------------------------------------------
+// ROTA: GET /backend/v1/spincare/budgets/sync-run (Disparo sem auth para teste inicial/bootstrap)
+// ----------------------------------------------------------------------------
+routerAdd('GET', '/backend/v1/spincare/budgets/sync-run', (e) => {
+  try {
+    const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+    if (!records || records.length === 0) return e.json(500, { err: 'no_config' })
+    const cfgRec = records[0]
+    const baseUrl = (
+      cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    const login = (cfgRec.getString('api_login') || '').trim()
+    const password = (cfgRec.getString('api_password') || '').trim()
+    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+    let apiToken = rawStoredToken.startsWith('Bearer ')
+      ? rawStoredToken.substring(7).trim()
+      : rawStoredToken
+    const endpointBudgets = (
+      cfgRec.getString('endpoint_budgets') || '/integration-engine/get/budgets'
+    ).trim()
+
+    const fetchFreshToken = () => {
+      if (!login || !password) return ''
+      try {
+        const tokenUrl =
+          baseUrl +
+          '/token/v1?login=' +
+          encodeURIComponent(login) +
+          '&password=' +
+          encodeURIComponent(password)
+        const resToken = $http.send({
+          url: tokenUrl,
+          method: 'GET',
+          headers: { Accept: '*/*' },
+          timeout: 15,
+        })
+        if (resToken.statusCode === 200) {
+          let t = ''
+          if (typeof resToken.json === 'string') t = resToken.json
+          else if (resToken.json && typeof resToken.json === 'object') {
+            t = resToken.json.token || resToken.json.access_token || ''
+          }
+          if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+          if (t) {
+            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
+            apiToken = t
+            cfgRec.set('api_token', t)
+            e.app.save(cfgRec)
+            return t
+          }
+        }
+      } catch (_) {}
+      return ''
+    }
+
+    if (!apiToken) apiToken = fetchFreshToken()
+
+    const toIsoYmd = (val) => {
+      if (!val || val === '—') return ''
+      const s = String(val).trim().split(' ')[0]
+      if (s.includes('/')) {
+        const parts = s.split('/')
+        if (parts.length === 3) {
+          return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+        }
+      } else if (s.includes('-')) {
+        const parts = s.split('-')
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+          } else if (parts[2].length === 4) {
+            return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+          }
+        }
+      }
+      return ''
+    }
+
+    const formatDtBr = (val) => {
+      if (!val || val === '—') return '—'
+      const iso = toIsoYmd(val)
+      if (iso && iso.length === 10) {
+        const parts = iso.split('-')
+        return parts[2] + '/' + parts[1] + '/' + parts[0]
+      }
+      return String(val).trim()
+    }
+
+    const normalizedPath = endpointBudgets.startsWith('/') ? endpointBudgets : '/' + endpointBudgets
+    const syncCol = e.app.findCollectionByNameOrId('orcamentos_sync')
+    const nowIso = new Date().toISOString()
+    let totalFetched = 0
+    let totalCreated = 0
+    let totalUpdated = 0
+
+    for (let p = 1; p <= 50; p++) {
+      let pUrl =
+        baseUrl +
+        normalizedPath +
+        '?page_number=' +
+        p +
+        '&page_size=100&initial_dt=2026-01-01' +
+        (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+      let resp = $http.send({
+        url: pUrl,
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: apiToken ? 'Bearer ' + apiToken : '',
+        },
+        timeout: 30,
+      })
+
+      if (resp.statusCode === 401 && login && password) {
+        apiToken = fetchFreshToken()
+        if (apiToken) {
+          resp = $http.send({
+            url:
+              baseUrl +
+              normalizedPath +
+              '?page_number=' +
+              p +
+              '&page_size=100&initial_dt=2026-01-01&token=' +
+              encodeURIComponent(apiToken),
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+              Authorization: 'Bearer ' + apiToken,
+            },
+            timeout: 30,
+          })
+        }
+      }
+
+      if (resp.statusCode < 200 || resp.statusCode >= 300) break
+
+      let rawData = []
+      try {
+        rawData = resp.json || JSON.parse(resp.raw || '[]')
+      } catch (_) {
+        rawData = []
+      }
+
+      let items = []
+      if (Array.isArray(rawData)) items = rawData
+      else if (rawData && Array.isArray(rawData.items)) items = rawData.items
+      else if (rawData && typeof rawData === 'object') items = [rawData]
+
+      if (!items || items.length === 0) break
+      totalFetched += items.length
+
+      for (let i = 0; i < items.length; i++) {
+        const raw = items[i]
+        if (!raw || typeof raw !== 'object') continue
+        const spincareId = String(
+          raw.id || raw.budget_id || raw.numero || raw.authorization_number || '',
+        ).trim()
+        if (!spincareId) continue
+
+        const numero = String(
+          raw.authorization_number || raw.budget_number || raw.numero || spincareId || '—',
+        ).trim()
+        const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+        const pnome = String(
+          raw.patient_name ||
+            raw.nm_paciente ||
+            (raw.patient && raw.patient.name) ||
+            raw.paciente ||
+            'Paciente Help Vida',
+        ).trim()
+
+        let status = 'Aprovado'
+        if (raw.status) status = String(raw.status)
+        else if (raw.authorization_dt) status = 'Aprovado'
+
+        const rawDataAprov = String(
+          raw.authorization_dt || raw.creation_dt || raw.initial_dt || raw.dt_aprovacao || '—',
+        ).trim()
+        const dataAprovacaoIso = toIsoYmd(rawDataAprov) || toIsoYmd(raw.initial_dt)
+        const dataAprovacao = formatDtBr(rawDataAprov)
+        const dataInicialIso = toIsoYmd(raw.initial_dt)
+        const dataInicial = formatDtBr(raw.initial_dt)
+        const dataFinalIso = toIsoYmd(raw.final_dt)
+        const dataFinal = formatDtBr(raw.final_dt)
+
+        let ano = null
+        if (dataAprovacaoIso && dataAprovacaoIso.length >= 4) {
+          ano = parseInt(dataAprovacaoIso.substring(0, 4), 10)
+        }
+
+        let valor = 0
+        if (typeof raw.total === 'number') valor = raw.total
+        else if (typeof raw.total_value === 'number') valor = raw.total_value
+        else if (typeof raw.total === 'string') {
+          const cl = raw.total.replace(/[^\d.,-]/g, '').replace(',', '.')
+          valor = parseFloat(cl) || 0
+        }
+
+        const rawConvBudget =
+          raw.health_insurance_name ||
+          raw.insurance_name ||
+          raw.insurance ||
+          raw.convenio ||
+          raw.observacao ||
+          '—'
+        const convenio = String(rawConvBudget || '—').trim()
+        const observacao =
+          raw.observacao ||
+          raw.notes ||
+          raw.observation ||
+          (convenio !== '—' ? 'Convênio: ' + convenio : '—')
+
+        let rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []
+        if (typeof rawIt === 'string') {
+          try {
+            rawIt = JSON.parse(rawIt)
+          } catch (_) {
+            rawIt = []
+          }
+        }
+
+        let itensList = []
+        if (Array.isArray(rawIt)) {
+          itensList = rawIt.map((it) => {
+            if (typeof it === 'string') {
+              return {
+                id: '',
+                codigo: '',
+                descricao: it,
+                unidade: '',
+                quantidade: 1,
+                valorUnitario: 0,
+                valorTotal: 0,
+              }
+            }
+            const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+            const valUnit = Number(
+              it.unitary_value ||
+                it.unit_value ||
+                it.valor_unitario ||
+                it.valorUnitario ||
+                it.price ||
+                0,
+            )
+            const valTot = Number(
+              it.total || it.total_value || it.valor_total || it.cost || qtd * valUnit,
+            )
+            return {
+              id: String(it.id || it.item_id || ''),
+              codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+              descricao: String(
+                it.description ||
+                  it.product_description ||
+                  it.descricao ||
+                  it.name ||
+                  it.item ||
+                  'Item de Orçamento',
+              ).trim(),
+              unidade: String(it.unit || it.unidade || it.measure_unit || '').trim(),
+              quantidade: qtd,
+              valorUnitario: valUnit,
+              valorTotal: valTot,
+            }
+          })
+        }
+
+        let syncRec = null
+        try {
+          syncRec = e.app.findFirstRecordByFilter('orcamentos_sync', 'spincare_id = {:id}', {
+            id: spincareId,
+          })
+        } catch (_) {
+          syncRec = null
+        }
+
+        const isNew = !syncRec
+        if (isNew) {
+          syncRec = new Record(syncCol)
+          syncRec.set('spincare_id', spincareId)
+        }
+
+        syncRec.set('numero', numero)
+        syncRec.set('paciente_id', pid)
+        syncRec.set('paciente_nome', pnome)
+        syncRec.set('status', status)
+        syncRec.set('data_aprovacao', dataAprovacao)
+        syncRec.set('data_aprovacao_iso', dataAprovacaoIso)
+        syncRec.set('data_inicial', dataInicial)
+        syncRec.set('data_inicial_iso', dataInicialIso)
+        syncRec.set('data_final', dataFinal)
+        syncRec.set('data_final_iso', dataFinalIso)
+        if (ano) syncRec.set('ano_aprovacao', ano)
+        syncRec.set('valor_total', valor)
+        syncRec.set('convenio', convenio)
+        syncRec.set('observacao', observacao)
+        syncRec.set('total_itens', itensList.length)
+        syncRec.set('itens', itensList)
+        syncRec.set('payload', raw)
+        syncRec.set('synced_at', nowIso)
+
+        try {
+          e.app.save(syncRec)
+          if (isNew) totalCreated++
+          else totalUpdated++
+        } catch (_) {}
+      }
+
+      if (items.length < 100) break
+    }
+
+    return e.json(200, {
+      success: true,
+      totalFetched: totalFetched,
+      created: totalCreated,
+      updated: totalUpdated,
+      nowInDb: e.app.countRecords('orcamentos_sync'),
+    })
+  } catch (err) {
+    return e.json(500, { error: String(err) })
+  }
+})
+
+// ----------------------------------------------------------------------------
+// ROTA: POST /backend/v1/spincare/budgets/sync (Gatilho Manual Admin/Clínico)
+// ----------------------------------------------------------------------------
+routerAdd('POST', '/backend/v1/spincare/budgets/sync', (e) => {
+  try {
+    const authUser = e.auth
+    if (authUser) {
+      const role = authUser.getString('role') || 'comum'
+      if (role === 'medico_visitador') {
+        return e.forbiddenError(
+          'Acesso restrito: Médicos Visitadores não possuem autorização para disparar sincronização.',
+        )
+      }
+    }
+
+    const startTime = new Date().getTime()
+
+    const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+    if (!records || records.length === 0) {
+      return e.json(503, {
+        success: false,
+        message: 'Configuração do SpinCare não encontrada.',
+      })
+    }
+
+    const cfgRec = records[0]
+    const baseUrl = (
+      cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+    )
+      .trim()
+      .replace(/\/+$/, '')
+    const login = (cfgRec.getString('api_login') || '').trim()
+    const password = (cfgRec.getString('api_password') || '').trim()
+    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+    let apiToken = rawStoredToken.startsWith('Bearer ')
+      ? rawStoredToken.substring(7).trim()
+      : rawStoredToken
+    const endpointBudgets = (
+      cfgRec.getString('endpoint_budgets') || '/integration-engine/get/budgets'
+    ).trim()
+
+    // Proteção contra concorrência: verifica se há sincronização de orçamentos recente ativa (menos de 60s)
+    const lastAudit = e.app.findRecordsByFilter(
+      'audit_logs',
+      'colecao = "orcamentos_sync" && acao = "SPINCARE_BUDGET_SYNC_IN_PROGRESS"',
+      '-created',
+      1,
+      0,
+    )
+    if (lastAudit && lastAudit.length > 0) {
+      const lastCreated = new Date(lastAudit[0].getString('created')).getTime()
+      if (startTime - lastCreated < 60000) {
+        return e.json(409, {
+          success: false,
+          alreadyRunning: true,
+          message: 'Uma sincronização de orçamentos já está em andamento. Aguarde a conclusão.',
+        })
+      }
+    }
+
+    // Marca em progresso na auditoria
+    try {
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      const inProgressRec = new Record(auditCol)
+      inProgressRec.set('colecao', 'orcamentos_sync')
+      inProgressRec.set('registro_id', 'sync_cdc_budgets')
+      inProgressRec.set('acao', 'SPINCARE_BUDGET_SYNC_IN_PROGRESS')
+      inProgressRec.set('usuario', authUser ? authUser.id : '')
+      inProgressRec.set('usuario_nome', authUser ? authUser.getString('name') || '' : 'sistema')
+      inProgressRec.set('usuario_email', authUser ? authUser.getString('email') || '' : '')
+      inProgressRec.set('usuario_role', authUser ? authUser.getString('role') || 'admin' : 'admin')
+      inProgressRec.set('status_novo', 'in_progress')
+      e.app.save(inProgressRec)
+    } catch (_) {}
+
+    const fetchFreshToken = () => {
+      if (!login || !password) return ''
+      try {
+        const tokenUrl =
+          baseUrl +
+          '/token/v1?login=' +
+          encodeURIComponent(login) +
+          '&password=' +
+          encodeURIComponent(password)
+        const resToken = $http.send({
+          url: tokenUrl,
+          method: 'GET',
+          headers: { Accept: '*/*' },
+          timeout: 15,
+        })
+        if (resToken.statusCode === 200) {
+          let t = ''
+          if (typeof resToken.json === 'string') t = resToken.json
+          else if (resToken.json && typeof resToken.json === 'object') {
+            t = resToken.json.token || resToken.json.access_token || ''
+          }
+          if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+          if (t) {
+            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
+            apiToken = t
+            cfgRec.set('api_token', t)
+            e.app.save(cfgRec)
+            return t
+          }
+        }
+      } catch (_) {}
+      return ''
+    }
+
+    const getValidToken = (forceRefresh) => {
+      if (!forceRefresh && apiToken) return apiToken
+      return fetchFreshToken()
+    }
+
+    apiToken = getValidToken(false)
+
+    const toIsoYmd = (val) => {
+      if (!val || val === '—') return ''
+      const s = String(val).trim().split(' ')[0]
+      if (s.includes('/')) {
+        const parts = s.split('/')
+        if (parts.length === 3) {
+          return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+        }
+      } else if (s.includes('-')) {
+        const parts = s.split('-')
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0')
+          } else if (parts[2].length === 4) {
+            return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0')
+          }
+        }
+      }
+      return ''
+    }
+
+    const formatDtBr = (val) => {
+      if (!val || val === '—') return '—'
+      const iso = toIsoYmd(val)
+      if (iso && iso.length === 10) {
+        const parts = iso.split('-')
+        return parts[2] + '/' + parts[1] + '/' + parts[0]
+      }
+      return String(val).trim()
+    }
+
+    const initialDtParam = '2026-01-01'
+    let totalFetched = 0
+    let totalCreated = 0
+    let totalUpdated = 0
+    let totalIgnored = 0
+    const nowIso = new Date().toISOString()
+    const pageSize = 100
+    const maxPages = 50
+
+    const syncCol = e.app.findCollectionByNameOrId('orcamentos_sync')
+
+    const upsertBudgetRecord = (raw) => {
+      if (!raw || typeof raw !== 'object') return false
+      const spincareId = String(
+        raw.id || raw.budget_id || raw.numero || raw.authorization_number || '',
+      ).trim()
+      if (!spincareId) return false
+
+      const numero = String(
+        raw.authorization_number || raw.budget_number || raw.numero || spincareId || '—',
+      ).trim()
+      const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+      const pnome = String(
+        raw.patient_name ||
+          raw.nm_paciente ||
+          (raw.patient && raw.patient.name) ||
+          raw.paciente ||
+          'Paciente Help Vida',
+      ).trim()
+
+      let status = 'Aprovado'
+      if (raw.status) status = String(raw.status)
+      else if (raw.authorization_dt) status = 'Aprovado'
+
+      const rawDataAprov = String(
+        raw.authorization_dt || raw.creation_dt || raw.initial_dt || raw.dt_aprovacao || '—',
+      ).trim()
+      const dataAprovacaoIso = toIsoYmd(rawDataAprov) || toIsoYmd(raw.initial_dt)
+      const dataAprovacao = formatDtBr(rawDataAprov)
+      const dataInicialIso = toIsoYmd(raw.initial_dt)
+      const dataInicial = formatDtBr(raw.initial_dt)
+      const dataFinalIso = toIsoYmd(raw.final_dt)
+      const dataFinal = formatDtBr(raw.final_dt)
+
+      let ano = null
+      if (dataAprovacaoIso && dataAprovacaoIso.length >= 4) {
+        ano = parseInt(dataAprovacaoIso.substring(0, 4), 10)
+      }
+
+      let valor = 0
+      if (typeof raw.total === 'number') valor = raw.total
+      else if (typeof raw.total_value === 'number') valor = raw.total_value
+      else if (typeof raw.total === 'string') {
+        const cl = raw.total.replace(/[^\d.,-]/g, '').replace(',', '.')
+        valor = parseFloat(cl) || 0
+      }
+
+      const rawConvBudget =
+        raw.health_insurance_name ||
+        raw.insurance_name ||
+        raw.insurance ||
+        raw.convenio ||
+        raw.observacao ||
+        '—'
+      const convenio = String(rawConvBudget || '—').trim()
+      const observacao =
+        raw.observacao ||
+        raw.notes ||
+        raw.observation ||
+        (convenio !== '—' ? 'Convênio: ' + convenio : '—')
+
+      let rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []
+      if (typeof rawIt === 'string') {
+        try {
+          rawIt = JSON.parse(rawIt)
+        } catch (_) {
+          rawIt = []
+        }
+      }
+
+      let itensList = []
+      if (Array.isArray(rawIt)) {
+        itensList = rawIt.map((it) => {
+          if (typeof it === 'string') {
+            return {
+              id: '',
+              codigo: '',
+              descricao: it,
+              unidade: '',
+              quantidade: 1,
+              valorUnitario: 0,
+              valorTotal: 0,
+            }
+          }
+          const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+          const valUnit = Number(
+            it.unitary_value ||
+              it.unit_value ||
+              it.valor_unitario ||
+              it.valorUnitario ||
+              it.price ||
+              0,
+          )
+          const valTot = Number(
+            it.total || it.total_value || it.valor_total || it.cost || qtd * valUnit,
+          )
+          return {
+            id: String(it.id || it.item_id || ''),
+            codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+            descricao: String(
+              it.description ||
+                it.product_description ||
+                it.descricao ||
+                it.name ||
+                it.item ||
+                'Item de Orçamento',
+            ).trim(),
+            unidade: String(it.unit || it.unidade || it.measure_unit || '').trim(),
+            quantidade: qtd,
+            valorUnitario: valUnit,
+            valorTotal: valTot,
+          }
+        })
+      }
+
+      let syncRec = null
+      try {
+        syncRec = e.app.findFirstRecordByFilter('orcamentos_sync', 'spincare_id = {:id}', {
+          id: spincareId,
+        })
+      } catch (_) {
+        syncRec = null
+      }
+
+      const isNew = !syncRec
+      if (isNew) {
+        syncRec = new Record(syncCol)
+        syncRec.set('spincare_id', spincareId)
+      }
+
+      syncRec.set('numero', numero)
+      syncRec.set('paciente_id', pid)
+      syncRec.set('paciente_nome', pnome)
+      syncRec.set('status', status)
+      syncRec.set('data_aprovacao', dataAprovacao)
+      syncRec.set('data_aprovacao_iso', dataAprovacaoIso)
+      syncRec.set('data_inicial', dataInicial)
+      syncRec.set('data_inicial_iso', dataInicialIso)
+      syncRec.set('data_final', dataFinal)
+      syncRec.set('data_final_iso', dataFinalIso)
+      if (ano) syncRec.set('ano_aprovacao', ano)
+      syncRec.set('valor_total', valor)
+      syncRec.set('convenio', convenio)
+      syncRec.set('observacao', observacao)
+      syncRec.set('total_itens', itensList.length)
+      syncRec.set('itens', itensList)
+      syncRec.set('payload', raw) // TODOS os campos crus da API SpinCare
+      syncRec.set('synced_at', nowIso)
+
+      try {
+        e.app.save(syncRec)
+        if (isNew) totalCreated++
+        else totalUpdated++
+        return true
+      } catch (saveErr) {
+        totalIgnored++
+        return false
+      }
+    }
+
+    const normalizedPath = endpointBudgets.startsWith('/') ? endpointBudgets : '/' + endpointBudgets
+
+    for (let p = 1; p <= maxPages; p++) {
+      let pUrl =
+        baseUrl +
+        normalizedPath +
+        '?page_number=' +
+        p +
+        '&page_size=' +
+        pageSize +
+        '&initial_dt=' +
+        encodeURIComponent(initialDtParam) +
+        '&start_date=' +
+        encodeURIComponent(initialDtParam) +
+        (apiToken ? '&token=' + encodeURIComponent(apiToken) : '')
+
+      const reqHeaders = {
+        Accept: 'application/json',
+        'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+      }
+      if (apiToken) reqHeaders['Authorization'] = 'Bearer ' + apiToken
+
+      let resp
+      try {
+        resp = $http.send({
+          url: pUrl,
+          method: 'GET',
+          headers: reqHeaders,
+          timeout: 30,
+        })
+      } catch (netErr) {
+        break
+      }
+
+      if (resp.statusCode === 401 && login && password) {
+        apiToken = getValidToken(true)
+        if (apiToken) {
+          try {
+            const retryUrl =
+              baseUrl +
+              normalizedPath +
+              '?page_number=' +
+              p +
+              '&page_size=' +
+              pageSize +
+              '&initial_dt=' +
+              encodeURIComponent(initialDtParam) +
+              '&start_date=' +
+              encodeURIComponent(initialDtParam) +
+              '&token=' +
+              encodeURIComponent(apiToken)
+            resp = $http.send({
+              url: retryUrl,
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: 'Bearer ' + apiToken,
+                'User-Agent': 'HelpVida-SpinCare-Sync/1.0',
+              },
+              timeout: 30,
+            })
+          } catch (_) {}
+        }
+      }
+
+      if (resp.statusCode < 200 || resp.statusCode >= 300) break
+
+      let rawData = []
+      try {
+        rawData = resp.json || JSON.parse(resp.raw || '[]')
+      } catch (_) {
+        rawData = []
+      }
+
+      let items = []
+      if (Array.isArray(rawData)) items = rawData
+      else if (rawData && Array.isArray(rawData.items)) items = rawData.items
+      else if (rawData && typeof rawData === 'object') items = [rawData]
+
+      if (!items || items.length === 0) break
+      totalFetched += items.length
+
+      for (let i = 0; i < items.length; i++) {
+        upsertBudgetRecord(items[i])
+      }
+
+      if (items.length < pageSize) break
+    }
+
+    const durationMs = new Date().getTime() - startTime
+
+    // Trilha de auditoria LGPD
+    try {
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      const auditRecord = new Record(auditCol)
+      auditRecord.set('colecao', 'orcamentos_sync')
+      auditRecord.set('registro_id', 'sync_cdc_budgets')
+      auditRecord.set('acao', 'SPINCARE_BUDGET_SYNC_MANUAL')
+      auditRecord.set('usuario', authUser.id)
+      auditRecord.set('usuario_nome', authUser.getString('name') || '')
+      auditRecord.set('usuario_email', authUser.getString('email') || '')
+      auditRecord.set('usuario_role', authUser.getString('role') || 'admin')
+      auditRecord.set('status_anterior', '')
+      auditRecord.set('status_novo', 'sucesso')
+      auditRecord.set(
+        'detalhes',
+        'Replicação CDC de orçamentos concluída (manual): buscados=' +
+          totalFetched +
+          ', criados=' +
+          totalCreated +
+          ', atualizados=' +
+          totalUpdated +
+          ', falhas=' +
+          totalIgnored +
+          ', duração=' +
+          Math.round(durationMs / 1000) +
+          's',
+      )
+      e.app.save(auditRecord)
+    } catch (_) {}
+
+    return e.json(200, {
+      success: true,
+      trigger: 'manual',
+      totalFetched: totalFetched,
+      created: totalCreated,
+      updated: totalUpdated,
+      ignored: totalIgnored,
+      syncedAt: nowIso,
+      durationMs: durationMs,
+    })
+  } catch (err) {
+    console.error('Erro na rota POST /spincare/budgets/sync:', err)
+    return e.json(500, {
+      success: false,
+      message: 'Não foi possível concluir a sincronização de orçamentos agora: ' + String(err),
+    })
+  }
+})
+
+// ----------------------------------------------------------------------------
+// ROTA: GET /backend/v1/spincare/budgets/sync-status
+// ----------------------------------------------------------------------------
+routerAdd(
+  'GET',
+  '/backend/v1/spincare/budgets/sync-status',
+  (e) => {
+    try {
+      const authUser = e.auth
+      if (!authUser) {
+        return e.unauthorizedError('Acesso não autorizado.')
+      }
+
+      const count = e.app.countRecords('orcamentos_sync')
+
+      let lastSyncedAt = ''
+      try {
+        const lastRecords = e.app.findRecordsByFilter(
+          'orcamentos_sync',
+          'synced_at != ""',
+          '-synced_at',
+          1,
+          0,
+        )
+        if (lastRecords && lastRecords.length > 0) {
+          lastSyncedAt = lastRecords[0].getString('synced_at')
+        }
+      } catch (_) {}
+
+      let isRunning = false
+      try {
+        const lastAudit = e.app.findRecordsByFilter(
+          'audit_logs',
+          'colecao = "orcamentos_sync" && acao = "SPINCARE_BUDGET_SYNC_IN_PROGRESS"',
+          '-created',
+          1,
+          0,
+        )
+        if (lastAudit && lastAudit.length > 0) {
+          const diff = new Date().getTime() - new Date(lastAudit[0].getString('created')).getTime()
+          if (diff < 60000) isRunning = true
+        }
+      } catch (_) {}
+
+      return e.json(200, {
+        isRunning: isRunning,
+        totalBudgets: count,
         lastSyncedAt: lastSyncedAt,
       })
     } catch (err) {
@@ -4882,6 +6082,170 @@ routerAdd(
         )
         e.app.save(auditRecord)
       } catch (_) {}
+
+      // Replicação inline ao responder à consulta se a tabela orcamentos_sync estiver vazia
+      try {
+        const localCount = e.app.countRecords('orcamentos_sync')
+        if (localCount === 0 && rawList.length > 0) {
+          const syncCol = e.app.findCollectionByNameOrId('orcamentos_sync')
+          const nowIso = new Date().toISOString()
+          for (let i = 0; i < rawList.length; i++) {
+            const raw = rawList[i]
+            if (!raw || typeof raw !== 'object') continue
+            const spincareId = String(
+              raw.id || raw.budget_id || raw.numero || raw.authorization_number || '',
+            ).trim()
+            if (!spincareId) continue
+
+            const numero = String(
+              raw.authorization_number || raw.budget_number || raw.numero || spincareId || '—',
+            ).trim()
+            const pid = String(raw.patient_id || raw.id_paciente || '').trim()
+            const pnome = String(
+              raw.patient_name ||
+                raw.nm_paciente ||
+                (raw.patient && raw.patient.name) ||
+                raw.paciente ||
+                'Paciente Help Vida',
+            ).trim()
+
+            let status = 'Aprovado'
+            if (raw.status) status = String(raw.status)
+            else if (raw.authorization_dt) status = 'Aprovado'
+
+            const rawDataAprov = String(
+              raw.authorization_dt || raw.creation_dt || raw.initial_dt || raw.dt_aprovacao || '—',
+            ).trim()
+            const dataAprovacaoIso = toIsoYmd(rawDataAprov) || toIsoYmd(raw.initial_dt)
+            const dataAprovacao = formatDtBr(rawDataAprov)
+            const dataInicialIso = toIsoYmd(raw.initial_dt)
+            const dataInicial = formatDtBr(raw.initial_dt)
+            const dataFinalIso = toIsoYmd(raw.final_dt)
+            const dataFinal = formatDtBr(raw.final_dt)
+
+            let ano = null
+            if (dataAprovacaoIso && dataAprovacaoIso.length >= 4) {
+              ano = parseInt(dataAprovacaoIso.substring(0, 4), 10)
+            }
+
+            let valor = 0
+            if (typeof raw.total === 'number') valor = raw.total
+            else if (typeof raw.total_value === 'number') valor = raw.total_value
+            else if (typeof raw.total === 'string') {
+              const cl = raw.total.replace(/[^\d.,-]/g, '').replace(',', '.')
+              valor = parseFloat(cl) || 0
+            }
+
+            const rawConvBudget =
+              raw.health_insurance_name ||
+              raw.insurance_name ||
+              raw.insurance ||
+              raw.convenio ||
+              raw.observacao ||
+              '—'
+            const convenio = String(rawConvBudget || '—').trim()
+            const observacao =
+              raw.observacao ||
+              raw.notes ||
+              raw.observation ||
+              (convenio !== '—' ? 'Convênio: ' + convenio : '—')
+
+            let rawIt = raw.items || raw.itens || raw.budget_items || raw.products || []
+            if (typeof rawIt === 'string') {
+              try {
+                rawIt = JSON.parse(rawIt)
+              } catch (_) {
+                rawIt = []
+              }
+            }
+
+            let itensList = []
+            if (Array.isArray(rawIt)) {
+              itensList = rawIt.map((it) => {
+                if (typeof it === 'string') {
+                  return {
+                    id: '',
+                    codigo: '',
+                    descricao: it,
+                    unidade: '',
+                    quantidade: 1,
+                    valorUnitario: 0,
+                    valorTotal: 0,
+                  }
+                }
+                const qtd = Number(it.quantity || it.qtd || it.amount || 1)
+                const valUnit = Number(
+                  it.unitary_value ||
+                    it.unit_value ||
+                    it.valor_unitario ||
+                    it.valorUnitario ||
+                    it.price ||
+                    0,
+                )
+                const valTot = Number(
+                  it.total || it.total_value || it.valor_total || it.cost || qtd * valUnit,
+                )
+                return {
+                  id: String(it.id || it.item_id || ''),
+                  codigo: String(it.code || it.codigo || it.product_code || '').trim(),
+                  descricao: String(
+                    it.description ||
+                      it.product_description ||
+                      it.descricao ||
+                      it.name ||
+                      it.item ||
+                      'Item de Orçamento',
+                  ).trim(),
+                  unidade: String(it.unit || it.unidade || it.measure_unit || '').trim(),
+                  quantidade: qtd,
+                  valorUnitario: valUnit,
+                  valorTotal: valTot,
+                }
+              })
+            }
+
+            let syncRec = null
+            try {
+              syncRec = e.app.findFirstRecordByFilter('orcamentos_sync', 'spincare_id = {:id}', {
+                id: spincareId,
+              })
+            } catch (_) {
+              syncRec = null
+            }
+
+            const isNew = !syncRec
+            if (isNew) {
+              syncRec = new Record(syncCol)
+              syncRec.set('spincare_id', spincareId)
+            }
+
+            syncRec.set('numero', numero)
+            syncRec.set('paciente_id', pid)
+            syncRec.set('paciente_nome', pnome)
+            syncRec.set('status', status)
+            syncRec.set('data_aprovacao', dataAprovacao)
+            syncRec.set('data_aprovacao_iso', dataAprovacaoIso)
+            syncRec.set('data_inicial', dataInicial)
+            syncRec.set('data_inicial_iso', dataInicialIso)
+            syncRec.set('data_final', dataFinal)
+            syncRec.set('data_final_iso', dataFinalIso)
+            if (ano) syncRec.set('ano_aprovacao', ano)
+            syncRec.set('valor_total', valor)
+            syncRec.set('convenio', convenio)
+            syncRec.set('observacao', observacao)
+            syncRec.set('total_itens', itensList.length)
+            syncRec.set('itens', itensList)
+            syncRec.set('payload', raw)
+            syncRec.set('synced_at', nowIso)
+
+            try {
+              e.app.save(syncRec)
+            } catch (_) {}
+          }
+        }
+      } catch (inlineSyncErr) {
+        console.error('Erro na replicação inline de orçamentos:', inlineSyncErr)
+      }
 
       return e.json(200, {
         total: normalizedList.length,
