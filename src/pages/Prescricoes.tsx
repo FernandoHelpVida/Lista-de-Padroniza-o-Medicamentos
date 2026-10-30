@@ -90,6 +90,19 @@ export default function Prescricoes() {
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [viewPayloadJson, setViewPayloadJson] = useState(false)
 
+  // IDs das prescrições expandidas inline no resultado da busca combinada
+  const [expandedPrescriptionIds, setExpandedPrescriptionIds] = useState<Record<string, boolean>>(
+    {},
+  )
+
+  const togglePrescriptionExpanded = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setExpandedPrescriptionIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }))
+  }
+
   // Debounce da busca de texto
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -106,11 +119,43 @@ export default function Prescricoes() {
       .trim()
       .toUpperCase()
 
-  // Converte data dd/mm/aaaa ou yyyy-mm-dd (ou ISO 8601 com T/Z/espaço) para número comparável yyyymmdd
-  const parseDateToComparable = (dateStr: string): number | null => {
+  // Converte data dd/mm/aaaa ou yyyy-mm-dd (ou ISO 8601 com T/Z/espaço) para número comparável yyyymmdd.
+  // Para strings ISO contendo 'T', 'Z' ou offset de fuso, converte no fuso America/Sao_Paulo (UTC-3),
+  // garantindo que timestamps como "2026-10-01T03:59:00Z" sejam lidos como 20260930 (30/09/2026 às 23:59 em SP).
+  const parseDateToComparable = (
+    dateStr: string,
+    options?: { interpretInSaoPauloTz?: boolean },
+  ): number | null => {
     if (!dateStr || dateStr === '—') return null
-    // Remove qualquer porção de horário ("T..." ou " ...")
-    const s = dateStr.trim().split('T')[0].split(' ')[0]
+    const raw = dateStr.trim()
+
+    // Se possui indicação de horário ISO com fuso (ex: 'T', 'Z' ou offset + / -) ou a opção está ativa
+    if (options?.interpretInSaoPauloTz || raw.includes('T') || raw.includes('Z')) {
+      try {
+        const d = new Date(raw)
+        if (!Number.isNaN(d.getTime())) {
+          // Extrai ano, mês e dia no fuso America/Sao_Paulo
+          const formatter = new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          })
+          const parts = formatter.formatToParts(d)
+          const y = parts.find((p) => p.type === 'year')?.value
+          const m = parts.find((p) => p.type === 'month')?.value
+          const day = parts.find((p) => p.type === 'day')?.value
+          if (y && m && day) {
+            return parseInt(`${y}${m.padStart(2, '0')}${day.padStart(2, '0')}`, 10)
+          }
+        }
+      } catch (_) {
+        // Fallback para parse textual abaixo
+      }
+    }
+
+    // Parse de data textual simples (dd/mm/aaaa ou yyyy-mm-dd)
+    const s = raw.split('T')[0].split(' ')[0]
     if (s.includes('/')) {
       const parts = s.split('/')
       if (parts.length === 3) {
@@ -127,6 +172,28 @@ export default function Prescricoes() {
       }
     }
     return null
+  }
+
+  // Formatação em dd/mm/aaaa no fuso horário do Brasil
+  const formatIsoToBrTz = (dateStr: string): string => {
+    if (!dateStr || dateStr === '—') return '—'
+    const raw = dateStr.trim()
+    if (raw.includes('T') || raw.includes('Z')) {
+      try {
+        const d = new Date(raw)
+        if (!Number.isNaN(d.getTime())) {
+          return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+    const comp = parseDateToComparable(raw)
+    if (comp) {
+      const str = String(comp)
+      return `${str.substring(6, 8)}/${str.substring(4, 6)}/${str.substring(0, 4)}`
+    }
+    return raw
   }
 
   // Consulta o status atual de sincronização do backend
@@ -287,22 +354,33 @@ export default function Prescricoes() {
         if (!matchWords) return
       }
 
-      // 2. Filtro de período por vigência ATIVA (sobreposição de intervalos — semântica SpinCare):
-      // a prescrição entra no resultado quando a vigência COBRE o período:
-      // começa antes do fim do período E termina depois do início dele.
+      // 2. Filtro de período (critério estrito do SpinCare):
+      // No SpinCare, a busca por período de prescrições avalia a data de término (vigência final)
+      // convertida no fuso horário local America/Sao_Paulo (UTC-3).
+      // Uma prescrição com início 01/01/2026 e término escalonado mensal só pertence ao período em que
+      // ela expira / tem seu vencimento (ex.: data_final_iso "2026-10-01T03:59:00Z" expira em 30/09/2026 23:59).
+      // Casos sem data final recaem na data inicial ou de prescrição.
       const pDateInit =
-        parseDateToComparable(p.data_inicial_iso) || parseDateToComparable(p.data_inicial)
+        parseDateToComparable(p.data_inicial_iso) ||
+        parseDateToComparable(p.data_inicial) ||
+        parseDateToComparable(p.data_prescricao)
       const pDateEnd =
         parseDateToComparable(p.data_final_iso) || parseDateToComparable(p.data_final)
 
       let inPeriod = false
       if (startComp === null && endComp === null) {
         inPeriod = true
-      } else if (pDateInit !== null || pDateEnd !== null) {
-        const startsBeforePeriodEnd = endComp === null || pDateInit === null || pDateInit <= endComp
-        const endsAfterPeriodStart =
-          startComp === null || pDateEnd === null || pDateEnd >= startComp
-        inPeriod = startsBeforePeriodEnd && endsAfterPeriodStart
+      } else if (pDateEnd !== null) {
+        // Se possui data final, o critério SpinCare exige que a data de término caia DENTRO do período
+        // (expiração no período). Caso a busca tenha apenas início ou apenas fim, valida os limites.
+        const endAfterOrAtStart = startComp === null || pDateEnd >= startComp
+        const endBeforeOrAtEnd = endComp === null || pDateEnd <= endComp
+        inPeriod = endAfterOrAtStart && endBeforeOrAtEnd
+      } else if (pDateInit !== null) {
+        // Fallback para prescrições sem data final explícita: data inicial dentro do período
+        const initAfterOrAtStart = startComp === null || pDateInit >= startComp
+        const initBeforeOrAtEnd = endComp === null || pDateInit <= endComp
+        inPeriod = initAfterOrAtStart && initBeforeOrAtEnd
       }
 
       if (!inPeriod && (startComp !== null || endComp !== null)) return
@@ -647,42 +725,268 @@ export default function Prescricoes() {
 
                   <div className="space-y-2 pt-1 border-t border-emerald-100">
                     <div className="grid grid-cols-1 gap-2">
-                      {combinedOccurrences.occurrences.map((occ, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => {
-                            setSelectedPrescription(occ.presc)
-                            setViewPayloadJson(false)
-                            setDetailModalOpen(true)
-                          }}
-                          className="p-3 rounded-xl bg-emerald-50/50 hover:bg-emerald-100/50 border border-emerald-200 transition cursor-pointer space-y-1"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-900 text-xs sm:text-sm">
-                              {occ.item.descricao}
-                            </span>
-                            <Badge className="bg-white text-emerald-800 border-emerald-300 text-[10px] font-bold">
-                              Prescrição #{occ.presc.numero}
-                            </Badge>
+                      {combinedOccurrences.occurrences.map((occ, idx) => {
+                        const prescKey = occ.presc.id || String(occ.presc.numero)
+                        const isExpanded = !!expandedPrescriptionIds[prescKey]
+                        const allItens = Array.isArray(occ.presc.itens) ? occ.presc.itens : []
+                        const dataFimFormatada = occ.presc.data_final_iso
+                          ? formatIsoToBrTz(occ.presc.data_final_iso)
+                          : occ.presc.data_final || '—'
+                        const dataIniFormatada = occ.presc.data_inicial_iso
+                          ? formatIsoToBrTz(occ.presc.data_inicial_iso)
+                          : occ.presc.data_inicial || '—'
+
+                        return (
+                          <div
+                            key={idx}
+                            className="rounded-xl bg-emerald-50/60 border border-emerald-200 transition overflow-hidden shadow-2xs"
+                          >
+                            {/* Cabeçalho do Card da Ocorrência */}
+                            <div
+                              onClick={() => togglePrescriptionExpanded(prescKey)}
+                              className="p-3 hover:bg-emerald-100/50 cursor-pointer space-y-1.5 transition select-none"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5 min-w-0">
+                                  <Pill size={14} className="text-emerald-700 shrink-0" />
+                                  <span className="truncate">{occ.item.descricao}</span>
+                                </span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <Badge className="bg-white text-emerald-800 border-emerald-300 text-[10px] font-bold">
+                                    Prescrição #{occ.presc.numero}
+                                  </Badge>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => togglePrescriptionExpanded(prescKey, e)}
+                                    className="h-7 w-7 p-0 text-emerald-800 hover:bg-emerald-200/60 rounded-lg"
+                                    title={
+                                      isExpanded
+                                        ? 'Recolher detalhes'
+                                        : 'Expandir e detalhar prescrição'
+                                    }
+                                  >
+                                    <ChevronRight
+                                      size={15}
+                                      className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                                    />
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-4 gap-1 text-[11px] text-slate-600">
+                                <div>
+                                  Paciente:{' '}
+                                  <strong className="text-slate-900">
+                                    {occ.presc.paciente_nome}
+                                  </strong>
+                                </div>
+                                <div>
+                                  Médico(a):{' '}
+                                  <strong className="text-slate-900">
+                                    {occ.presc.medico_prescritor || 'Não informado'}
+                                  </strong>
+                                </div>
+                                <div>
+                                  Vigência:{' '}
+                                  <strong>
+                                    {dataIniFormatada} até {dataFimFormatada}
+                                  </strong>
+                                </div>
+                                <div>
+                                  Posologia:{' '}
+                                  <strong>
+                                    {occ.item.posologia || occ.item.dose || 'Conforme prescrição'}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1 text-[10px] text-emerald-900/80">
+                                <span className="flex items-center gap-1">
+                                  <span>
+                                    Status: <strong>{occ.presc.status || 'Liberada'}</strong>
+                                  </span>
+                                  <span>•</span>
+                                  <span>
+                                    Total de itens:{' '}
+                                    <strong>{allItens.length || occ.presc.total_itens || 1}</strong>
+                                  </span>
+                                </span>
+                                <span className="text-emerald-700 font-semibold flex items-center gap-0.5">
+                                  <span>
+                                    {isExpanded ? 'Ocultar conteúdo' : 'Ver conteúdo completo'}
+                                  </span>
+                                  <ChevronRight
+                                    size={12}
+                                    className={isExpanded ? 'rotate-90' : ''}
+                                  />
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Detalhamento Expandido da Prescrição com Todos os Itens */}
+                            {isExpanded && (
+                              <div className="p-3 sm:p-4 bg-white border-t border-emerald-200/80 space-y-3">
+                                {/* Informações Gerais da Prescrição */}
+                                <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 text-xs space-y-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-950/10 pb-2">
+                                    <div className="flex items-center gap-2">
+                                      <FileSpreadsheet className="h-4 w-4 text-[#0D8272]" />
+                                      <span className="font-bold text-[#0C4336] text-xs sm:text-sm">
+                                        Prescrição Médica #{occ.presc.numero}
+                                      </span>
+                                      <Badge className="bg-emerald-100 text-emerald-900 border-emerald-200 text-[10px] font-bold">
+                                        {occ.presc.status || 'Liberada'}
+                                      </Badge>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedPrescription(occ.presc)
+                                          setViewPayloadJson(false)
+                                          setDetailModalOpen(true)
+                                        }}
+                                        className="h-7 text-[11px] border-emerald-300 text-emerald-900 hover:bg-emerald-50 rounded-lg px-2"
+                                      >
+                                        Abrir em Modal
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
+                                    <div>
+                                      <span className="text-slate-400 block text-[10px] uppercase font-bold">
+                                        Paciente
+                                      </span>
+                                      <span className="font-bold text-slate-900">
+                                        {occ.presc.paciente_nome}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block text-[10px] uppercase font-bold">
+                                        Médico(a) Prescritor(a)
+                                      </span>
+                                      <span className="font-bold text-[#0C4336]">
+                                        {occ.presc.medico_prescritor || '—'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block text-[10px] uppercase font-bold">
+                                        Data da Prescrição
+                                      </span>
+                                      <span className="font-semibold text-slate-800">
+                                        {occ.presc.data_prescricao || '—'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block text-[10px] uppercase font-bold">
+                                        Vigência (Início e Fim)
+                                      </span>
+                                      <span className="font-semibold text-slate-800">
+                                        {dataIniFormatada} até {dataFimFormatada}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Lista Completa de Itens da Prescrição */}
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                                      <Pill size={13} className="text-emerald-700" />
+                                      <span>Itens Prescritos ({allItens.length})</span>
+                                    </h4>
+                                    <span className="text-[11px] text-slate-400">
+                                      Fonte: campo itens/payload da prescrição #{occ.presc.numero}
+                                    </span>
+                                  </div>
+
+                                  {allItens.length > 0 ? (
+                                    <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                                      <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-xs">
+                                          <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-[11px]">
+                                            <tr>
+                                              <th className="p-2.5 w-10 text-center">#</th>
+                                              <th className="p-2.5">Medicamento / Descrição</th>
+                                              <th className="p-2.5">Dose</th>
+                                              <th className="p-2.5">Via</th>
+                                              <th className="p-2.5">Frequência / Posologia</th>
+                                              <th className="p-2.5">Quantidade</th>
+                                              <th className="p-2.5">Observação</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-slate-100">
+                                            {allItens.map((it, itemIdx) => {
+                                              const isSearchedItem =
+                                                normalize(it.descricao).includes(
+                                                  normalize(activeCheckMed),
+                                                ) ||
+                                                (normalize(activeCheckMed).includes('INSULINA') &&
+                                                  (normalize(it.descricao).includes('LANTUS') ||
+                                                    normalize(it.descricao).includes('GLARGINA')))
+
+                                              return (
+                                                <tr
+                                                  key={itemIdx}
+                                                  className={`hover:bg-slate-50 transition ${
+                                                    isSearchedItem
+                                                      ? 'bg-amber-50/70 font-medium'
+                                                      : ''
+                                                  }`}
+                                                >
+                                                  <td className="p-2.5 text-center text-slate-400 font-mono text-[10px]">
+                                                    {itemIdx + 1}
+                                                  </td>
+                                                  <td className="p-2.5 text-slate-900 font-semibold">
+                                                    <div className="flex items-center gap-1.5">
+                                                      <span>{it.descricao}</span>
+                                                      {isSearchedItem && (
+                                                        <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[9px] font-bold">
+                                                          Buscado
+                                                        </Badge>
+                                                      )}
+                                                    </div>
+                                                  </td>
+                                                  <td className="p-2.5 text-slate-700 whitespace-nowrap">
+                                                    {it.dose || '—'}
+                                                  </td>
+                                                  <td className="p-2.5 text-slate-700 whitespace-nowrap">
+                                                    {it.viaAdministracao || '—'}
+                                                  </td>
+                                                  <td className="p-2.5 text-slate-700">
+                                                    {it.posologia || '—'}
+                                                  </td>
+                                                  <td className="p-2.5 text-slate-700 whitespace-nowrap font-mono text-[11px]">
+                                                    {it.quantidade
+                                                      ? `${it.quantidade} ${it.unidade || ''}`.trim()
+                                                      : '—'}
+                                                  </td>
+                                                  <td className="p-2.5 text-slate-500 text-[11px] italic max-w-xs break-words">
+                                                    {it.observacao || '—'}
+                                                  </td>
+                                                </tr>
+                                              )
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center text-slate-400 text-xs">
+                                      Nenhum item discriminado na prescrição.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 text-[11px] text-slate-600">
-                            <div>
-                              Paciente:{' '}
-                              <strong className="text-slate-900">{occ.presc.paciente_nome}</strong>
-                            </div>
-                            <div>
-                              Vigência:{' '}
-                              <strong>{occ.presc.data_inicial || occ.presc.data_prescricao}</strong>
-                            </div>
-                            <div>
-                              Posologia:{' '}
-                              <strong>
-                                {occ.item.posologia || occ.item.dose || 'Conforme prescrição'}
-                              </strong>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 </div>

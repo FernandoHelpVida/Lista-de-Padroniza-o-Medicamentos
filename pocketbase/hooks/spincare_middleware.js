@@ -1911,59 +1911,7 @@ routerAdd(
 
       const body = e.requestInfo().body || {}
       if (body.action === 'diag_test_live') {
-        // Rota de diagnóstico imediato
-        const diagResult = {}
-        // 1. Testa chamada a get/patients com name=Ademir vs search=Ademir
-        try {
-          const resName = $http.send({
-            url:
-              baseUrl +
-              '/integration-engine/get/patients?name=Ademir&page_number=1&page_size=5&token=' +
-              encodeURIComponent(apiToken),
-            method: 'GET',
-            headers: { Accept: 'application/json', Authorization: 'Bearer ' + apiToken },
-            timeout: 15,
-          })
-          diagResult.patientsWithName = (resName.json || JSON.parse(resName.raw || '[]')).slice(
-            0,
-            3,
-          )
-        } catch (err1) {
-          diagResult.err1 = String(err1)
-        }
-
-        // 2. Testa chamada a get/prescriptions com initial_dt=2026-09-01&final_dt=2026-09-30
-        try {
-          const resPresc = $http.send({
-            url:
-              baseUrl +
-              '/integration-engine/get/prescriptions?initial_dt=2026-09-01%2000:00:00&final_dt=2026-09-30%2023:59:59&page_number=1&page_size=100&token=' +
-              encodeURIComponent(apiToken),
-            method: 'GET',
-            headers: { Accept: 'application/json', Authorization: 'Bearer ' + apiToken },
-            timeout: 25,
-          })
-          const prescList = resPresc.json || JSON.parse(resPresc.raw || '[]')
-          diagResult.prescriptionsCount = Array.isArray(prescList)
-            ? prescList.length
-            : prescList.items
-              ? prescList.items.length
-              : 0
-          diagResult.prescSample = Array.isArray(prescList) ? prescList.slice(0, 2) : []
-          // Procura Ademir ou 75147
-          const ademirFound = (Array.isArray(prescList) ? prescList : prescList.items || []).filter(
-            (pr) => {
-              const pnum = String(pr.prescription_number || pr.id || '')
-              const pn = String(pr.patient_name || pr.nm_paciente || '')
-              return pnum === '75147' || pn.toLowerCase().includes('ademir')
-            },
-          )
-          diagResult.ademirFound = ademirFound
-        } catch (err2) {
-          diagResult.err2 = String(err2)
-        }
-
-        return e.json(200, { success: true, diagResult })
+        return e.json(200, { success: true, message: 'disabled' })
       }
       if (body.action === 'diag_investigation_live') {
         const targetNumbers = ['73024', '74579', '74620', '75147', '73188']
