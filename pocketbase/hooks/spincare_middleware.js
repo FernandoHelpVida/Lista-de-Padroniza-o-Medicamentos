@@ -723,9 +723,10 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
     let totalCreated = 0
     let totalUpdated = 0
     let totalIgnored = 0
+    let pagesProcessed = 0
     const nowIso = new Date().toISOString()
     const pageSize = 100
-    const maxPages = 50
+    const maxPages = 400 // Cap de segurança alto contra loop infinito
 
     const syncCol = app.findCollectionByNameOrId('orcamentos_sync')
 
@@ -891,6 +892,7 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
     const normalizedPath = endpointBudgets.startsWith('/') ? endpointBudgets : '/' + endpointBudgets
 
     for (let p = 1; p <= maxPages; p++) {
+      pagesProcessed++
       let pUrl =
         baseUrl +
         normalizedPath +
@@ -979,11 +981,15 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
 
     console.log(
       '[Cron Orçamentos] Concluído com sucesso:',
+      pagesProcessed,
+      'páginas processadas,',
       totalFetched,
       'buscados, criados:',
       totalCreated,
       'atualizados:',
       totalUpdated,
+      'falhas/ignorados:',
+      totalIgnored,
     )
   } catch (orcCronErr) {
     console.error('[Cron Orçamentos] Erro:', orcCronErr)
@@ -1810,11 +1816,14 @@ routerAdd('GET', '/backend/v1/spincare/budgets/sync-run', (e) => {
     const normalizedPath = endpointBudgets.startsWith('/') ? endpointBudgets : '/' + endpointBudgets
     const syncCol = e.app.findCollectionByNameOrId('orcamentos_sync')
     const nowIso = new Date().toISOString()
+    const maxPages = 400 // Cap de segurança alto contra loop infinito
+    let pagesProcessed = 0
     let totalFetched = 0
     let totalCreated = 0
     let totalUpdated = 0
 
-    for (let p = 1; p <= 50; p++) {
+    for (let p = 1; p <= maxPages; p++) {
+      pagesProcessed++
       let pUrl =
         baseUrl +
         normalizedPath +
@@ -2029,8 +2038,20 @@ routerAdd('GET', '/backend/v1/spincare/budgets/sync-run', (e) => {
       if (items.length < 100) break
     }
 
+    console.log(
+      '[Budgets sync-run] Concluído com sucesso:',
+      pagesProcessed,
+      'páginas processadas,',
+      totalFetched,
+      'buscados, criados:',
+      totalCreated,
+      'atualizados:',
+      totalUpdated,
+    )
+
     return e.json(200, {
       success: true,
+      pagesProcessed: pagesProcessed,
       totalFetched: totalFetched,
       created: totalCreated,
       updated: totalUpdated,
@@ -2193,9 +2214,10 @@ routerAdd('POST', '/backend/v1/spincare/budgets/sync', (e) => {
     let totalCreated = 0
     let totalUpdated = 0
     let totalIgnored = 0
+    let pagesProcessed = 0
     const nowIso = new Date().toISOString()
     const pageSize = 100
-    const maxPages = 50
+    const maxPages = 400 // Cap de segurança alto contra loop infinito
 
     const syncCol = e.app.findCollectionByNameOrId('orcamentos_sync')
 
@@ -2361,6 +2383,7 @@ routerAdd('POST', '/backend/v1/spincare/budgets/sync', (e) => {
     const normalizedPath = endpointBudgets.startsWith('/') ? endpointBudgets : '/' + endpointBudgets
 
     for (let p = 1; p <= maxPages; p++) {
+      pagesProcessed++
       let pUrl =
         baseUrl +
         normalizedPath +
@@ -2464,7 +2487,9 @@ routerAdd('POST', '/backend/v1/spincare/budgets/sync', (e) => {
       auditRecord.set('status_novo', 'sucesso')
       auditRecord.set(
         'detalhes',
-        'Replicação CDC de orçamentos concluída (manual): buscados=' +
+        'Replicação CDC de orçamentos concluída (manual): páginas=' +
+          pagesProcessed +
+          ', buscados=' +
           totalFetched +
           ', criados=' +
           totalCreated +
@@ -2479,9 +2504,23 @@ routerAdd('POST', '/backend/v1/spincare/budgets/sync', (e) => {
       e.app.save(auditRecord)
     } catch (_) {}
 
+    console.log(
+      '[Budgets Sync Manual] Concluído com sucesso:',
+      pagesProcessed,
+      'páginas processadas,',
+      totalFetched,
+      'buscados, criados:',
+      totalCreated,
+      'atualizados:',
+      totalUpdated,
+      'falhas/ignorados:',
+      totalIgnored,
+    )
+
     return e.json(200, {
       success: true,
       trigger: 'manual',
+      pagesProcessed: pagesProcessed,
       totalFetched: totalFetched,
       created: totalCreated,
       updated: totalUpdated,
