@@ -49,7 +49,7 @@ import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export default function Layout() {
-  const { user, logout, isAdmin, isMedicoVisitador } = useAuth()
+  const { user, logout, isAdmin, isMedicoVisitador, isFinanceiro } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -216,6 +216,7 @@ export default function Layout() {
     if (path.startsWith('/pacientes')) return 'Pacientes (SpinCare)'
     if (path.startsWith('/orcamentos')) return 'Orçamentos Aprovados (SpinCare)'
     if (path.startsWith('/prescricoes')) return 'Prescrições Médicas (SpinCare)'
+    if (path.startsWith('/relatorio-orcamentos')) return 'Relatório Financeiro de Orçamentos'
     if (path.startsWith('/importar')) return 'Importar Lista Padronizada (Planilha)'
     if (path.startsWith('/equipe')) return 'Gestão de Contas da Equipe'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
@@ -226,6 +227,7 @@ export default function Layout() {
   // Itens da barra de navegação lateral (Desktop)
   // Médicos visitadores NÃO têm acesso a pacientes nem orçamentos (LGPD)
   const canAccessSpincare = !isMedicoVisitador
+  const canAccessRelatorioFinanceiro = isAdmin || isFinanceiro
 
   const navItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
@@ -241,6 +243,15 @@ export default function Layout() {
           { title: 'Pacientes', path: '/pacientes', icon: UserSquare2 },
           { title: 'Prescrições', path: '/prescricoes', icon: FileSpreadsheet },
           { title: 'Orçamentos', path: '/orcamentos', icon: DollarSign },
+        ]
+      : []),
+    ...(canAccessRelatorioFinanceiro
+      ? [
+          {
+            title: 'Relatório Financeiro',
+            path: '/relatorio-orcamentos',
+            icon: DollarSign,
+          },
         ]
       : []),
     ...(isAdmin ? [{ title: 'Importar Planilha', path: '/importar', icon: FileSpreadsheet }] : []),
@@ -594,6 +605,23 @@ export default function Layout() {
                       </div>
                       <span className="bg-[#FEF8EC] text-[#92400E] text-[9px] font-bold px-1.5 py-0.2 rounded border border-[#F5B31C]/40">
                         &ge; 2026
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {canAccessRelatorioFinanceiro && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => navigate('/relatorio-orcamentos')}
+                      className="text-xs text-slate-700 cursor-pointer rounded-lg py-2 hover:bg-emerald-50 flex items-center justify-between"
+                    >
+                      <div className="flex items-center">
+                        <DollarSign size={14} className="mr-2 text-[#0D8272]" />
+                        <span>Relatório Financeiro</span>
+                      </div>
+                      <span className="bg-[#E6F5F2] text-[#0C4336] text-[9px] font-bold px-1.5 py-0.2 rounded border border-emerald-300">
+                        Financeiro
                       </span>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
