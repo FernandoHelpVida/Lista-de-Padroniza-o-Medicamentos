@@ -161,12 +161,30 @@ export default function RelatorioOrcamentos() {
   const [exporting, setExporting] = useState(false)
   const [allBudgets, setAllBudgets] = useState<OrcamentoSyncRecord[]>([])
 
-  // Filtros
-  const [startDate, setStartDate] = useState<string>('2026-01-01')
-  const [endDate, setEndDate] = useState<string>(new Date().toISOString().slice(0, 10))
-  const [selectedConvenio, setSelectedConvenio] = useState<string>('todos')
-  const [selectedModalidade, setSelectedModalidade] = useState<string>('todas')
-  const [patientQuery, setPatientQuery] = useState<string>('')
+  // Filtros em rascunho (controlam os inputs do formulário de filtros)
+  const defaultStartDate = '2026-01-01'
+  const defaultEndDate = new Date().toISOString().slice(0, 10)
+
+  const [draftStartDate, setDraftStartDate] = useState<string>(defaultStartDate)
+  const [draftEndDate, setDraftEndDate] = useState<string>(defaultEndDate)
+  const [draftConvenio, setDraftConvenio] = useState<string>('todos')
+  const [draftModalidade, setDraftModalidade] = useState<string>('todas')
+  const [draftPatientQuery, setDraftPatientQuery] = useState<string>('')
+
+  // Filtros aplicados efetivos (alimentam consultas, resumos, totais e listagem)
+  const [appliedFilters, setAppliedFilters] = useState<{
+    startDate: string
+    endDate: string
+    convenio: string
+    modalidade: string
+    patientQuery: string
+  }>({
+    startDate: defaultStartDate,
+    endDate: defaultEndDate,
+    convenio: 'todos',
+    modalidade: 'todas',
+    patientQuery: '',
+  })
 
   // Ordenação da tabela
   const [sortField, setSortField] = useState<
@@ -221,12 +239,22 @@ export default function RelatorioOrcamentos() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
   }, [allBudgets])
 
-  // Orçamentos filtrados
+  // Orçamentos filtrados (baseados exclusivamente nos filtros aplicados ao clicar em Pesquisar)
   const filteredBudgets = useMemo(() => {
+    const {
+      startDate,
+      endDate,
+      convenio: selectedConvenio,
+      modalidade: selectedModalidade,
+      patientQuery,
+    } = appliedFilters
+
     const startComp = startDate ? parseDateToComparable(startDate) : null
     const endComp = endDate ? parseDateToComparable(endDate) : null
-    const targetConvNorm = selectedConvenio !== 'todos' ? normalize(selectedConvenio) : ''
-    const targetModNorm = selectedModalidade !== 'todas' ? normalize(selectedModalidade) : ''
+    const targetConvNorm =
+      selectedConvenio && selectedConvenio !== 'todos' ? normalize(selectedConvenio) : ''
+    const targetModNorm =
+      selectedModalidade && selectedModalidade !== 'todas' ? normalize(selectedModalidade) : ''
     const targetPatientNorm = patientQuery.trim() ? normalize(patientQuery) : ''
 
     return allBudgets.filter((b) => {
@@ -280,7 +308,7 @@ export default function RelatorioOrcamentos() {
 
       return true
     })
-  }, [allBudgets, startDate, endDate, selectedConvenio, selectedModalidade, patientQuery])
+  }, [allBudgets, appliedFilters])
 
   // Total geral e contagem dos orçamentos filtrados (usando SOMENTE valor_total de cada orçamento)
   const totalGeralFiltrado = useMemo(() => {
@@ -367,20 +395,47 @@ export default function RelatorioOrcamentos() {
     }
   }
 
-  const handleClearFilters = () => {
-    setStartDate('2026-01-01')
-    setEndDate(new Date().toISOString().slice(0, 10))
-    setSelectedConvenio('todos')
-    setSelectedModalidade('todas')
-    setPatientQuery('')
+  // Aplica os filtros em rascunho
+  const handleApplyFilters = () => {
+    setAppliedFilters({
+      startDate: draftStartDate,
+      endDate: draftEndDate,
+      convenio: draftConvenio,
+      modalidade: draftModalidade,
+      patientQuery: draftPatientQuery,
+    })
   }
 
-  const hasActiveFilters =
-    startDate !== '2026-01-01' ||
-    endDate !== new Date().toISOString().slice(0, 10) ||
-    selectedConvenio !== 'todos' ||
-    selectedModalidade !== 'todas' ||
-    Boolean(patientQuery.trim())
+  // Limpa tanto o rascunho quanto os filtros aplicados
+  const handleClearFilters = () => {
+    setDraftStartDate(defaultStartDate)
+    setDraftEndDate(defaultEndDate)
+    setDraftConvenio('todos')
+    setDraftModalidade('todas')
+    setDraftPatientQuery('')
+
+    setAppliedFilters({
+      startDate: defaultStartDate,
+      endDate: defaultEndDate,
+      convenio: 'todos',
+      modalidade: 'todas',
+      patientQuery: '',
+    })
+  }
+
+  const hasActiveAppliedFilters =
+    appliedFilters.startDate !== defaultStartDate ||
+    appliedFilters.endDate !== defaultEndDate ||
+    appliedFilters.convenio !== 'todos' ||
+    appliedFilters.modalidade !== 'todas' ||
+    Boolean(appliedFilters.patientQuery.trim())
+
+  const hasPendingChanges =
+    draftStartDate !== appliedFilters.startDate ||
+    draftEndDate !== appliedFilters.endDate ||
+    draftConvenio !== appliedFilters.convenio ||
+    draftModalidade !== appliedFilters.modalidade ||
+    draftPatientQuery !== appliedFilters.patientQuery
 
   // Exportação para Excel .xlsx com SheetJS
   const handleExportXlsx = async () => {
@@ -544,13 +599,21 @@ export default function RelatorioOrcamentos() {
             <div className="flex items-center gap-2 text-[#0C4336] font-bold text-sm">
               <Filter className="h-4 w-4 text-[#0D8272]" />
               <span>Filtros do Relatório</span>
-              {hasActiveFilters && (
+              {hasActiveAppliedFilters && (
                 <Badge className="bg-[#0D8272] text-white text-[10px] font-bold px-1.5 py-0">
                   Filtros ativos
                 </Badge>
               )}
+              {hasPendingChanges && (
+                <Badge
+                  variant="outline"
+                  className="text-[#0D8272] border-[#0D8272]/40 bg-emerald-50 text-[10px] font-semibold px-1.5 py-0"
+                >
+                  Alterações não aplicadas
+                </Badge>
+              )}
             </div>
-            {hasActiveFilters && (
+            {hasActiveAppliedFilters && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -563,7 +626,7 @@ export default function RelatorioOrcamentos() {
             )}
           </div>
         </CardHeader>
-        <CardContent className="p-4 sm:p-6">
+        <CardContent className="p-4 sm:p-6 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             {/* Data Inicial */}
             <div>
@@ -573,8 +636,11 @@ export default function RelatorioOrcamentos() {
               </label>
               <Input
                 type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                value={draftStartDate}
+                onChange={(e) => setDraftStartDate(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleApplyFilters()
+                }}
                 className="h-9 text-xs rounded-xl border-emerald-900/15 focus-visible:ring-[#0D8272]"
               />
             </div>
@@ -587,8 +653,11 @@ export default function RelatorioOrcamentos() {
               </label>
               <Input
                 type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                value={draftEndDate}
+                onChange={(e) => setDraftEndDate(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleApplyFilters()
+                }}
                 className="h-9 text-xs rounded-xl border-emerald-900/15 focus-visible:ring-[#0D8272]"
               />
             </div>
@@ -599,7 +668,7 @@ export default function RelatorioOrcamentos() {
                 <Building2 size={13} className="text-emerald-700" />
                 Convênio:
               </label>
-              <Select value={selectedConvenio} onValueChange={setSelectedConvenio}>
+              <Select value={draftConvenio} onValueChange={setDraftConvenio}>
                 <SelectTrigger className="h-9 text-xs rounded-xl border-emerald-900/15 focus:ring-[#0D8272]">
                   <SelectValue placeholder="Todos os convênios" />
                 </SelectTrigger>
@@ -622,7 +691,7 @@ export default function RelatorioOrcamentos() {
                 <Layers size={13} className="text-emerald-700" />
                 Modalidade:
               </label>
-              <Select value={selectedModalidade} onValueChange={setSelectedModalidade}>
+              <Select value={draftModalidade} onValueChange={setDraftModalidade}>
                 <SelectTrigger className="h-9 text-xs rounded-xl border-emerald-900/15 focus:ring-[#0D8272]">
                   <SelectValue placeholder="Todas as modalidades" />
                 </SelectTrigger>
@@ -650,11 +719,44 @@ export default function RelatorioOrcamentos() {
                 <Input
                   type="text"
                   placeholder="Nome do paciente..."
-                  value={patientQuery}
-                  onChange={(e) => setPatientQuery(e.target.value)}
+                  value={draftPatientQuery}
+                  onChange={(e) => setDraftPatientQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleApplyFilters()
+                  }}
                   className="h-9 pl-8 text-xs rounded-xl border-emerald-900/15 focus-visible:ring-[#0D8272]"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Ações de Pesquisa / Aplicar Filtros */}
+          <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100">
+            <p className="text-[11px] text-slate-500">
+              Ajuste os filtros acima e clique em{' '}
+              <strong className="text-slate-700">Pesquisar</strong> para atualizar os totais,
+              resumos e a listagem.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleClearFilters}
+                className="h-9 px-3.5 text-xs font-semibold text-slate-600 hover:text-slate-900 border-slate-200 hover:bg-slate-50 rounded-xl"
+              >
+                <X size={14} className="mr-1.5 text-slate-400" />
+                Limpar filtros
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleApplyFilters}
+                className="h-9 px-4 text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] text-white rounded-xl shadow-xs flex items-center gap-1.5"
+              >
+                <Search size={14} />
+                <span>Pesquisar</span>
+              </Button>
             </div>
           </div>
         </CardContent>
