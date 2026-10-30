@@ -36,6 +36,7 @@ import {
   ChevronsRight,
   Code2,
   CheckCircle2,
+  Download,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import {
@@ -115,6 +116,9 @@ export default function Orcamentos() {
       .trim()
       .toUpperCase()
 
+  // Constante de status exigida: SOMENTE orçamentos aprovados com autorização
+  const STATUS_APROVADO_COM_AUTORIZACAO = 'Aprovado com autorização'
+
   // Converte data dd/mm/aaaa ou yyyy-mm-dd (ou ISO 8601 com T/Z/espaço) para número comparável yyyymmdd no fuso America/Sao_Paulo
   const parseDateToComparable = (
     dateStr: string,
@@ -163,6 +167,144 @@ export default function Orcamentos() {
       }
     }
     return null
+  }
+
+  // Exportação CSV dos orçamentos (SOMENTE Aprovado com autorização)
+  const [exportingCsv, setExportingCsv] = useState(false)
+
+  const handleExportCsv = async () => {
+    try {
+      setExportingCsv(true)
+      const filters: string[] = [`status = "${STATUS_APROVADO_COM_AUTORIZACAO}"`]
+      if (debouncedGeneralSearch.trim()) {
+        const q = debouncedGeneralSearch.trim().replace(/"/g, '\\"')
+        filters.push(`(paciente_nome ~ "${q}" || numero ~ "${q}" || convenio ~ "${q}")`)
+      }
+      if (hasExecutedCombinedCheck && activeCheckPatient.trim()) {
+        const qPat = activeCheckPatient.trim().replace(/"/g, '\\"')
+        filters.push(`paciente_nome ~ "${qPat}"`)
+      }
+
+      const allRecords = await pb.collection('orcamentos_sync').getFullList<OrcamentoSyncRecord>({
+        filter: filters.join(' && '),
+        sort: '-data_aprovacao_iso,-created',
+      })
+
+      // Se houver busca combinada com período ou termo, aplicar os mesmos critérios
+      let recordsToExport = allRecords
+      if (hasExecutedCombinedCheck) {
+        const qTerm = activeCheckTerm ? normalize(activeCheckTerm) : ''
+        const termWords = qTerm.split(' ').filter((w) => w.length > 1)
+        const startComp = parseDateToComparable(activeCheckStart)
+        const endComp = parseDateToComparable(activeCheckEnd)
+
+        recordsToExport = allRecords.filter((b) => {
+          if (b.status !== STATUS_APROVADO_COM_AUTORIZACAO) return false
+
+          const bDateAprov =
+            parseDateToComparable(b.data_aprovacao_iso, { interpretInSaoPauloTz: true }) ||
+            parseDateToComparable(b.data_aprovacao) ||
+            parseDateToComparable(b.data_inicial_iso)
+          const bDateEnd =
+            parseDateToComparable(b.data_final_iso, { interpretInSaoPauloTz: true }) ||
+            parseDateToComparable(b.data_final)
+
+          let inPeriod = false
+          if (startComp === null && endComp === null) {
+            inPeriod = true
+          } else if (bDateAprov !== null) {
+            const afterOrAtStart = startComp === null || bDateAprov >= startComp
+            const beforeOrAtEnd = endComp === null || bDateAprov <= endComp
+            inPeriod = afterOrAtStart && beforeOrAtEnd
+          } else if (bDateEnd !== null) {
+            const endAfterOrAtStart = startComp === null || bDateEnd >= startComp
+            const endBeforeOrAtEnd = endComp === null || bDateEnd <= endComp
+            inPeriod = endAfterOrAtStart && endBeforeOrAtEnd
+          }
+
+          if (!inPeriod && (startComp !== null || endComp !== null)) return false
+
+          if (!qTerm) return true
+
+          const itensArr = Array.isArray(b.itens) ? b.itens : []
+          const bNum = normalize(b.numero)
+          const bObs = normalize(b.observacao)
+          const bConv = normalize(b.convenio)
+
+          if (bNum.includes(qTerm) || bObs.includes(qTerm) || bConv.includes(qTerm)) return true
+
+          return itensArr.some((it) => {
+            const desc = normalize(it.descricao)
+            const cod = normalize(it.codigo)
+            return (
+              desc.includes(qTerm) ||
+              cod.includes(qTerm) ||
+              (termWords.length > 0 && termWords.every((w) => desc.includes(w)))
+            )
+          })
+        })
+      }
+
+      if (recordsToExport.length === 0) {
+        toast({
+          title: 'Nenhum orçamento para exportar',
+          description: 'Não há orçamentos aprovados com autorização com os filtros atuais.',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      const headers = [
+        'Número',
+        'Paciente',
+        'Status',
+        'Data Aprovação',
+        'Convênio',
+        'Valor Total (R$)',
+        'Qtd Itens',
+        'Observação',
+      ]
+
+      const rows = recordsToExport.map((b) => [
+        `"${(b.numero || '').replace(/"/g, '""')}"`,
+        `"${(b.paciente_nome || '').replace(/"/g, '""')}"`,
+        `"${(b.status || STATUS_APROVADO_COM_AUTORIZACAO).replace(/"/g, '""')}"`,
+        `"${(b.data_aprovacao_iso ? formatIsoToBrTz(b.data_aprovacao_iso) : b.data_aprovacao || '').replace(/"/g, '""')}"`,
+        `"${(b.convenio || '').replace(/"/g, '""')}"`,
+        `"${(b.valor_total || 0).toFixed(2).replace('.', ',')}"`,
+        b.total_itens || (b.itens ? b.itens.length : 0),
+        `"${(b.observacao || '').replace(/"/g, '""')}"`,
+      ])
+
+      const csvContent =
+        '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n')
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.setAttribute('href', url)
+      link.setAttribute(
+        'download',
+        `orcamentos-aprovados-autorizacao-${new Date().toISOString().slice(0, 10)}.csv`,
+      )
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      toast({
+        title: 'Exportação concluída',
+        description: `${recordsToExport.length} orçamento(s) aprovado(s) com autorização exportado(s) em CSV.`,
+      })
+    } catch (err: unknown) {
+      console.error('Erro ao exportar CSV:', err)
+      toast({
+        title: 'Erro na exportação CSV',
+        description: getErrorMessage(err) || 'Falha ao gerar arquivo CSV.',
+        variant: 'destructive',
+      })
+    } finally {
+      setExportingCsv(false)
+    }
   }
 
   // Formatação em dd/mm/aaaa no fuso horário do Brasil
@@ -232,7 +374,7 @@ export default function Orcamentos() {
       if (isMedicoVisitador) return
       setLoading(true)
       try {
-        const filters: string[] = []
+        const filters: string[] = [`status = "${STATUS_APROVADO_COM_AUTORIZACAO}"`]
 
         if (debouncedGeneralSearch.trim()) {
           const q = debouncedGeneralSearch.trim().replace(/"/g, '\\"')
@@ -249,7 +391,7 @@ export default function Orcamentos() {
         let resultList = await pb
           .collection('orcamentos_sync')
           .getList<OrcamentoSyncRecord>(pageToLoad, pageSize, {
-            filter: filterString || undefined,
+            filter: filterString,
             sort: '-data_aprovacao_iso,-created',
             requestKey: null,
           })
@@ -385,6 +527,9 @@ export default function Orcamentos() {
     const matchingBudgetIds = new Set<string>()
 
     budgets.forEach((b) => {
+      // 0. SOMENTE orçamentos aprovados com autorização
+      if (b.status !== STATUS_APROVADO_COM_AUTORIZACAO) return
+
       // 1. Filtro estrito de paciente (se informado)
       if (patWords.length > 0) {
         const pNome = normalize(b.paciente_nome)
@@ -544,6 +689,22 @@ export default function Orcamentos() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={exportingCsv || loading}
+            onClick={handleExportCsv}
+            className="text-xs border-emerald-300 text-[#0C4336] hover:bg-[#E6F5F2] font-semibold rounded-xl h-10 px-3.5 flex items-center gap-2 min-h-[44px] sm:min-h-0 shadow-2xs"
+            title="Exportar orçamentos aprovados com autorização em CSV"
+          >
+            {exportingCsv ? (
+              <Loader2 size={14} className="animate-spin text-[#0D8272]" />
+            ) : (
+              <Download size={14} className="text-[#0D8272]" />
+            )}
+            <span>{exportingCsv ? 'Exportando CSV...' : 'Exportar CSV'}</span>
+          </Button>
+
           {isAdmin && (
             <Button
               type="button"

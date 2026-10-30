@@ -6,7 +6,7 @@ export interface UserProfile extends RecordModel {
   email: string
   name?: string
   avatar?: string
-  role?: 'admin' | 'comum' | 'medico_visitador'
+  role?: 'admin' | 'comum' | 'medico_visitador' | 'financeiro'
   approval_status?: 'pendente' | 'aprovado' | 'negado'
 }
 
@@ -19,6 +19,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>
   isAdmin: boolean
   isMedicoVisitador: boolean
+  isFinanceiro: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -80,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     Boolean(user?.is_admin)
 
   const isMedicoVisitador = user?.role === 'medico_visitador'
+  const isFinanceiro = user?.role === 'financeiro'
 
   return (
     <AuthContext.Provider
@@ -92,6 +94,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshUser,
         isAdmin,
         isMedicoVisitador,
+        isFinanceiro,
       }}
     >
       {children}

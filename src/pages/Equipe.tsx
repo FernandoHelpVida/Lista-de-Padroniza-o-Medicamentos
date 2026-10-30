@@ -54,7 +54,7 @@ export interface UserTeamRecord {
   id: string
   name?: string | null
   email?: string | null
-  role?: 'admin' | 'comum' | 'medico_visitador' | string | null
+  role?: 'admin' | 'comum' | 'medico_visitador' | 'financeiro' | string | null
   approval_status?: 'pendente' | 'aprovado' | 'negado' | string | null
   verified?: boolean | null
   created?: string | null
@@ -77,7 +77,9 @@ export default function Equipe() {
   const [novoEmail, setNovoEmail] = useState('')
   const [novaSenha, setNovaSenha] = useState('HelpVida@2025')
   const [showNovaSenha, setShowNovaSenha] = useState(false)
-  const [novoRole, setNovoRole] = useState<'comum' | 'admin' | 'medico_visitador'>('comum')
+  const [novoRole, setNovoRole] = useState<'comum' | 'admin' | 'medico_visitador' | 'financeiro'>(
+    'comum',
+  )
   const [criandoMembro, setCriandoMembro] = useState(false)
   const [modalFormError, setModalFormError] = useState<string | null>(null)
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false)
@@ -92,7 +94,7 @@ export default function Equipe() {
   const [confirmNegarUser, setConfirmNegarUser] = useState<UserTeamRecord | null>(null)
   const [modalRevisarUser, setModalRevisarUser] = useState<UserTeamRecord | null>(null)
   const [selectedRoleForApproval, setSelectedRoleForApproval] = useState<
-    'comum' | 'medico_visitador' | 'admin'
+    'comum' | 'medico_visitador' | 'financeiro' | 'admin'
   >('comum')
   const [approvalRoleError, setApprovalRoleError] = useState<string | null>(null)
 
@@ -148,6 +150,8 @@ export default function Equipe() {
       setSelectedRoleForApproval('medico_visitador')
     } else if (currentRole === 'admin') {
       setSelectedRoleForApproval('admin')
+    } else if (currentRole === 'financeiro') {
+      setSelectedRoleForApproval('financeiro')
     } else {
       setSelectedRoleForApproval('comum')
     }
@@ -157,7 +161,7 @@ export default function Equipe() {
   const handleReviewUser = async (
     targetUser: UserTeamRecord,
     decision: 'aprovar' | 'negar',
-    roleToAssign?: 'comum' | 'medico_visitador' | 'admin',
+    roleToAssign?: 'comum' | 'medico_visitador' | 'financeiro' | 'admin',
   ) => {
     if (!targetUser?.id) return
 
@@ -181,7 +185,7 @@ export default function Equipe() {
       const payload: {
         userId: string
         decision: 'aprovar' | 'negar'
-        role?: 'comum' | 'medico_visitador' | 'admin'
+        role?: 'comum' | 'medico_visitador' | 'financeiro' | 'admin'
       } = {
         userId: targetUser.id,
         decision,
@@ -198,9 +202,11 @@ export default function Equipe() {
       const roleNomeAmigavel =
         payload.role === 'admin'
           ? 'Administrador'
-          : payload.role === 'medico_visitador'
-            ? 'Médico Visitador (Apenas Padronizados)'
-            : 'Corpo Clínico'
+          : payload.role === 'financeiro'
+            ? 'Financeiro (Relatórios de Orçamentos)'
+            : payload.role === 'medico_visitador'
+              ? 'Médico Visitador (Apenas Padronizados)'
+              : 'Corpo Clínico'
 
       toast({
         title: decision === 'aprovar' ? 'Cadastro aprovado com sucesso!' : 'Cadastro negado',
@@ -229,9 +235,11 @@ export default function Equipe() {
         const roleNomeAmigavel =
           roleFinal === 'admin'
             ? 'Administrador'
-            : roleFinal === 'medico_visitador'
-              ? 'Médico Visitador (Apenas Padronizados)'
-              : 'Corpo Clínico'
+            : roleFinal === 'financeiro'
+              ? 'Financeiro (Relatórios de Orçamentos)'
+              : roleFinal === 'medico_visitador'
+                ? 'Médico Visitador (Apenas Padronizados)'
+                : 'Corpo Clínico'
 
         // Tentar salvar log de auditoria
         try {
@@ -881,6 +889,11 @@ export default function Equipe() {
                               <ShieldCheck size={12} className="text-[#F5B31C]" />
                               Administrador
                             </Badge>
+                          ) : m?.role === 'financeiro' ? (
+                            <Badge className="bg-amber-50 text-amber-900 border border-amber-300 text-[11px] font-semibold flex items-center gap-1">
+                              <ShieldCheck size={12} className="text-amber-600" />
+                              Financeiro
+                            </Badge>
                           ) : m?.role === 'medico_visitador' ? (
                             <Badge className="bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-semibold flex items-center gap-1">
                               <User size={12} className="text-sky-600" />
@@ -1129,7 +1142,7 @@ export default function Equipe() {
                   </Label>
                   <Select
                     value={novoRole}
-                    onValueChange={(val: 'comum' | 'admin' | 'medico_visitador') =>
+                    onValueChange={(val: 'comum' | 'admin' | 'medico_visitador' | 'financeiro') =>
                       setNovoRole(val)
                     }
                   >
@@ -1141,6 +1154,9 @@ export default function Equipe() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="comum">Corpo Clínico (Médico / Farmacêutico)</SelectItem>
+                      <SelectItem value="financeiro">
+                        Financeiro (Relatório de Orçamentos)
+                      </SelectItem>
                       <SelectItem value="medico_visitador">
                         Médico Visitador (Apenas Padronizados)
                       </SelectItem>
@@ -1356,7 +1372,7 @@ export default function Equipe() {
 
                 <Select
                   value={selectedRoleForApproval}
-                  onValueChange={(val: 'comum' | 'medico_visitador' | 'admin') => {
+                  onValueChange={(val: 'comum' | 'medico_visitador' | 'financeiro' | 'admin') => {
                     setSelectedRoleForApproval(val)
                     if (approvalRoleError) setApprovalRoleError(null)
                   }}
@@ -1369,6 +1385,7 @@ export default function Equipe() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="comum">Corpo Clínico (Médico / Farmacêutico)</SelectItem>
+                    <SelectItem value="financeiro">Financeiro (Relatório de Orçamentos)</SelectItem>
                     <SelectItem value="medico_visitador">
                       Médico Visitador (Apenas Padronizados)
                     </SelectItem>
@@ -1389,6 +1406,20 @@ export default function Equipe() {
                         só visualiza medicamentos com status{' '}
                         <span className="font-semibold text-emerald-800">Padronizado</span>.
                         Medicamentos não padronizados e inativos ficam ocultos.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedRoleForApproval === 'financeiro' && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 space-y-1 animate-in fade-in">
+                      <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                        <ShieldCheck size={13} className="text-amber-700" />
+                        Financeiro (Relatório de Orçamentos)
+                      </div>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        Acesso focado no financeiro: visualiza e exporta para Excel o Relatório de
+                        Orçamentos aprovados com autorização, amostragem de gastos e filtros por
+                        período, convênio, modalidade e paciente.
                       </p>
                     </div>
                   )}

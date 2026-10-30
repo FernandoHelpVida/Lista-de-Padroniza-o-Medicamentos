@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T12:07:49.340Z",
+  "generatedAt": "2026-10-30T18:28:13.980Z",
   "collections": [
     {
       "name": "users",
@@ -43,7 +43,7 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["admin", "comum", "medico_visitador"]
+          "selectValues": ["admin", "comum", "medico_visitador", "financeiro"]
         },
         {
           "name": "approval_status",
