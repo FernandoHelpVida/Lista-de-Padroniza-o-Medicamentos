@@ -44,6 +44,7 @@ import {
   type SpincarePrescriptionItem,
   type PrescricaoSyncRecord,
 } from '@/services/spincare'
+import { parseDateToComparable } from '@/lib/dateUtils'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { SpincareTabsNav } from '@/components/SpincareTabsNav'
 
@@ -120,61 +121,6 @@ export default function Prescricoes() {
       .replace(/[\u0300-\u036f]/g, '')
       .trim()
       .toUpperCase()
-
-  // Converte data dd/mm/aaaa ou yyyy-mm-dd (ou ISO 8601 com T/Z/espaço) para número comparável yyyymmdd.
-  // Para strings ISO contendo 'T', 'Z' ou offset de fuso, converte no fuso America/Sao_Paulo (UTC-3),
-  // garantindo que timestamps como "2026-10-01T03:59:00Z" sejam lidos como 20260930 (30/09/2026 às 23:59 em SP).
-  const parseDateToComparable = (
-    dateStr: string,
-    options?: { interpretInSaoPauloTz?: boolean },
-  ): number | null => {
-    if (!dateStr || dateStr === '—') return null
-    const raw = dateStr.trim()
-
-    // Se possui indicação de horário ISO com fuso (ex: 'T', 'Z' ou offset + / -) ou a opção está ativa
-    if (options?.interpretInSaoPauloTz || raw.includes('T') || raw.includes('Z')) {
-      try {
-        const d = new Date(raw)
-        if (!Number.isNaN(d.getTime())) {
-          // Extrai ano, mês e dia no fuso America/Sao_Paulo
-          const formatter = new Intl.DateTimeFormat('pt-BR', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-          })
-          const parts = formatter.formatToParts(d)
-          const y = parts.find((p) => p.type === 'year')?.value
-          const m = parts.find((p) => p.type === 'month')?.value
-          const day = parts.find((p) => p.type === 'day')?.value
-          if (y && m && day) {
-            return parseInt(`${y}${m.padStart(2, '0')}${day.padStart(2, '0')}`, 10)
-          }
-        }
-      } catch (_) {
-        // Fallback para parse textual abaixo
-      }
-    }
-
-    // Parse de data textual simples (dd/mm/aaaa ou yyyy-mm-dd)
-    const s = raw.split('T')[0].split(' ')[0]
-    if (s.includes('/')) {
-      const parts = s.split('/')
-      if (parts.length === 3) {
-        return parseInt(`${parts[2]}${parts[1].padStart(2, '0')}${parts[0].padStart(2, '0')}`, 10)
-      }
-    } else if (s.includes('-')) {
-      const parts = s.split('-')
-      if (parts.length === 3) {
-        if (parts[0].length === 4) {
-          return parseInt(`${parts[0]}${parts[1].padStart(2, '0')}${parts[2].padStart(2, '0')}`, 10)
-        } else if (parts[2].length === 4) {
-          return parseInt(`${parts[2]}${parts[1].padStart(2, '0')}${parts[0].padStart(2, '0')}`, 10)
-        }
-      }
-    }
-    return null
-  }
 
   // Formatação em dd/mm/aaaa no fuso horário do Brasil
   const formatIsoToBrTz = (dateStr: string): string => {

@@ -16,10 +16,24 @@ import {
   Users,
   CheckCircle2,
   X,
+  PieChart as PieChartIcon,
+  BarChart3,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/contexts/AuthContext'
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+} from 'recharts'
 import { OrcamentoSyncRecord } from '@/services/spincare'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -34,8 +48,22 @@ import {
 } from '@/components/ui/select'
 import { toast } from '@/hooks/use-toast'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { parseDateToComparable, formatIsoToBr } from '@/lib/dateUtils'
 
 const STATUS_APROVADO_COM_AUTORIZACAO = 'Aprovado com autorização'
+
+const CHART_COLORS = [
+  '#0D8272', // Verde principal
+  '#0F5342', // Verde escuro
+  '#16A34A', // Esmeralda vibrante
+  '#2563EB', // Azul royal
+  '#0284C7', // Azul ciano
+  '#D97706', // Âmbar
+  '#7C3AED', // Roxo
+  '#DC2626', // Vermelho suave
+  '#475569', // Ardósia
+  '#14B8A6', // Teal
+]
 
 // Função auxiliar de normalização de strings (tolerante a caixa, acentos e espaços)
 function normalize(str: string): string {
@@ -46,77 +74,6 @@ function normalize(str: string): string {
     .toUpperCase()
 }
 
-// Converte data dd/mm/aaaa ou yyyy-mm-dd (ou ISO 8601) para número comparável yyyymmdd no fuso America/Sao_Paulo
-function parseDateToComparable(
-  dateStr: string,
-  options?: { interpretInSaoPauloTz?: boolean },
-): number | null {
-  if (!dateStr || dateStr === '—') return null
-  const raw = dateStr.trim()
-
-  if (options?.interpretInSaoPauloTz || raw.includes('T') || raw.includes('Z')) {
-    try {
-      const d = new Date(raw)
-      if (!Number.isNaN(d.getTime())) {
-        const formatter = new Intl.DateTimeFormat('pt-BR', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        })
-        const parts = formatter.formatToParts(d)
-        const y = parts.find((p) => p.type === 'year')?.value
-        const m = parts.find((p) => p.type === 'month')?.value
-        const day = parts.find((p) => p.type === 'day')?.value
-        if (y && m && day) {
-          return parseInt(`${y}${m.padStart(2, '0')}${day.padStart(2, '0')}`, 10)
-        }
-      }
-    } catch (_) {
-      // Fallback
-    }
-  }
-
-  const s = raw.split('T')[0].split(' ')[0]
-  if (s.includes('/')) {
-    const parts = s.split('/')
-    if (parts.length === 3) {
-      return parseInt(`${parts[2]}${parts[1].padStart(2, '0')}${parts[0].padStart(2, '0')}`, 10)
-    }
-  } else if (s.includes('-')) {
-    const parts = s.split('-')
-    if (parts.length === 3) {
-      if (parts[0].length === 4) {
-        return parseInt(`${parts[0]}${parts[1].padStart(2, '0')}${parts[2].padStart(2, '0')}`, 10)
-      } else if (parts[2].length === 4) {
-        return parseInt(`${parts[2]}${parts[1].padStart(2, '0')}${parts[0].padStart(2, '0')}`, 10)
-      }
-    }
-  }
-  return null
-}
-
-function formatIsoToBr(isoDate: string): string {
-  if (!isoDate || isoDate === '—') return '—'
-  const raw = isoDate.trim()
-  if (raw.includes('T') || raw.includes('Z')) {
-    try {
-      const d = new Date(raw)
-      if (!Number.isNaN(d.getTime())) {
-        return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
-      }
-    } catch (_) {
-      // Ignora erro
-    }
-  }
-  const comp = parseDateToComparable(raw)
-  if (comp) {
-    const str = String(comp)
-    return `${str.substring(6, 8)}/${str.substring(4, 6)}/${str.substring(0, 4)}`
-  }
-  return raw
-}
-
 function formatCurrency(val: number): string {
   return val.toLocaleString('pt-BR', {
     style: 'currency',
@@ -124,6 +81,16 @@ function formatCurrency(val: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
+}
+
+function formatCompactCurrency(val: number): string {
+  if (val >= 1_000_000) {
+    return `R$ ${(val / 1_000_000).toFixed(1)}M`
+  }
+  if (val >= 1_000) {
+    return `R$ ${(val / 1_000).toFixed(1)}k`
+  }
+  return `R$ ${val.toFixed(0)}`
 }
 
 // Extrai modalidade do orçamento com fallback em múltiplos campos do payload
@@ -194,7 +161,10 @@ export default function RelatorioOrcamentos() {
 
   // Carregar todos os orçamentos aprovados com autorização
   const loadData = useCallback(async () => {
-    if (!canAccess) return
+    if (!canAccess) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       const records = await pb.collection('orcamentos_sync').getFullList<OrcamentoSyncRecord>({
@@ -261,12 +231,11 @@ export default function RelatorioOrcamentos() {
       // 1. Período: compara data_aprovacao_iso/data_aprovacao com o intervalo no fuso America/Sao_Paulo
       if (startComp !== null || endComp !== null) {
         const bDateAprov =
-          parseDateToComparable(b.data_aprovacao_iso, { interpretInSaoPauloTz: true }) ||
+          parseDateToComparable(b.data_aprovacao_iso) ||
           parseDateToComparable(b.data_aprovacao) ||
           parseDateToComparable(b.data_inicial_iso)
         const bDateEnd =
-          parseDateToComparable(b.data_final_iso, { interpretInSaoPauloTz: true }) ||
-          parseDateToComparable(b.data_final)
+          parseDateToComparable(b.data_final_iso) || parseDateToComparable(b.data_final)
 
         let inPeriod = false
         if (bDateAprov !== null) {
@@ -358,6 +327,55 @@ export default function RelatorioOrcamentos() {
       .sort((a, b) => b.total - a.total)
   }, [filteredBudgets, totalGeralFiltrado])
 
+  // Evolução Mensal / Total por Mês dentro do período filtrado
+  const resumoPorMes = useMemo(() => {
+    const map = new Map<string, { total: number; count: number }>()
+    const monthNames: Record<string, string> = {
+      '01': 'Jan',
+      '02': 'Fev',
+      '03': 'Mar',
+      '04': 'Abr',
+      '05': 'Mai',
+      '06': 'Jun',
+      '07': 'Jul',
+      '08': 'Ago',
+      '09': 'Set',
+      '10': 'Out',
+      '11': 'Nov',
+      '12': 'Dez',
+    }
+
+    filteredBudgets.forEach((b) => {
+      const comp =
+        parseDateToComparable(b.data_aprovacao_iso) ||
+        parseDateToComparable(b.data_aprovacao) ||
+        parseDateToComparable(b.data_inicial_iso)
+      if (!comp) return
+      const s = String(comp)
+      if (s.length !== 8) return
+      const ano = s.substring(0, 4)
+      const mes = s.substring(4, 6)
+      const key = `${ano}-${mes}`
+      const cur = map.get(key) || { total: 0, count: 0 }
+      cur.total += Number(b.valor_total) || 0
+      cur.count += 1
+      map.set(key, cur)
+    })
+
+    const sortedKeys = Array.from(map.keys()).sort()
+    return sortedKeys.map((key) => {
+      const [ano, mes] = key.split('-')
+      const label = `${monthNames[mes] || mes}/${ano.substring(2)}`
+      const data = map.get(key)!
+      return {
+        key,
+        mes: label,
+        total: data.total,
+        count: data.count,
+      }
+    })
+  }, [filteredBudgets])
+
   // Orçamentos ordenados para exibição na lista simples
   const sortedBudgets = useMemo(() => {
     return [...filteredBudgets].sort((a, b) => {
@@ -373,11 +391,11 @@ export default function RelatorioOrcamentos() {
       } else {
         // data
         const dateA =
-          parseDateToComparable(a.data_aprovacao_iso, { interpretInSaoPauloTz: true }) ||
+          parseDateToComparable(a.data_aprovacao_iso) ||
           parseDateToComparable(a.data_aprovacao) ||
           0
         const dateB =
-          parseDateToComparable(b.data_aprovacao_iso, { interpretInSaoPauloTz: true }) ||
+          parseDateToComparable(b.data_aprovacao_iso) ||
           parseDateToComparable(b.data_aprovacao) ||
           0
         comparison = dateA - dateB
@@ -824,6 +842,260 @@ export default function RelatorioOrcamentos() {
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      {/* 3.1. GRÁFICOS DO RELATÓRIO FINANCEIRO */}
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Gráfico de Pizza/Rosca: Participação por Convênio */}
+          <Card className="rounded-2xl border border-emerald-950/10 shadow-xs bg-white overflow-hidden flex flex-col">
+            <CardHeader className="bg-[#F4FAF8] border-b border-emerald-950/10 py-3.5 px-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <PieChartIcon className="h-4 w-4 text-[#0D8272]" />
+                  <CardTitle className="text-sm font-bold text-[#0C4336]">
+                    Participação por Convênio
+                  </CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px] text-slate-600 border-slate-300">
+                  Total R$ (% part.)
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+              {resumoPorConvenio.length === 0 ? (
+                <div className="h-64 flex flex-col items-center justify-center text-xs text-slate-500 gap-1.5">
+                  <AlertCircle size={22} className="text-slate-400" />
+                  <p>Sem dados para o gráfico com os filtros atuais.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <RechartsTooltip
+                          formatter={(value: unknown, name: unknown) => [
+                            formatCurrency(Number(value) || 0),
+                            String(name || ''),
+                          ]}
+                          contentStyle={{
+                            backgroundColor: '#ffffff',
+                            borderRadius: '12px',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                            fontSize: '12px',
+                          }}
+                        />
+                        <Pie
+                          data={resumoPorConvenio}
+                          dataKey="total"
+                          nameKey="nome"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={55}
+                          outerRadius={90}
+                          paddingAngle={2}
+                        >
+                          {resumoPorConvenio.map((entry, index) => (
+                            <Cell
+                              key={`cell-conv-${entry.nome}`}
+                              fill={CHART_COLORS[index % CHART_COLORS.length]}
+                              stroke="#ffffff"
+                              strokeWidth={2}
+                            />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Legenda com % e valores */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100 max-h-36 overflow-y-auto">
+                    {resumoPorConvenio.map((c, idx) => (
+                      <div
+                        key={`legenda-conv-${c.nome}`}
+                        className="flex items-center justify-between text-xs p-1.5 rounded-lg hover:bg-slate-50 transition"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{
+                              backgroundColor: CHART_COLORS[idx % CHART_COLORS.length],
+                            }}
+                          />
+                          <span className="font-medium text-slate-700 truncate" title={c.nome}>
+                            {c.nome}
+                          </span>
+                        </div>
+                        <div className="text-right shrink-0 font-mono text-[11px] text-slate-600">
+                          <span className="font-bold text-[#0C4336] mr-1.5">
+                            {formatCurrency(c.total)}
+                          </span>
+                          <span className="text-slate-400">({c.percentual.toFixed(1)}%)</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Gráfico de Barras: Total por Modalidade */}
+          <Card className="rounded-2xl border border-emerald-950/10 shadow-xs bg-white overflow-hidden flex flex-col">
+            <CardHeader className="bg-[#F4FAF8] border-b border-emerald-950/10 py-3.5 px-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4 text-[#0D8272]" />
+                  <CardTitle className="text-sm font-bold text-[#0C4336]">
+                    Total por Modalidade
+                  </CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px] text-slate-600 border-slate-300">
+                  {resumoPorModalidade.length} modalidade(s)
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+              {resumoPorModalidade.length === 0 ? (
+                <div className="h-64 flex flex-col items-center justify-center text-xs text-slate-500 gap-1.5">
+                  <AlertCircle size={22} className="text-slate-400" />
+                  <p>Sem dados para o gráfico com os filtros atuais.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={resumoPorModalidade}
+                        layout="vertical"
+                        margin={{ top: 8, right: 24, left: 24, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                        <XAxis
+                          type="number"
+                          tickFormatter={formatCompactCurrency}
+                          tick={{ fontSize: 11, fill: '#64748b' }}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="nome"
+                          width={110}
+                          tick={{ fontSize: 11, fill: '#334155' }}
+                        />
+                        <RechartsTooltip
+                          formatter={(value: unknown) => [
+                            formatCurrency(Number(value) || 0),
+                            'Total R$',
+                          ]}
+                          contentStyle={{
+                            backgroundColor: '#ffffff',
+                            borderRadius: '12px',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                            fontSize: '12px',
+                          }}
+                        />
+                        <Bar dataKey="total" radius={[0, 8, 8, 0]}>
+                          {resumoPorModalidade.map((entry, index) => (
+                            <Cell
+                              key={`cell-mod-${entry.nome}`}
+                              fill={CHART_COLORS[index % CHART_COLORS.length]}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100 max-h-36 overflow-y-auto">
+                    {resumoPorModalidade.map((m, idx) => (
+                      <div
+                        key={`legenda-mod-${m.nome}`}
+                        className="flex items-center justify-between text-xs p-1.5 rounded-lg hover:bg-slate-50 transition"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{
+                              backgroundColor: CHART_COLORS[idx % CHART_COLORS.length],
+                            }}
+                          />
+                          <span className="font-medium text-slate-700 truncate" title={m.nome}>
+                            {m.nome}
+                          </span>
+                        </div>
+                        <div className="text-right shrink-0 font-mono text-[11px] text-slate-600">
+                          <span className="font-bold text-[#0C4336] mr-1.5">
+                            {formatCurrency(m.total)}
+                          </span>
+                          <span className="text-slate-400">({m.percentual.toFixed(1)}%)</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Gráfico Adicional: Evolução Financeira por Mês */}
+        {resumoPorMes.length > 0 && (
+          <Card className="rounded-2xl border border-emerald-950/10 shadow-xs bg-white overflow-hidden">
+            <CardHeader className="bg-[#F4FAF8] border-b border-emerald-950/10 py-3.5 px-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4 text-[#0D8272]" />
+                  <CardTitle className="text-sm font-bold text-[#0C4336]">
+                    Evolução Financeira por Mês de Aprovação
+                  </CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px] text-slate-600 border-slate-300">
+                  {resumoPorMes.length} mês(es) no período
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 sm:p-5">
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={resumoPorMes}
+                    margin={{ top: 12, right: 16, left: 16, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="mes"
+                      tick={{ fontSize: 11, fill: '#334155' }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tickFormatter={formatCompactCurrency}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <RechartsTooltip
+                      formatter={(value: unknown) => [
+                        formatCurrency(Number(value) || 0),
+                        'Total R$',
+                      ]}
+                      labelFormatter={(label) => `Mês: ${label}`}
+                      contentStyle={{
+                        backgroundColor: '#ffffff',
+                        borderRadius: '12px',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                        fontSize: '12px',
+                      }}
+                    />
+                    <Bar dataKey="total" fill="#0D8272" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* 4. RESUMOS POR CONVÊNIO E POR MODALIDADE (SOMA + CONTAGEM) */}
