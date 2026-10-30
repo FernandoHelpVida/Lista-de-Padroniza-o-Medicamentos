@@ -56,6 +56,7 @@ export default function Prescricoes() {
   const hojeIso = useMemo(() => new Date().toISOString().split('T')[0], [])
   const [medQuery, setMedQuery] = useState('')
   const [patientQuery, setPatientQuery] = useState('')
+  const [prescriberQuery, setPrescriberQuery] = useState('')
   const [startDate, setStartDate] = useState('2026-01-01')
   const [endDate, setEndDate] = useState(hojeIso)
 
@@ -67,6 +68,7 @@ export default function Prescricoes() {
   const [hasExecutedMedCheck, setHasExecutedMedCheck] = useState(false)
   const [activeCheckMed, setActiveCheckMed] = useState('')
   const [activeCheckPatient, setActiveCheckPatient] = useState('')
+  const [activeCheckPrescriber, setActiveCheckPrescriber] = useState('')
   const [activeCheckStart, setActiveCheckStart] = useState('2026-01-01')
   const [activeCheckEnd, setActiveCheckEnd] = useState(hojeIso)
 
@@ -228,6 +230,12 @@ export default function Prescricoes() {
           filters.push(`paciente_nome ~ "${qPat}"`)
         }
 
+        // Filtro por médico prescritor se informado na consulta combinada
+        if (hasExecutedMedCheck && activeCheckPrescriber.trim()) {
+          const qPresc = activeCheckPrescriber.trim().replace(/"/g, '\\"')
+          filters.push(`medico_prescritor ~ "${qPresc}"`)
+        }
+
         const filterString = filters.join(' && ')
 
         const resultList = await pb
@@ -253,7 +261,14 @@ export default function Prescricoes() {
         setLoading(false)
       }
     },
-    [isMedicoVisitador, debouncedGeneralSearch, hasExecutedMedCheck, activeCheckPatient, toast],
+    [
+      isMedicoVisitador,
+      debouncedGeneralSearch,
+      hasExecutedMedCheck,
+      activeCheckPatient,
+      activeCheckPrescriber,
+      toast,
+    ],
   )
 
   useEffect(() => {
@@ -310,6 +325,7 @@ export default function Prescricoes() {
 
     setActiveCheckMed(targetMed)
     setActiveCheckPatient(patientQuery.trim())
+    setActiveCheckPrescriber(prescriberQuery.trim())
     setActiveCheckStart(startDate.trim() || '2026-01-01')
     setActiveCheckEnd(endDate.trim() || hojeIso)
     setHasExecutedMedCheck(true)
@@ -318,10 +334,12 @@ export default function Prescricoes() {
   const handleClearCombinedSearch = () => {
     setMedQuery('')
     setPatientQuery('')
+    setPrescriberQuery('')
     setStartDate('2026-01-01')
     setEndDate(hojeIso)
     setActiveCheckMed('')
     setActiveCheckPatient('')
+    setActiveCheckPrescriber('')
     setActiveCheckStart('2026-01-01')
     setActiveCheckEnd(hojeIso)
     setHasExecutedMedCheck(false)
@@ -340,6 +358,8 @@ export default function Prescricoes() {
     const medWords = qMed.split(' ').filter((w) => w.length > 1)
     const qPatient = activeCheckPatient ? normalize(activeCheckPatient) : ''
     const patWords = qPatient.split(' ').filter(Boolean)
+    const qPrescriber = activeCheckPrescriber ? normalize(activeCheckPrescriber) : ''
+    const prescWords = qPrescriber.split(' ').filter(Boolean)
     const startComp = parseDateToComparable(activeCheckStart)
     const endComp = parseDateToComparable(activeCheckEnd)
 
@@ -352,6 +372,13 @@ export default function Prescricoes() {
         const pNome = normalize(p.paciente_nome)
         const matchWords = patWords.every((w) => pNome.includes(w))
         if (!matchWords) return
+      }
+
+      // 1b. Filtro de prescritor/médico(a) (se informado)
+      if (prescWords.length > 0) {
+        const pPresc = normalize(p.medico_prescritor)
+        const matchPrescWords = prescWords.every((w) => pPresc.includes(w))
+        if (!matchPrescWords) return
       }
 
       // 2. Filtro de período (critério estrito do SpinCare):
@@ -423,6 +450,7 @@ export default function Prescricoes() {
     return {
       queryMed: activeCheckMed,
       queryPatient: activeCheckPatient,
+      queryPrescriber: activeCheckPrescriber,
       startDate: activeCheckStart,
       endDate: activeCheckEnd,
       occurrences,
@@ -433,6 +461,7 @@ export default function Prescricoes() {
     hasExecutedMedCheck,
     activeCheckMed,
     activeCheckPatient,
+    activeCheckPrescriber,
     activeCheckStart,
     activeCheckEnd,
     prescriptions,
@@ -609,9 +638,9 @@ export default function Prescricoes() {
           </div>
 
           <form onSubmit={handleExecuteCombinedSearch} className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
               {/* Medicamento */}
-              <div className="md:col-span-4 space-y-1">
+              <div className="sm:col-span-2 lg:col-span-3 space-y-1">
                 <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
                   <Pill size={13} className="text-blue-600" />
                   <span>Nome do Medicamento *</span>
@@ -621,7 +650,7 @@ export default function Prescricoes() {
                   <Input
                     type="text"
                     required
-                    placeholder="Ex: Dipirona, Enoxaparina, Omeprazol..."
+                    placeholder="Ex: Insulina, Dipirona..."
                     value={medQuery}
                     onChange={(e) => setMedQuery(e.target.value)}
                     className="h-11 pl-9 text-base sm:text-xs bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600 min-h-[44px]"
@@ -630,23 +659,39 @@ export default function Prescricoes() {
               </div>
 
               {/* Paciente */}
-              <div className="md:col-span-3 space-y-1">
+              <div className="sm:col-span-1 lg:col-span-2 space-y-1">
                 <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
                   <User size={13} className="text-[#0D8272]" />
-                  <span>Nome do Paciente</span>
+                  <span>Paciente</span>
                   <span className="text-[10px] text-slate-400 font-normal">(opcional)</span>
                 </label>
                 <Input
                   type="text"
-                  placeholder="Ex: Agrinaldo, Maria..."
+                  placeholder="Ex: Ademir..."
                   value={patientQuery}
                   onChange={(e) => setPatientQuery(e.target.value)}
                   className="h-11 text-base sm:text-xs bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600 min-h-[44px]"
                 />
               </div>
 
+              {/* Prescritor / Médico */}
+              <div className="sm:col-span-1 lg:col-span-2 space-y-1">
+                <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                  <Stethoscope size={13} className="text-[#0D8272]" />
+                  <span>Prescritor</span>
+                  <span className="text-[10px] text-slate-400 font-normal">(opcional)</span>
+                </label>
+                <Input
+                  type="text"
+                  placeholder="Ex: Sandy, Dra..."
+                  value={prescriberQuery}
+                  onChange={(e) => setPrescriberQuery(e.target.value)}
+                  className="h-11 text-base sm:text-xs bg-white border-blue-200 rounded-xl focus-visible:ring-blue-600 min-h-[44px]"
+                />
+              </div>
+
               {/* Data Inicial */}
-              <div className="md:col-span-2 space-y-1">
+              <div className="sm:col-span-1 lg:col-span-2 space-y-1">
                 <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
                   <Calendar size={13} className="text-[#0D8272]" />
                   <span>Data Inicial</span>
@@ -660,7 +705,7 @@ export default function Prescricoes() {
               </div>
 
               {/* Data Final */}
-              <div className="md:col-span-2 space-y-1">
+              <div className="sm:col-span-1 lg:col-span-2 space-y-1">
                 <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
                   <Calendar size={13} className="text-[#0D8272]" />
                   <span>Data Final</span>
@@ -674,7 +719,7 @@ export default function Prescricoes() {
               </div>
 
               {/* Botão Consultar */}
-              <div className="md:col-span-1 flex items-end">
+              <div className="sm:col-span-2 lg:col-span-1 flex items-end">
                 <Button
                   type="submit"
                   disabled={loading}
@@ -682,7 +727,7 @@ export default function Prescricoes() {
                   title="Executar Verificação"
                 >
                   <Search size={15} className="shrink-0" />
-                  <span className="md:hidden">Consultar</span>
+                  <span className="lg:hidden">Consultar</span>
                 </Button>
               </div>
             </div>
@@ -703,19 +748,28 @@ export default function Prescricoes() {
                         <strong>{combinedOccurrences.uniquePrescriptions.length}</strong> prescriç
                         {combinedOccurrences.uniquePrescriptions.length === 1 ? 'ão' : 'ões'} com o
                         medicamento <strong>&quot;{combinedOccurrences.queryMed}&quot;</strong>
-                        {combinedOccurrences.queryPatient ? (
+                        {combinedOccurrences.queryPatient && (
                           <>
                             {' '}
                             para o paciente{' '}
                             <strong>&quot;{combinedOccurrences.queryPatient}&quot;</strong>
                           </>
-                        ) : (
+                        )}
+                        {combinedOccurrences.queryPrescriber && (
                           <>
                             {' '}
-                            em <strong>{combinedOccurrences.uniquePatients.length}</strong>{' '}
-                            paciente(s)
+                            prescrito(a) por{' '}
+                            <strong>&quot;{combinedOccurrences.queryPrescriber}&quot;</strong>
                           </>
-                        )}{' '}
+                        )}
+                        {!combinedOccurrences.queryPatient &&
+                          !combinedOccurrences.queryPrescriber && (
+                            <>
+                              {' '}
+                              em <strong>{combinedOccurrences.uniquePatients.length}</strong>{' '}
+                              paciente(s)
+                            </>
+                          )}{' '}
                         no período de{' '}
                         <strong>{formatIsoToBr(combinedOccurrences.startDate)}</strong> até{' '}
                         <strong>{formatIsoToBr(combinedOccurrences.endDate)}</strong>.
@@ -1004,7 +1058,24 @@ export default function Prescricoes() {
                         <>
                           o paciente <strong>&quot;{combinedOccurrences.queryPatient}&quot;</strong>{' '}
                           NÃO possui o medicamento{' '}
-                          <strong>&quot;{combinedOccurrences.queryMed}&quot;</strong> prescrito.
+                          <strong>&quot;{combinedOccurrences.queryMed}&quot;</strong>
+                          {combinedOccurrences.queryPrescriber ? (
+                            <>
+                              {' '}
+                              prescrito por{' '}
+                              <strong>&quot;{combinedOccurrences.queryPrescriber}&quot;</strong>.
+                            </>
+                          ) : (
+                            ' prescrito.'
+                          )}
+                        </>
+                      ) : combinedOccurrences.queryPrescriber ? (
+                        <>
+                          o(a) prescritor(a){' '}
+                          <strong>&quot;{combinedOccurrences.queryPrescriber}&quot;</strong> NÃO
+                          possui o medicamento{' '}
+                          <strong>&quot;{combinedOccurrences.queryMed}&quot;</strong> prescrito no
+                          período.
                         </>
                       ) : (
                         <>
