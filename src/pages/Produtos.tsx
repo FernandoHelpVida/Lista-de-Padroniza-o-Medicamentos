@@ -80,8 +80,8 @@ type CatSortField = 'code' | 'description' | 'group_description' | 'type_descrip
 type AbcSortField = 'posicao' | 'descricao' | 'quantidade' | 'valorTotal'
 
 export default function Produtos() {
-  const { isAdmin, isFinanceiro } = useAuth()
-  const canAccess = isAdmin || isFinanceiro
+  const { isAdmin, isFinanceiro, isDispensario } = useAuth()
+  const canAccess = isAdmin || isFinanceiro || isDispensario
 
   const [loading, setLoading] = useState(true)
   const [produtos, setProdutos] = useState<SpincareProdutoRecord[]>([])
@@ -348,7 +348,8 @@ export default function Produtos() {
           <CardDescription className="text-amber-900/80 mt-2 text-sm leading-relaxed">
             Esta página exibe o catálogo de produtos do SpinCare e a Curva ABC de dispensações. O
             acesso é exclusivo para usuários com perfil{' '}
-            <strong className="text-amber-950">Financeiro</strong> ou{' '}
+            <strong className="text-amber-950">Financeiro</strong>,{' '}
+            <strong className="text-amber-950">Dispensário</strong> ou{' '}
             <strong className="text-amber-950">Administrador</strong>.
           </CardDescription>
         </Card>

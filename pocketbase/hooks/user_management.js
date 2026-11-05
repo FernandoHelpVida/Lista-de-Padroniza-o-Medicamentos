@@ -26,6 +26,7 @@ routerAdd(
       if (body.role === 'admin') role = 'admin'
       else if (body.role === 'medico_visitador') role = 'medico_visitador'
       else if (body.role === 'financeiro') role = 'financeiro'
+      else if (body.role === 'dispensario') role = 'dispensario'
 
       if (!name) {
         return e.badRequestError('O nome completo do profissional é obrigatório.')
@@ -218,10 +219,11 @@ routerAdd(
           requestedRole !== 'comum' &&
           requestedRole !== 'medico_visitador' &&
           requestedRole !== 'financeiro' &&
+          requestedRole !== 'dispensario' &&
           requestedRole !== 'admin'
         ) {
           return e.badRequestError(
-            'Perfil de acesso inválido. Escolha entre Corpo Clínico, Médico Visitador, Financeiro ou Administrador.',
+            'Perfil de acesso inválido. Escolha entre Corpo Clínico, Médico Visitador, Financeiro, Dispensário ou Administrador.',
           )
         }
         assignedRole = requestedRole
@@ -260,6 +262,7 @@ routerAdd(
         admin: 'Administrador (Gestão / Farmácia)',
         medico_visitador: 'Médico Visitador (Apenas Padronizados)',
         financeiro: 'Financeiro (Relatórios de Orçamentos)',
+        dispensario: 'Dispensário (Produtos e Curva ABC)',
         comum: 'Corpo Clínico (Médico / Farmacêutico)',
       }
       const roleLabel = assignedRole ? roleLabels[assignedRole] || assignedRole : roleAnterior

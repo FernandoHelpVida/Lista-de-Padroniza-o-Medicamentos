@@ -50,7 +50,7 @@ import { PoliticaPrivacidadeModal } from '@/components/PoliticaPrivacidadeModal'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export default function Layout() {
-  const { user, logout, isAdmin, isMedicoVisitador, isFinanceiro } = useAuth()
+  const { user, logout, isAdmin, isMedicoVisitador, isFinanceiro, isDispensario } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -230,6 +230,8 @@ export default function Layout() {
   // Médicos visitadores NÃO têm acesso a pacientes nem orçamentos (LGPD)
   const canAccessSpincare = !isMedicoVisitador
   const canAccessRelatorioFinanceiro = isAdmin || isFinanceiro
+  // Produtos (Catálogo + Curva ABC): admin, financeiro e dispensário
+  const canAccessProdutos = isAdmin || isFinanceiro || isDispensario
 
   const navItems = [
     { title: 'Início', path: '/', icon: LayoutDashboard },
@@ -254,6 +256,10 @@ export default function Layout() {
             path: '/relatorio-orcamentos',
             icon: DollarSign,
           },
+        ]
+      : []),
+    ...(canAccessProdutos
+      ? [
           {
             title: 'Produtos',
             path: '/produtos',
