@@ -285,7 +285,32 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
               }
             }
           }
+          // Custo médio: média aritmética dos valores de preço disponíveis do produto
+          // (imported_prices: pfb_value, price, pmc_value + preço de catálogo).
+          let precosDisponiveis = []
+          if (ultimaCompra > 0) precosDisponiveis.push(ultimaCompra)
+          const importedArr = Array.isArray(raw.imported_prices) ? raw.imported_prices : []
+          for (let k = 0; k < importedArr.length; k++) {
+            const ip = importedArr[k] || {}
+            const pfb = parseMoney(ip.pfb_value)
+            const pr = parseMoney(ip.price)
+            const pmc = parseMoney(ip.pmc_value)
+            if (pfb > 0 && !precosDisponiveis.includes(pfb)) precosDisponiveis.push(pfb)
+            if (pr > 0 && !precosDisponiveis.includes(pr)) precosDisponiveis.push(pr)
+            if (pmc > 0 && !precosDisponiveis.includes(pmc)) precosDisponiveis.push(pmc)
+          }
+          if (price > 0 && !precosDisponiveis.includes(price)) precosDisponiveis.push(price)
+
+          let custoMedio = 0
+          if (precosDisponiveis.length > 0) {
+            const somaPrecos = precosDisponiveis.reduce((acc, v) => acc + v, 0)
+            custoMedio = Number((somaPrecos / precosDisponiveis.length).toFixed(4))
+          } else if (price > 0) {
+            custoMedio = price
+          }
+
           syncRec.set('ultima_compra_price', ultimaCompra)
+          syncRec.set('custo_medio_price', custoMedio)
           syncRec.set('measure_unit', String(raw.measure_unit || '').trim())
           syncRec.set(
             'prescription_measure_unit',
@@ -430,15 +455,18 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             }
             const rawItens = raw.items || raw.itens || raw.products || []
             let itensList = []
+            let totalEnviadoCasa = 0
             if (Array.isArray(rawItens)) {
               for (let k = 0; k < rawItens.length; k++) {
                 const it = rawItens[k]
+                const sq = Number(it.sent_qt || 0)
+                totalEnviadoCasa += sq
                 itensList.push({
                   record_id: String(it.record_id || ''),
                   product_id: it.product_id !== undefined ? Number(it.product_id) || 0 : 0,
                   product_ds: String(it.product_ds || it.description || '').trim(),
                   qt: Number(it.qt || 0),
-                  sent_qt: Number(it.sent_qt || 0),
+                  sent_qt: sq,
                   returned_qt: Number(it.returned_qt || 0),
                   status: String(it.status || '').trim(),
                   consumption_qt: Number(it.consumption_qt || 0),
@@ -531,6 +559,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             syncRec.set('insurance_id', resolvedInsuranceId)
             syncRec.set('insurance_name', resolvedInsuranceName)
             // Fim do bloco de convênio
+            syncRec.set('total_enviado_casa', totalEnviadoCasa)
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
             syncRec.set('synced_at', nowDisp)
@@ -874,7 +903,31 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
               }
             }
           }
+          // Custo médio: média aritmética dos valores de preço disponíveis do produto
+          let precosDisponiveis = []
+          if (ultimaCompra > 0) precosDisponiveis.push(ultimaCompra)
+          const importedArr = Array.isArray(raw.imported_prices) ? raw.imported_prices : []
+          for (let k = 0; k < importedArr.length; k++) {
+            const ip = importedArr[k] || {}
+            const pfb = parseMoney(ip.pfb_value)
+            const pr = parseMoney(ip.price)
+            const pmc = parseMoney(ip.pmc_value)
+            if (pfb > 0 && !precosDisponiveis.includes(pfb)) precosDisponiveis.push(pfb)
+            if (pr > 0 && !precosDisponiveis.includes(pr)) precosDisponiveis.push(pr)
+            if (pmc > 0 && !precosDisponiveis.includes(pmc)) precosDisponiveis.push(pmc)
+          }
+          if (price > 0 && !precosDisponiveis.includes(price)) precosDisponiveis.push(price)
+
+          let custoMedio = 0
+          if (precosDisponiveis.length > 0) {
+            const somaPrecos = precosDisponiveis.reduce((acc, v) => acc + v, 0)
+            custoMedio = Number((somaPrecos / precosDisponiveis.length).toFixed(4))
+          } else if (price > 0) {
+            custoMedio = price
+          }
+
           syncRec.set('ultima_compra_price', ultimaCompra)
+          syncRec.set('custo_medio_price', custoMedio)
           syncRec.set('measure_unit', String(raw.measure_unit || '').trim())
           syncRec.set(
             'prescription_measure_unit',
@@ -1018,15 +1071,18 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             }
             const rawItens = raw.items || raw.itens || raw.products || []
             let itensList = []
+            let totalEnviadoCasa = 0
             if (Array.isArray(rawItens)) {
               for (let k = 0; k < rawItens.length; k++) {
                 const it = rawItens[k]
+                const sq = Number(it.sent_qt || 0)
+                totalEnviadoCasa += sq
                 itensList.push({
                   record_id: String(it.record_id || ''),
                   product_id: it.product_id !== undefined ? Number(it.product_id) || 0 : 0,
                   product_ds: String(it.product_ds || it.description || '').trim(),
                   qt: Number(it.qt || 0),
-                  sent_qt: Number(it.sent_qt || 0),
+                  sent_qt: sq,
                   returned_qt: Number(it.returned_qt || 0),
                   status: String(it.status || '').trim(),
                   consumption_qt: Number(it.consumption_qt || 0),
@@ -1118,6 +1174,7 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
 
             syncRec.set('insurance_id', resolvedInsuranceId)
             syncRec.set('insurance_name', resolvedInsuranceName)
+            syncRec.set('total_enviado_casa', totalEnviadoCasa)
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
             syncRec.set('synced_at', nowDisp)

@@ -77,7 +77,13 @@ const CLASSE_BADGE: Record<CurvaAbcItem['classe'], { label: string; className: s
 }
 
 type CatSortField = 'code' | 'description' | 'group_description' | 'type_description' | 'price'
-type AbcSortField = 'posicao' | 'descricao' | 'quantidade' | 'valorTotal'
+type AbcSortField =
+  | 'posicao'
+  | 'descricao'
+  | 'quantidade'
+  | 'ultimaCompra'
+  | 'custoMedio'
+  | 'valorTotal'
 
 export default function Produtos() {
   const { isAdmin, isFinanceiro, isDispensario } = useAuth()
@@ -151,6 +157,8 @@ export default function Produtos() {
     lista.sort((a, b) => {
       if (abcSortField === 'posicao') return (a.posicao - b.posicao) * dir
       if (abcSortField === 'quantidade') return (a.quantidade - b.quantidade) * dir
+      if (abcSortField === 'ultimaCompra') return (a.ultimaCompra - b.ultimaCompra) * dir
+      if (abcSortField === 'custoMedio') return (a.custoMedio - b.custoMedio) * dir
       if (abcSortField === 'valorTotal') return (a.valorTotal - b.valorTotal) * dir
       return a.descricao.localeCompare(b.descricao, 'pt-BR') * dir
     })
@@ -295,10 +303,15 @@ export default function Produtos() {
           Produto: i.descricao,
           Grupo: i.grupo,
           Convênio: convenioLabel,
-          'Preço Unitário (R$)': Number(i.precoUnitario.toFixed(2)),
-          'Fonte do Preço':
-            i.precoBase === 'ultima_compra' ? 'Última compra' : 'Catálogo (fallback)',
-          'Quantidade Dispensada': i.quantidade,
+          'Qtd. Enviada p/ Casa': i.quantidade,
+          'Última Compra (R$)': Number(i.ultimaCompra.toFixed(2)),
+          'Custo Médio (R$)': Number(i.custoMedio.toFixed(2)),
+          'Base de Cálculo':
+            i.precoBase === 'custo_medio'
+              ? 'Custo Médio'
+              : i.precoBase === 'ultima_compra'
+                ? 'Última Compra (fallback)'
+                : 'Catálogo (fallback)',
           'Valor Total (R$)': Number(i.valorTotal.toFixed(2)),
           '% do Total': Number(i.percentual.toFixed(1)),
           '% Acumulado': Number(i.percentualAcumulado.toFixed(1)),
@@ -311,9 +324,10 @@ export default function Produtos() {
           { wch: 44 },
           { wch: 24 },
           { wch: 20 },
+          { wch: 22 },
           { wch: 18 },
           { wch: 18 },
-          { wch: 20 },
+          { wch: 22 },
           { wch: 16 },
           { wch: 11 },
           { wch: 12 },
@@ -701,20 +715,40 @@ export default function Produtos() {
                       </th>
                       <th
                         onClick={() => toggleAbcSort('quantidade')}
-                        className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272]"
+                        className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272] whitespace-nowrap"
+                        title="Total enviado para casa (entrega domiciliar / sent_qt no Swagger SpinCare)"
                       >
-                        Quantidade
+                        Qtd. Enviada Casa
+                        {abcSortField === 'quantidade' && (abcSortDir === 'asc' ? ' ▲' : ' ▼')}
+                      </th>
+                      <th
+                        onClick={() => toggleAbcSort('ultimaCompra')}
+                        className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272] whitespace-nowrap"
+                        title="Valor da última compra registrado no SpinCare"
+                      >
+                        Última Compra
+                        {abcSortField === 'ultimaCompra' && (abcSortDir === 'asc' ? ' ▲' : ' ▼')}
+                      </th>
+                      <th
+                        onClick={() => toggleAbcSort('custoMedio')}
+                        className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272] whitespace-nowrap"
+                        title="Custo médio (média dos preços disponíveis do produto) — base do valor da Curva ABC"
+                      >
+                        Custo Médio
+                        {abcSortField === 'custoMedio' && (abcSortDir === 'asc' ? ' ▲' : ' ▼')}
                       </th>
                       <th
                         onClick={() => toggleAbcSort('valorTotal')}
-                        className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272]"
+                        className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272] whitespace-nowrap"
+                        title="Valor Total = Qtd. Enviada Casa × Custo Médio"
                       >
                         Valor Total
+                        {abcSortField === 'valorTotal' && (abcSortDir === 'asc' ? ' ▲' : ' ▼')}
                       </th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
-                        % do Total
+                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600 whitespace-nowrap">
+                        % Total
                       </th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
+                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600 whitespace-nowrap">
                         % Acumulado
                       </th>
                       <th className="px-3 py-2.5 text-left font-semibold text-slate-600">Classe</th>
@@ -723,13 +757,13 @@ export default function Produtos() {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-10 text-center text-slate-400">
+                        <td colSpan={9} className="px-3 py-10 text-center text-slate-400">
                           Carregando…
                         </td>
                       </tr>
                     ) : curvaOrdenada.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-10 text-center text-slate-400">
+                        <td colSpan={9} className="px-3 py-10 text-center text-slate-400">
                           Nenhum movimento no período selecionado. Sincronize dispensações ou ajuste
                           os filtros.
                         </td>
@@ -747,17 +781,29 @@ export default function Produtos() {
                             <span className="text-slate-800 font-medium">{i.descricao}</span>
                             <span className="block text-xs text-slate-400 font-mono">
                               {i.codigo || '—'} · {i.grupo || '—'} ·{' '}
-                              {i.precoBase === 'ultima_compra'
-                                ? 'última compra'
-                                : 'preço de catálogo (fallback)'}
+                              {i.precoBase === 'custo_medio'
+                                ? 'custo médio'
+                                : i.precoBase === 'ultima_compra'
+                                  ? 'última compra (fallback)'
+                                  : 'catálogo (fallback)'}
                             </span>
                           </td>
-                          <td className="px-3 py-2 text-slate-700">{i.quantidade}</td>
-                          <td className="px-3 py-2 text-slate-800 font-medium">
+                          <td className="px-3 py-2 text-slate-700 font-semibold whitespace-nowrap">
+                            {i.quantidade}
+                          </td>
+                          <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                            {i.ultimaCompra > 0 ? formatCurrency(i.ultimaCompra) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-emerald-700 font-medium whitespace-nowrap">
+                            {i.custoMedio > 0 ? formatCurrency(i.custoMedio) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-slate-800 font-semibold whitespace-nowrap">
                             {formatCurrency(i.valorTotal)}
                           </td>
-                          <td className="px-3 py-2 text-slate-600">{i.percentual.toFixed(2)}%</td>
-                          <td className="px-3 py-2 text-slate-600">
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
+                            {i.percentual.toFixed(2)}%
+                          </td>
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
                             {i.percentualAcumulado.toFixed(2)}%
                           </td>
                           <td className="px-3 py-2">
@@ -780,8 +826,12 @@ export default function Produtos() {
                     </strong>
                   </span>
                   <span>
-                    Quantidade dispensada:{' '}
+                    Total enviado para casa:{' '}
                     <strong className="text-slate-700">{curva.quantidadeTotal}</strong>
+                  </span>
+                  <span className="text-slate-400">
+                    Cálculo: Qtd. Enviada Casa × Custo Médio (média aritmética de preços
+                    disponíveis)
                   </span>
                 </div>
               )}

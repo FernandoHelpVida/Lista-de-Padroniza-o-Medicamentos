@@ -495,6 +495,7 @@ export interface SpincareProdutoRecord {
   active: boolean
   price: number
   ultima_compra_price: number
+  custo_medio_price?: number
   measure_unit: string
   prescription_measure_unit: string
   prescription_conversion_qt: number
@@ -533,6 +534,7 @@ export interface SpincareDispensacaoRecord {
   priority: string
   insurance_id: number
   insurance_name: string
+  total_enviado_casa?: number
   itens: SpincareDispensacaoItem[]
   payload: Record<string, unknown>
   synced_at: string

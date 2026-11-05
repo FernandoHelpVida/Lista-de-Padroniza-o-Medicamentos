@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T19:18:18.306Z",
+  "generatedAt": "2026-11-05T20:45:07.317Z",
   "collections": [
     {
       "name": "users",
@@ -1000,6 +1000,12 @@
           "type": "number",
           "required": false,
           "system": false
+        },
+        {
+          "name": "custo_medio_price",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -1133,6 +1139,12 @@
         {
           "name": "insurance_name",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "total_enviado_casa",
+          "type": "number",
           "required": false,
           "system": false
         }

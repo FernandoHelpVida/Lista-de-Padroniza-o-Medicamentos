@@ -17,10 +17,15 @@ export interface CurvaAbcItem {
   grupo: string
   unidade: string
   convenio: string
-  precoUnitario: number
-  precoBase: 'ultima_compra' | 'catalogo_fallback'
-  quantidade: number
-  valorTotal: number
+  precoUnitario: number // Custo médio (ou fallback se custo médio não existir)
+  custoMedio: number // Custo médio calculado/registrado
+  ultimaCompra: number // Valor da última compra
+  precoCatalogo: number // Preço de tabela/catálogo
+  precoBase: 'custo_medio' | 'ultima_compra' | 'catalogo_fallback'
+  quantidade: number // Total enviado para casa (sent_qt)
+  quantidadeEnviadaCasa: number // Alias explícito para quantidade
+  dispensacoesCount: number
+  valorTotal: number // quantidadeEnviadaCasa × precoUnitario (custo médio)
   percentual: number
   percentualAcumulado: number
   classe: 'A' | 'B' | 'C'
@@ -101,44 +106,106 @@ export function computeCurvaAbc(
     for (const it of itens) {
       const productId = Number(it.product_id || 0)
       if (!productId) continue
-      const qt = Number(it.qt || 0)
-      if (!qt) continue
+      // Conforme Swagger UI do SpinCare (get/dispensations -> items -> sent_qt):
+      // A quantidade enviada para casa é representada pelo campo sent_qt.
+      // Se sent_qt estiver definido e > 0, usamos sent_qt. Fallback para qt caso sent_qt seja zero/ausente.
+      const sentQt = Number(
+        it.sent_qt !== undefined && it.sent_qt !== null ? it.sent_qt : it.qt || 0,
+      )
+      if (!sentQt) continue
       const prev = porProduto.get(productId) || { quantidade: 0, dispensacoes: 0 }
-      prev.quantidade += qt
+      prev.quantidade += sentQt
       prev.dispensacoes += 1
       porProduto.set(productId, prev)
       idsComQt.add(productId)
     }
   }
 
-  const precoEfetivo = (p: SpincareProdutoRecord): { valor: number; fallback: boolean } => {
+  /**
+   * Determina o custo médio, última compra e preço base de cálculo.
+   * Regra do usuário: Curva ABC calculada com Custo Médio × Quantidade enviada para casa.
+   * Custo Médio = média dos valores de preço disponíveis do produto (imported_prices: pfb, price, pmc + catálogo).
+   */
+  const extrairPrecos = (p: SpincareProdutoRecord) => {
     const uc = Number(p.ultima_compra_price || 0)
-    if (uc > 0) return { valor: uc, fallback: false }
-    return { valor: Number(p.price || 0), fallback: true }
+    const pc = Number(p.price || 0)
+
+    let cm = Number(p.custo_medio_price || 0)
+    if (!(cm > 0)) {
+      const precos: number[] = []
+      if (uc > 0) precos.push(uc)
+      const py = (p.payload || {}) as Record<string, unknown>
+      const imported = Array.isArray(py.imported_prices) ? py.imported_prices : []
+      for (const rawIp of imported) {
+        const ip = (rawIp || {}) as Record<string, unknown>
+        const pfb = Number(ip.pfb_value || 0)
+        const pr = Number(ip.price || 0)
+        const pmc = Number(ip.pmc_value || 0)
+        if (pfb > 0 && !precos.includes(pfb)) precos.push(pfb)
+        if (pr > 0 && !precos.includes(pr)) precos.push(pr)
+        if (pmc > 0 && !precos.includes(pmc)) precos.push(pmc)
+      }
+      if (pc > 0 && !precos.includes(pc)) precos.push(pc)
+      if (precos.length > 0) {
+        cm = Number((precos.reduce((a, b) => a + b, 0) / precos.length).toFixed(4))
+      }
+    }
+
+    let precoCalculo = cm
+    let precoBase: 'custo_medio' | 'ultima_compra' | 'catalogo_fallback' = 'custo_medio'
+
+    if (!(precoCalculo > 0)) {
+      if (uc > 0) {
+        precoCalculo = uc
+        precoBase = 'ultima_compra'
+      } else if (pc > 0) {
+        precoCalculo = pc
+        precoBase = 'catalogo_fallback'
+      }
+    }
+
+    return {
+      custoMedio: cm > 0 ? cm : precoCalculo,
+      ultimaCompra: uc,
+      precoCatalogo: pc,
+      precoCalculo,
+      precoBase,
+    }
   }
 
   const totalRaw = Array.from(porProduto.entries()).map(([productId, agg]) => {
     const produto = produtosById.get(productId) as SpincareProdutoRecord
-    const { valor: preco, fallback } = produto
-      ? precoEfetivo(produto)
-      : { valor: 0, fallback: false }
-    if (!produto || !(preco > 0)) {
+    const { custoMedio, ultimaCompra, precoCatalogo, precoCalculo, precoBase } = produto
+      ? extrairPrecos(produto)
+      : {
+          custoMedio: 0,
+          ultimaCompra: 0,
+          precoCatalogo: 0,
+          precoCalculo: 0,
+          precoBase: 'catalogo_fallback' as const,
+        }
+
+    if (!produto || !(precoCalculo > 0)) {
       produtosSemPreco++
-    } else if (fallback) {
+    } else if (precoBase === 'catalogo_fallback') {
       produtosFallbackCatalogo++
     }
+
     return {
       productId,
       codigo: produto?.code || '',
       descricao: produto?.description || '',
       grupo: produto?.group_description || '',
       unidade: produto?.measure_unit || '',
-      precoUnitario: preco,
-      precoBase: (fallback ? 'catalogo_fallback' : 'ultima_compra') as
-        | 'ultima_compra'
-        | 'catalogo_fallback',
+      precoUnitario: precoCalculo,
+      custoMedio,
+      ultimaCompra,
+      precoCatalogo,
+      precoBase,
       quantidade: agg.quantidade,
-      valorTotal: agg.quantidade * preco,
+      quantidadeEnviadaCasa: agg.quantidade,
+      dispensacoesCount: agg.dispensacoes,
+      valorTotal: agg.quantidade * precoCalculo,
     }
   })
 
