@@ -2638,6 +2638,564 @@ routerAdd(
 // Endpoint direto para testes e auditoria interna do diagnóstico
 routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
   try {
+    const q = e.request.url.query()
+    if (q.get('mode') === 'calc_custo_medio_enox') {
+      // Simular cálculos sobre as 55 NFs do endpoint /integration-engine/get/stocks
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      let allEntries = []
+      for (let p = 1; p <= 5; p++) {
+        const url =
+          baseUrl +
+          '/integration-engine/get/stocks?token=' +
+          encodeURIComponent(apiToken) +
+          '&product_id=2916&page_number=' +
+          p +
+          '&page_size=500'
+        const res = $http.send({ url: url, method: 'GET', timeout: 20 })
+        const list = res.json || JSON.parse(res.raw || '[]')
+        if (!Array.isArray(list) || list.length === 0) break
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i]
+          if (
+            item.operation_type === 'Entrada' &&
+            String(item.operation_ds || '').indexOf('Nota fiscal') >= 0
+          ) {
+            allEntries.push(item)
+          }
+        }
+      }
+
+      // Ordenar por data ou id
+      allEntries.sort((a, b) => (a.id || 0) - (b.id || 0))
+
+      // Procurar subconjuntos de NFs cuja média ponderada ou simples dê ~10.12
+      // Exemplo: NFs de 2026, últimas N compras até a NF de 10,00 (que tem id 952497)
+      const results = []
+
+      // 1. Todas as compras até id 952497 (última compra 10,00)
+      // Média simples de todas as compras de 2026:
+      const compras2026 = allEntries.filter(
+        (x) => (x.batch_fabrication_dt || '').indexOf('2026') === 0,
+      )
+      let totQt2026 = 0
+      let totVal2026 = 0
+      let sumUnit2026 = 0
+      for (let k = 0; k < compras2026.length; k++) {
+        totQt2026 += compras2026[k].quantity || 0
+        totVal2026 += compras2026[k].cost_total_price || 0
+        sumUnit2026 += compras2026[k].cost_unit_price || 0
+      }
+      results.push({
+        name: 'compras2026_ponderada',
+        val: totQt2026 ? totVal2026 / totQt2026 : 0,
+        simples: compras2026.length ? sumUnit2026 / compras2026.length : 0,
+        count: compras2026.length,
+      })
+
+      // Testar as últimas K compras (K de 1 a 15)
+      for (let k = 2; k <= 15; k++) {
+        const slice = allEntries.slice(-k)
+        let tQ = 0,
+          tV = 0,
+          sU = 0
+        for (let m = 0; m < slice.length; m++) {
+          tQ += slice[m].quantity || 0
+          tV += slice[m].cost_total_price || 0
+          sU += slice[m].cost_unit_price || 0
+        }
+        results.push({
+          name: 'ultimas_' + k,
+          ponderada: tQ ? tV / tQ : 0,
+          simples: slice.length ? sU / slice.length : 0,
+        })
+      }
+
+      return e.json(200, { results })
+    }
+    if (q.get('mode') === 'stock_entries_enox') {
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      // Buscar entradas de estoque do produto 2916 (operation_type = Entrada)
+      // Como a paginação default traz as primeiras 100, vamos buscar páginas maiores ou filtrar
+      let allEntries = []
+      for (let p = 1; p <= 5; p++) {
+        const url =
+          baseUrl +
+          '/integration-engine/get/stocks?token=' +
+          encodeURIComponent(apiToken) +
+          '&product_id=2916&page_number=' +
+          p +
+          '&page_size=500'
+        const res = $http.send({ url: url, method: 'GET', timeout: 20 })
+        const list = res.json || JSON.parse(res.raw || '[]')
+        if (!Array.isArray(list) || list.length === 0) break
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i]
+          if (
+            item.operation_type === 'Entrada' &&
+            String(item.operation_ds || '').indexOf('Nota fiscal') >= 0
+          ) {
+            allEntries.push({
+              id: item.id,
+              batch_fabrication_dt: item.batch_fabrication_dt,
+              operation_ds: item.operation_ds,
+              invoice_number: item.invoice_number,
+              quantity: item.quantity,
+              cost_unit_price: item.cost_unit_price,
+              cost_total_price: item.cost_total_price,
+              balance: item.balance,
+            })
+          }
+        }
+      }
+
+      return e.json(200, {
+        totalNfs: allEntries.length,
+        nfs: allEntries,
+      })
+    }
+    if (q.get('mode') === 'check_product_endpoints') {
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      // Vamos testar:
+      // 1. /integration-engine/get/products?id=2916
+      const pIdUrl =
+        baseUrl +
+        '/integration-engine/get/products?token=' +
+        encodeURIComponent(apiToken) +
+        '&id=2916'
+      const pIdRes = $http.send({ url: pIdUrl, method: 'GET', timeout: 15 })
+      let pIdData = null
+      try {
+        pIdData = pIdRes.json || JSON.parse(pIdRes.raw || 'null')
+      } catch (_) {}
+
+      // 2. /tasy/precos-spincare
+      const tasyUrl =
+        baseUrl + '/tasy/precos-spincare?token=' + encodeURIComponent(apiToken) + '&product_id=2916'
+      const tasyRes = $http.send({ url: tasyUrl, method: 'GET', timeout: 15 })
+
+      // 3. /integration-engine/get/table-price-items?product_id=2916
+      const tpiUrl =
+        baseUrl +
+        '/integration-engine/get/table-price-items?token=' +
+        encodeURIComponent(apiToken) +
+        '&product_id=2916'
+      const tpiRes = $http.send({ url: tpiUrl, method: 'GET', timeout: 15 })
+
+      // 4. Últimos registros de /integration-engine/get/stocks com order by id desc para product_id 2916
+      // Ver se há notas fiscais de entrada recentes com fornecedor F&F DISTRIBUIDORA DE PRODUTOS FARMACEUTICOS LTDA
+      // (pois a imagem mostra "Último fornecedor: F&F DISTRIBUIDORA DE PRODUTOS FARMACEUTICOS LTDA")
+      const stockAllUrl =
+        baseUrl +
+        '/integration-engine/get/stocks?token=' +
+        encodeURIComponent(apiToken) +
+        '&product_id=2916&page_size=100'
+      const stockAllRes = $http.send({ url: stockAllUrl, method: 'GET', timeout: 15 })
+      let stockItems = []
+      try {
+        stockItems = stockAllRes.json || JSON.parse(stockAllRes.raw || '[]')
+      } catch (_) {}
+
+      const ffItems = []
+      for (let i = 0; i < stockItems.length; i++) {
+        const item = stockItems[i]
+        const str = JSON.stringify(item)
+        if (
+          str.toUpperCase().indexOf('F&F') >= 0 ||
+          str.indexOf('10') >= 0 ||
+          item.operation_type === 'Entrada'
+        ) {
+          ffItems.push(item)
+        }
+      }
+
+      return e.json(200, {
+        pIdData: pIdData,
+        tasyPrecos: {
+          status: tasyRes.statusCode,
+          raw: tasyRes.raw ? tasyRes.raw.slice(0, 300) : '',
+        },
+        tablePriceItems: {
+          status: tpiRes.statusCode,
+          raw: tpiRes.raw ? tpiRes.raw.slice(0, 300) : '',
+        },
+        totalStockItems: stockItems.length,
+        stockSampleLast: stockItems.slice(-5),
+        ffItems: ffItems,
+      })
+    }
+    if (q.get('mode') === 'stock_probe_2916') {
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      const stockUrl =
+        baseUrl +
+        '/integration-engine/get/stocks?token=' +
+        encodeURIComponent(apiToken) +
+        '&product_id=2916'
+      const stockRes = $http.send({ url: stockUrl, method: 'GET', timeout: 15 })
+      let stockData = []
+      try {
+        stockData = stockRes.json || JSON.parse(stockRes.raw || '[]')
+      } catch (_) {}
+
+      // Mapear preços dos registros de estoque
+      const costUnits = []
+      for (let i = 0; i < stockData.length; i++) {
+        const item = stockData[i]
+        costUnits.push({
+          id: item.id,
+          operation_type: item.operation_type,
+          operation_ds: item.operation_ds,
+          batch_fabrication_dt: item.batch_fabrication_dt,
+          cost_unit_price: item.cost_unit_price,
+          cost_total_price: item.cost_total_price,
+          quantity: item.quantity,
+          balance: item.balance,
+        })
+      }
+
+      // Inspecionar Swagger v3/api-docs procurando por endpoints ou schemas com buy, purchase, last, planning, cost
+      const swUrl = baseUrl + '/v3/api-docs'
+      const swRes = $http.send({ url: swUrl, method: 'GET', timeout: 15 })
+      let paths = []
+      try {
+        const sw = swRes.json || JSON.parse(swRes.raw || '{}')
+        if (sw.paths) paths = Object.keys(sw.paths)
+      } catch (err) {
+        paths = ['error parsing: ' + String(err)]
+      }
+
+      return e.json(200, {
+        stockEntriesCount: stockData.length,
+        stockEntries: costUnits,
+        swaggerPaths: paths,
+      })
+    }
+    if (q.get('mode') === 'enox_probe_null_dt') {
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      // Buscar dispensações 58393, 58484 e 58657 na nossa tabela dispensacoes_spincare
+      const localDisps = e.app.findRecordsByFilter(
+        'dispensacoes_spincare',
+        'spincare_id = 58393 || spincare_id = 58484 || spincare_id = 58657',
+        'id',
+        10,
+        0,
+      )
+      const localData = localDisps.map((r) => ({
+        spincare_id: r.get('spincare_id'),
+        expected_deliver_dt: r.getString('expected_deliver_dt'),
+        patient_name: r.getString('patient_name'),
+        payload: JSON.parse(r.getString('payload') || '{}'),
+      }))
+
+      return e.json(200, {
+        localDispsFound: localDisps.length,
+        localData: localData,
+      })
+    }
+    if (q.get('mode') === 'enox_probe_2') {
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      // 1. Inspecionar o stock do produto 2916 (já vimos que retornou 200)
+      const stockUrl =
+        baseUrl +
+        '/integration-engine/get/stocks?token=' +
+        encodeURIComponent(apiToken) +
+        '&product_id=2916'
+      const stockRes = $http.send({ url: stockUrl, method: 'GET', timeout: 15 })
+      let stockData = null
+      try {
+        stockData = stockRes.json || JSON.parse(stockRes.raw || 'null')
+      } catch (_) {}
+
+      // 2. Chamar get/dispensations com page 2 para setembro/2026!
+      const dispP2Url =
+        baseUrl +
+        '/integration-engine/get/dispensations?token=' +
+        encodeURIComponent(apiToken) +
+        '&initial_dt=2026-09-01&final_dt=2026-09-30&page_number=2&page_size=500'
+      const dispP2Res = $http.send({ url: dispP2Url, method: 'GET', timeout: 30 })
+      let p2Items = []
+      try {
+        p2Items = dispP2Res.json || JSON.parse(dispP2Res.raw || '[]')
+      } catch (_) {}
+
+      const enoxP2 = []
+      let p2Sent = 0
+      let p2Qt = 0
+      for (let i = 0; i < p2Items.length; i++) {
+        const d = p2Items[i]
+        const items = d.items || []
+        for (let j = 0; j < items.length; j++) {
+          const it = items[j]
+          if (
+            it.product_id === 2916 ||
+            String(it.product_ds || '').indexOf('ENOXAPARINA 40MG') >= 0
+          ) {
+            p2Sent += Number(it.sent_qt || 0)
+            p2Qt += Number(it.qt || 0)
+            enoxP2.push({
+              disp_id: d.id,
+              expected_deliver_dt: d.expected_deliver_dt,
+              patient_name: d.patient_name,
+              status: d.status,
+              it_status: it.status,
+              qt: it.qt,
+              sent_qt: it.sent_qt,
+              returned_qt: it.returned_qt,
+            })
+          }
+        }
+      }
+
+      // 3. Testar Swagger para ver todos os endpoints /get/ da API SpinCare
+      // Podemos testar /v3/api-docs ou /v2/api-docs ou /swagger.json
+      const swaggerUrls = [
+        '/v3/api-docs',
+        '/v2/api-docs',
+        '/swagger.json',
+        '/swagger-resources',
+        '/spincare_integration/v3/api-docs',
+        '/spincare_integration/v2/api-docs',
+      ]
+      const swaggerHits = {}
+      for (let s = 0; s < swaggerUrls.length; s++) {
+        try {
+          const sw = $http.send({ url: baseUrl + swaggerUrls[s], method: 'GET', timeout: 5 })
+          swaggerHits[swaggerUrls[s]] = { status: sw.statusCode, len: sw.raw ? sw.raw.length : 0 }
+        } catch (e) {
+          swaggerHits[swaggerUrls[s]] = { err: String(e) }
+        }
+      }
+
+      return e.json(200, {
+        stockDataSample: Array.isArray(stockData) ? stockData.slice(0, 3) : stockData,
+        stockDataTotal: Array.isArray(stockData) ? stockData.length : 0,
+        p2TotalDisps: p2Items.length,
+        enoxP2Count: enoxP2.length,
+        p2Sent: p2Sent,
+        p2Qt: p2Qt,
+        enoxP2Items: enoxP2,
+        swaggerHits: swaggerHits,
+      })
+    }
+    if (q.get('mode') === 'enox_query') {
+      // Endpoint ao vivo para inspecionar dispensações do SpinCare em setembro/2026
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      const login = (cfgRec.getString('api_login') || '').trim()
+      const password = (cfgRec.getString('api_password') || '').trim()
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      const tokenUrl =
+        baseUrl +
+        '/token/v1?login=' +
+        encodeURIComponent(login) +
+        '&password=' +
+        encodeURIComponent(password)
+      const resToken = $http.send({
+        url: tokenUrl,
+        method: 'GET',
+        headers: { Accept: '*/*' },
+        timeout: 15,
+      })
+      if (resToken.statusCode === 200) {
+        let t = ''
+        if (typeof resToken.json === 'string') t = resToken.json
+        else if (resToken.json && typeof resToken.json === 'object')
+          t = resToken.json.token || resToken.json.access_token || ''
+        if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
+        if (t) {
+          if (t.startsWith('Bearer ')) t = t.substring(7).trim()
+          apiToken = t
+        }
+      }
+
+      // 1. Chamar get/dispensations para setembro de 2026 na API SpinCare direta
+      const dispUrl =
+        baseUrl +
+        '/integration-engine/get/dispensations?token=' +
+        encodeURIComponent(apiToken) +
+        '&initial_dt=2026-09-01&final_dt=2026-09-30&page_number=1&page_size=500'
+      const dispRes = $http.send({
+        url: dispUrl,
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        timeout: 30,
+      })
+      let liveDisps = []
+      try {
+        liveDisps = dispRes.json || JSON.parse(dispRes.raw || '[]')
+      } catch (_) {}
+
+      // Filtrar todas as ocorrências de ENOXAPARINA (2916)
+      const enoxLive = []
+      let totalLiveSent = 0
+      let totalLiveQt = 0
+      for (let i = 0; i < liveDisps.length; i++) {
+        const d = liveDisps[i]
+        const items = d.items || []
+        for (let j = 0; j < items.length; j++) {
+          const it = items[j]
+          if (
+            it.product_id === 2916 ||
+            String(it.product_ds || '').indexOf('ENOXAPARINA 40MG') >= 0
+          ) {
+            totalLiveSent += Number(it.sent_qt || 0)
+            totalLiveQt += Number(it.qt || 0)
+            enoxLive.push({
+              disp_id: d.id,
+              expected_deliver_dt: d.expected_deliver_dt,
+              patient_name: d.patient_name,
+              status: d.status,
+              it_status: it.status,
+              qt: it.qt,
+              sent_qt: it.sent_qt,
+              returned_qt: it.returned_qt,
+            })
+          }
+        }
+      }
+
+      // 2. Chamar Swagger / endpoints do SpinCare para entender de onde vêm Última Compra 10,00 e Custo Médio 10,12
+      // Testar /get/products com id 2916 ou code 0000077066
+      const prodUrl =
+        baseUrl +
+        '/integration-engine/get/products?token=' +
+        encodeURIComponent(apiToken) +
+        '&code=0000077066'
+      const prodRes = $http.send({
+        url: prodUrl,
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        timeout: 30,
+      })
+      let prodData = null
+      try {
+        prodData = prodRes.json || JSON.parse(prodRes.raw || 'null')
+      } catch (_) {}
+
+      // Testar se existe outro endpoint de produtos / compras / estoque no Swagger
+      // Vamos tentar algumas rotas comuns no spincare:
+      // /integration-engine/get/stocks
+      // /integration-engine/get/purchases
+      // /integration-engine/get/purchase_orders
+      // /integration-engine/get/inflows ou /get/entries ou /get/invoices
+      const testRoutes = [
+        '/integration-engine/get/stocks?token=' + encodeURIComponent(apiToken) + '&product_id=2916',
+        '/integration-engine/get/purchases?token=' + encodeURIComponent(apiToken),
+        '/integration-engine/get/product_costs?token=' +
+          encodeURIComponent(apiToken) +
+          '&product_id=2916',
+        '/integration-engine/get/planning?token=' +
+          encodeURIComponent(apiToken) +
+          '&initial_dt=2026-09-01&final_dt=2026-09-30',
+        '/integration-engine/get/shopping_planning?token=' +
+          encodeURIComponent(apiToken) +
+          '&initial_dt=2026-09-01&final_dt=2026-09-30',
+      ]
+      const routeResults = {}
+      for (let r = 0; r < testRoutes.length; r++) {
+        const u = baseUrl + testRoutes[r]
+        try {
+          const resp = $http.send({ url: u, method: 'GET', timeout: 10 })
+          routeResults[testRoutes[r].split('?')[0]] = {
+            status: resp.statusCode,
+            body: resp.raw ? resp.raw.slice(0, 300) : '',
+          }
+        } catch (e) {
+          routeResults[testRoutes[r].split('?')[0]] = { error: String(e) }
+        }
+      }
+
+      return e.json(200, {
+        liveDispsTotal: liveDisps.length,
+        enoxLiveCount: enoxLive.length,
+        totalLiveSent: totalLiveSent,
+        totalLiveQt: totalLiveQt,
+        enoxLiveItems: enoxLive,
+        prodData: prodData,
+        routeResults: routeResults,
+      })
+    }
     const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
     if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
     const cfgRec = records[0]
