@@ -85,10 +85,15 @@ export default function Equipe() {
   const [modalFormError, setModalFormError] = useState<string | null>(null)
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false)
 
-  // Modal para convite / redefinição de senha
-  const [resetModalOpen, setResetModalOpen] = useState(false)
-  const [membroParaReset, setMembroParaReset] = useState<UserTeamRecord | null>(null)
-  const [enviandoReset, setEnviandoReset] = useState(false)
+  // Modal para definição de nova senha diretamente pelo admin (sem depender de e-mail)
+  const [senhaModalOpen, setSenhaModalOpen] = useState(false)
+  const [membroParaSenha, setMembroParaSenha] = useState<UserTeamRecord | null>(null)
+  const [novaSenhaMembro, setNovaSenhaMembro] = useState('')
+  const [confirmarSenhaMembro, setConfirmarSenhaMembro] = useState('')
+  const [showNovaSenhaMembro, setShowNovaSenhaMembro] = useState(false)
+  const [salvandoSenha, setSalvandoSenha] = useState(false)
+  const [senhaModalError, setSenhaModalError] = useState<string | null>(null)
+  const [hasAttemptedSenha, setHasAttemptedSenha] = useState(false)
 
   // Estado para ação de Aprovar / Negar
   const [reviewingUserId, setReviewingUserId] = useState<string | null>(null)
@@ -460,38 +465,100 @@ export default function Equipe() {
     }
   }
 
-  const handleRequestPasswordReset = async () => {
-    if (!membroParaReset) return
-    const emailDestino = textoMinusculoSeguro(membroParaReset.email)
-    if (!emailDestino) {
+  const handleOpenSenhaModal = (membro: UserTeamRecord) => {
+    setMembroParaSenha(membro)
+    setNovaSenhaMembro('')
+    setConfirmarSenhaMembro('')
+    setShowNovaSenhaMembro(false)
+    setSenhaModalError(null)
+    setHasAttemptedSenha(false)
+    setSenhaModalOpen(true)
+  }
+
+  const senhaNovaValida = novaSenhaMembro.length >= 8
+  const senhasCoincidem =
+    confirmarSenhaMembro.length === 0 || confirmarSenhaMembro === novaSenhaMembro
+
+  const getSenhaValidationErrors = (): string[] => {
+    const errors: string[] = []
+    if (!novaSenhaMembro) {
+      errors.push('Informe a nova senha do usuário.')
+    } else if (!senhaNovaValida) {
+      errors.push('A nova senha deve ter no mínimo 8 caracteres.')
+    }
+    if (!confirmarSenhaMembro) {
+      errors.push('Confirme a nova senha digitando-a novamente.')
+    } else if (!senhasCoincidem) {
+      errors.push('As senhas informadas não coincidem. Verifique e digite novamente.')
+    }
+    return errors
+  }
+
+  const handleSetPassword = async () => {
+    if (!membroParaSenha?.id) return
+    setHasAttemptedSenha(true)
+    setSenhaModalError(null)
+
+    // Sessão obrigatória
+    if (!pb.authStore.isValid || !user) {
+      const msg = 'Sua sessão expirou. Por favor, entre novamente no sistema.'
+      setSenhaModalError(msg)
       toast({
-        title: 'E-mail indisponível',
-        description: 'Não foi possível identificar o e-mail do usuário para envio das instruções.',
+        title: 'Sessão expirada',
+        description: msg,
+        variant: 'destructive',
+      })
+      setTimeout(() => {
+        navigate('/login', { state: { from: { pathname: '/equipe' } } })
+      }, 1500)
+      return
+    }
+
+    // Validações client-side com mensagens claras
+    const errors = getSenhaValidationErrors()
+    if (errors.length > 0) {
+      setSenhaModalError(errors[0])
+      toast({
+        title: 'Verifique a nova senha',
+        description: errors[0],
         variant: 'destructive',
       })
       return
     }
 
-    setEnviandoReset(true)
+    setSalvandoSenha(true)
     try {
-      await pb.collection('users').requestPasswordReset(emailDestino)
-      toast({
-        title: 'Instruções enviadas!',
-        description: `E-mail de redefinição de acesso enviado com sucesso para ${emailDestino}.`,
+      await pb.send('/backend/v1/admin/set-password', {
+        method: 'POST',
+        body: {
+          userId: membroParaSenha.id,
+          password: novaSenhaMembro,
+          passwordConfirm: confirmarSenhaMembro,
+        },
       })
-      setResetModalOpen(false)
-      setMembroParaReset(null)
-    } catch (err: unknown) {
-      console.error('Erro ao solicitar reset:', err)
-      const friendlyMsg =
-        getErrorMessage(err) || 'Falha ao enviar instruções de redefinição para o e-mail informado.'
+
       toast({
-        title: 'Erro ao enviar instruções',
+        title: 'Senha redefinida com sucesso!',
+        description: `A nova senha de ${membroParaSenha.name || membroParaSenha.email} já está ativa. O colega pode entrar no app com ela agora.`,
+      })
+
+      setSenhaModalOpen(false)
+      setMembroParaSenha(null)
+      setNovaSenhaMembro('')
+      setConfirmarSenhaMembro('')
+    } catch (err: unknown) {
+      console.error('Erro ao redefinir senha do usuário:', err)
+      const friendlyMsg =
+        getErrorMessage(err) ||
+        'Não foi possível redefinir a senha. Verifique os requisitos e tente novamente.'
+      setSenhaModalError(friendlyMsg)
+      toast({
+        title: 'Erro ao redefinir senha',
         description: friendlyMsg,
         variant: 'destructive',
       })
     } finally {
-      setEnviandoReset(false)
+      setSalvandoSenha(false)
     }
   }
 
@@ -923,21 +990,13 @@ export default function Equipe() {
                             {dataCriacao}
                           </span>
 
-                          {/* Ação de reset */}
+                          {/* Ação de redefinição direta (sem depender de e-mail) */}
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={!emailTexto}
-                            onClick={() => {
-                              setMembroParaReset(m)
-                              setResetModalOpen(true)
-                            }}
+                            onClick={() => handleOpenSenhaModal(m)}
                             className="h-8 text-xs text-slate-700 hover:bg-slate-50 border-slate-200"
-                            title={
-                              emailTexto
-                                ? 'Enviar e-mail para redefinir senha'
-                                : 'E-mail não cadastrado'
-                            }
+                            title="Definir uma nova senha de acesso para este usuário"
                           >
                             <KeyRound size={12} className="mr-1 text-slate-500" />
                             Redefinir Senha
@@ -1591,48 +1650,209 @@ export default function Equipe() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Redefinição de Senha */}
-      <Dialog open={resetModalOpen} onOpenChange={setResetModalOpen}>
-        <DialogContent className="max-w-md p-6 rounded-2xl bg-white">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <KeyRound className="h-5 w-5 text-[#0D8272]" />
-              Enviar Redefinição de Senha
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-600 pt-1 leading-relaxed">
-              Deseja enviar um link seguro para o e-mail{' '}
-              <strong className="text-slate-900">
-                {membroParaReset?.email || 'informado'}
-              </strong>{' '}
-              para que o colega redefina sua senha de acesso ao sistema?
-            </DialogDescription>
-          </DialogHeader>
+      {/* Modal: Definir Nova Senha diretamente (sem depender de e-mail) */}
+      <Dialog
+        open={senhaModalOpen}
+        onOpenChange={(open) => {
+          setSenhaModalOpen(open)
+          if (!open) {
+            setSenhaModalError(null)
+            setHasAttemptedSenha(false)
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-md w-[95vw] sm:w-full p-5 sm:p-6 rounded-2xl bg-white max-h-[90vh] overflow-y-auto"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <div className="space-y-4">
+            <DialogHeader className="text-left">
+              <DialogTitle className="text-base sm:text-lg font-bold text-[#0C4336] flex items-center gap-2">
+                <KeyRound className="h-5 w-5 text-[#0D8272] shrink-0" />
+                Redefinir Senha do Usuário
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-600 pt-1 leading-relaxed">
+                Defina uma nova senha de acesso para{' '}
+                <strong className="text-slate-900">
+                  {membroParaSenha?.name || membroParaSenha?.email || 'o usuário selecionado'}
+                </strong>
+                . A senha entra em vigor imediatamente, sem necessidade de e-mail.
+              </DialogDescription>
+            </DialogHeader>
 
-          <DialogFooter className="pt-4 flex flex-col sm:flex-row gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setResetModalOpen(false)}
-              className="text-xs"
+            {/* Card com dados do usuário */}
+            {membroParaSenha && (
+              <div className="p-3 rounded-xl bg-[#F4FAF8] border border-emerald-950/10 flex items-center gap-3">
+                <Avatar className="h-10 w-10 rounded-xl bg-[#0F5342] text-white text-xs font-bold shrink-0">
+                  <AvatarFallback>
+                    {(
+                      textoSeguro(membroParaSenha.name).slice(0, 2) ||
+                      textoSeguro(membroParaSenha.email).slice(0, 2)
+                    ).toUpperCase() || 'HV'}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-slate-900 truncate">
+                    {textoSeguro(membroParaSenha.name) || 'Sem nome informado'}
+                  </p>
+                  <p className="text-xs text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                    <Mail size={12} className="text-slate-400 shrink-0" />
+                    {textoSeguro(membroParaSenha.email) || 'E-mail não informado'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Alerta de erro */}
+            {senhaModalError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2.5 animate-in fade-in">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold">Não foi possível redefinir:</p>
+                  <p className="text-[11px] mt-0.5 text-rose-700 leading-relaxed">
+                    {senhaModalError}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleSetPassword()
+              }}
+              noValidate
+              className="space-y-3.5"
             >
-              Cancelar
-            </Button>
-            <Button
-              size="sm"
-              disabled={enviandoReset}
-              onClick={handleRequestPasswordReset}
-              className="bg-[#0F5342] hover:bg-[#0C4336] text-white text-xs h-9 min-h-[38px] font-bold rounded-xl"
-            >
-              {enviandoReset ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  Enviando...
-                </>
-              ) : (
-                'Confirmar e Enviar'
-              )}
-            </Button>
-          </DialogFooter>
+              {/* Nova senha */}
+              <div className="space-y-1">
+                <Label htmlFor="novaSenhaMembro" className="text-xs font-bold text-slate-700">
+                  Nova Senha *
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="novaSenhaMembro"
+                    name="novaSenhaMembro"
+                    type={showNovaSenhaMembro ? 'text' : 'password'}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    autoComplete="new-password"
+                    placeholder="Mínimo 8 caracteres"
+                    value={novaSenhaMembro}
+                    onChange={(e) => {
+                      setNovaSenhaMembro(e.target.value)
+                      if (senhaModalError) setSenhaModalError(null)
+                    }}
+                    className={cn(
+                      'h-11 min-h-[44px] pr-10 text-xs font-mono bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]',
+                      hasAttemptedSenha &&
+                        !senhaNovaValida &&
+                        'border-rose-400 bg-rose-50/40 focus-visible:ring-rose-500',
+                    )}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNovaSenhaMembro(!showNovaSenhaMembro)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md"
+                    title={showNovaSenhaMembro ? 'Ocultar senha' : 'Ver senha'}
+                    tabIndex={-1}
+                  >
+                    {showNovaSenhaMembro ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {hasAttemptedSenha && !novaSenhaMembro && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    Informe a nova senha.
+                  </p>
+                )}
+                {hasAttemptedSenha && novaSenhaMembro && !senhaNovaValida && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    A nova senha deve ter no mínimo 8 caracteres.
+                  </p>
+                )}
+              </div>
+
+              {/* Confirmação da nova senha */}
+              <div className="space-y-1">
+                <Label htmlFor="confirmarSenhaMembro" className="text-xs font-bold text-slate-700">
+                  Confirmar Nova Senha *
+                </Label>
+                <Input
+                  id="confirmarSenhaMembro"
+                  name="confirmarSenhaMembro"
+                  type={showNovaSenhaMembro ? 'text' : 'password'}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="new-password"
+                  placeholder="Digite a mesma senha novamente"
+                  value={confirmarSenhaMembro}
+                  onChange={(e) => {
+                    setConfirmarSenhaMembro(e.target.value)
+                    if (senhaModalError) setSenhaModalError(null)
+                  }}
+                  className={cn(
+                    'h-11 min-h-[44px] text-xs font-mono bg-[#F4FAF8] border-emerald-950/15 rounded-xl focus-visible:ring-[#0D8272]',
+                    hasAttemptedSenha &&
+                      (!confirmarSenhaMembro || !senhasCoincidem) &&
+                      'border-rose-400 bg-rose-50/40 focus-visible:ring-rose-500',
+                  )}
+                />
+                {hasAttemptedSenha && !confirmarSenhaMembro && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    Confirme a nova senha digitando-a novamente.
+                  </p>
+                )}
+                {hasAttemptedSenha && confirmarSenhaMembro && !senhasCoincidem && (
+                  <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-0.5">
+                    <AlertCircle size={11} />
+                    As senhas informadas não coincidem.
+                  </p>
+                )}
+              </div>
+
+              {/* Aviso de auditoria */}
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 flex items-center gap-2">
+                <Lock size={12} className="text-slate-400 shrink-0" />
+                <span>
+                  A redefinição será registrada no log de auditoria da comissão. A senha em si não é
+                  armazenada em nenhum registro.
+                </span>
+              </div>
+
+              <DialogFooter className="pt-2 flex flex-col-reverse sm:flex-row gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setSenhaModalOpen(false)}
+                  disabled={salvandoSenha}
+                  className="h-11 min-h-[44px] text-xs border-slate-200 text-slate-700 w-full sm:w-auto"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={salvandoSenha}
+                  className="h-11 min-h-[44px] px-5 rounded-xl text-xs font-bold bg-[#0F5342] hover:bg-[#0C4336] active:scale-[0.98] text-white shadow-xs touch-manipulation transition-all w-full sm:w-auto"
+                  title="Aplicar a nova senha para o usuário"
+                >
+                  {salvandoSenha ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Aplicando Nova Senha...
+                    </>
+                  ) : (
+                    <>
+                      <KeyRound className="mr-2 h-4 w-4 text-[#F5B31C]" />
+                      Definir Nova Senha
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

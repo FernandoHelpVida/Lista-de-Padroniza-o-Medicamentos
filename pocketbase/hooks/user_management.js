@@ -319,6 +319,107 @@ routerAdd(
 )
 
 // -------------------------------------------------------------
+// ROTA ADMINISTRATIVA: DEFINIR NOVA SENHA DIRETAMENTE PARA UM USUÁRIO
+// Não depende de e-mail — o admin define a senha e o usuário entra com ela.
+// A senha NUNCA é registrada em log ou auditoria.
+// -------------------------------------------------------------
+routerAdd(
+  'POST',
+  '/backend/v1/admin/set-password',
+  (e) => {
+    try {
+      const authUser = e.auth
+      if (!authUser) {
+        return e.unauthorizedError('Acesso não autorizado. Faça login para continuar.')
+      }
+
+      const isUserAdmin =
+        authUser.getString('role') === 'admin' ||
+        authUser.getString('email').toLowerCase() === 'fernandofernandes@helpvida.com.br'
+
+      if (!isUserAdmin) {
+        return e.forbiddenError(
+          'Apenas administradores da comissão Help Vida podem redefinir senhas.',
+        )
+      }
+
+      const body = e.requestInfo().body || {}
+      const targetUserId = (body.userId || '').trim()
+      const newPassword = typeof body.password === 'string' ? body.password : ''
+      const confirmPassword = typeof body.passwordConfirm === 'string' ? body.passwordConfirm : ''
+
+      if (!targetUserId) {
+        return e.badRequestError('ID do usuário é obrigatório para redefinir a senha.')
+      }
+
+      if (newPassword.length < 8) {
+        return e.badRequestError('A nova senha deve conter no mínimo 8 caracteres.')
+      }
+
+      if (confirmPassword && confirmPassword !== newPassword) {
+        return e.badRequestError('As senhas informadas não coincidem.')
+      }
+
+      let targetUser
+      try {
+        targetUser = e.app.findRecordById('_pb_users_auth_', targetUserId)
+      } catch (_) {
+        return e.notFoundError('Usuário não localizado no sistema Help Vida.')
+      }
+
+      const targetEmail = targetUser.getString('email').toLowerCase()
+      const targetName = targetUser.getString('name') || ''
+
+      // Mecanismo nativo do PocketBase: setPassword() gera o hash correto
+      // e rotaciona o tokenKey (invalida sessões/tokens antigos do usuário).
+      targetUser.setPassword(newPassword)
+      e.app.save(targetUser)
+
+      // Log de auditoria — sem qualquer registro da senha
+      try {
+        const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+        const auditRecord = new Record(auditCol)
+        auditRecord.set('colecao', 'users')
+        auditRecord.set('registro_id', targetUser.id)
+        auditRecord.set('acao', 'SENHA_REDEFINIDA_ADMIN')
+        auditRecord.set('usuario', authUser.id)
+        auditRecord.set('usuario_nome', authUser.getString('name') || '')
+        auditRecord.set('usuario_email', authUser.getString('email') || '')
+        auditRecord.set('usuario_role', authUser.getString('role') || 'admin')
+        auditRecord.set('status_anterior', 'senha anterior (não registrada)')
+        auditRecord.set('status_novo', 'senha redefinida pelo administrador')
+        auditRecord.set(
+          'detalhes',
+          'Senha redefinida diretamente pelo administrador, sem uso de e-mail, para: ' +
+            targetName +
+            ' (' +
+            targetEmail +
+            ')',
+        )
+        e.app.save(auditRecord)
+      } catch (errLog) {
+        console.error('Erro ao registrar log de auditoria da redefinição de senha:', errLog)
+      }
+
+      return e.json(200, {
+        success: true,
+        userId: targetUser.id,
+        message:
+          'Nova senha definida com sucesso para ' +
+          (targetName || targetEmail) +
+          '. O usuário já pode entrar com a nova senha.',
+      })
+    } catch (err) {
+      console.error('Erro ao redefinir senha do usuário:', err)
+      return e.badRequestError(
+        err instanceof Error ? err.message : 'Falha ao redefinir a senha do usuário.',
+      )
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// -------------------------------------------------------------
 // HOOK ON RECORD BEFORE CREATE: Garantir status default 'pendente'
 // em auto-cadastros públicos, preservando criação por admin
 // -------------------------------------------------------------
