@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T20:02:20.486Z",
+  "generatedAt": "2026-11-05T11:45:30.420Z",
   "collections": [
     {
       "name": "users",
@@ -884,6 +884,245 @@
         "CREATE INDEX idx_orc_sync_status ON orcamentos_sync (status)",
         "CREATE INDEX idx_orc_sync_dt_aprov_iso ON orcamentos_sync (data_aprovacao_iso DESC)",
         "CREATE INDEX idx_orc_sync_synced_at ON orcamentos_sync (synced_at DESC)"
+      ]
+    },
+    {
+      "name": "produtos_spincare",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role != 'medico_visitador'",
+        "view": "@request.auth.id != '' && @request.auth.role != 'medico_visitador'",
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "spincare_id",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "group_description",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "type_description",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "active",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "price",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "measure_unit",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "prescription_measure_unit",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "prescription_conversion_qt",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "barcode",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "company_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "payload",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "synced_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_prod_sync_spincare_id ON produtos_spincare (spincare_id)",
+        "CREATE INDEX idx_prod_sync_code ON produtos_spincare (code)",
+        "CREATE INDEX idx_prod_sync_description ON produtos_spincare (description)",
+        "CREATE INDEX idx_prod_sync_group ON produtos_spincare (group_description)"
+      ]
+    },
+    {
+      "name": "dispensacoes_spincare",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role != 'medico_visitador'",
+        "view": "@request.auth.id != '' && @request.auth.role != 'medico_visitador'",
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "spincare_id",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "budget_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "prescription_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "patient_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "patient_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "expected_deliver_dt",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "returned_dt",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "stock_location",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "send_reason",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "priority",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "itens",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "payload",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "synced_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_disp_sync_spincare_id ON dispensacoes_spincare (spincare_id)",
+        "CREATE INDEX idx_disp_sync_expected_dt ON dispensacoes_spincare (expected_deliver_dt)",
+        "CREATE INDEX idx_disp_sync_status ON dispensacoes_spincare (status)"
       ]
     }
   ]
