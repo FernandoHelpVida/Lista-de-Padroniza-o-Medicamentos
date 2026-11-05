@@ -246,15 +246,14 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           }
           syncRec.set('price', price)
 
-          // Última compra do produto: campo last_buy_value do payload da API
-          // SpinCare (confirmado pelo usuário). Fallback: imported_prices, para
-          // produtos em que a API não devolve last_buy_value.
+          // Última compra do produto:
+          // 1. Campo explícito last_buy_value (ou aninhado em last_buy / last_buy_info).
+          // 2. Fallback na API SpinCare real: imported_prices (itens com pfb_value / pmc_value / price).
+          //    pfb_value = Preço Fábrica (custo base da tabela Brasíndice/Simpro/Própria).
           let ultimaCompra = 0
           if (raw.last_buy_value !== undefined && raw.last_buy_value !== null) {
             ultimaCompra = parseMoney(raw.last_buy_value)
           } else {
-            // Payload real: last_buy_value pode vir aninhado em last_buy /
-            // last_buy_info; cobra essas formas antes do fallback.
             const lb = raw.last_buy || raw.last_buy_info || null
             if (lb && typeof lb === 'object') {
               ultimaCompra = parseMoney(
@@ -269,26 +268,21 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           if (!(ultimaCompra > 0)) {
             const importedPrices = raw.imported_prices
             if (Array.isArray(importedPrices) && importedPrices.length > 0) {
-              let best = null
-              let bestTs = -Infinity
               for (let k = 0; k < importedPrices.length; k++) {
                 const ip = importedPrices[k] || {}
-                const val = parseMoney(ip.price)
-                if (!(val > 0)) continue
-                const dtRaw = String(ip.dt || ip.date || '').trim()
-                let ts = 0
-                if (dtRaw) {
-                  const parsed = new Date(dtRaw).getTime()
-                  if (!isNaN(parsed)) ts = parsed
-                }
-                // Sem data: usa a ordem do array (SpinCare envia mais recente primeiro)
-                const score = ts > 0 ? ts : -Infinity
-                if (best === null || score > bestTs) {
-                  best = val
-                  bestTs = score
+                // Prioriza pfb_value (preço fábrica/custo), depois price, depois pmc_value
+                const val = parseMoney(
+                  ip.pfb_value !== undefined && ip.pfb_value !== null
+                    ? ip.pfb_value
+                    : ip.price !== undefined && ip.price !== null
+                      ? ip.price
+                      : ip.pmc_value,
+                )
+                if (val > 0) {
+                  ultimaCompra = val
+                  break
                 }
               }
-              if (best !== null && best > 0) ultimaCompra = best
             }
           }
           syncRec.set('ultima_compra_price', ultimaCompra)
@@ -333,6 +327,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
       windowsProcessed: 0,
       syncedAt: new Date().toISOString(),
     }
+    const budgetConvenioCache = new Map()
     let dispCol = null
     try {
       dispCol = app.findCollectionByNameOrId('dispensacoes_spincare')
@@ -462,23 +457,79 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             syncRec.set('status_id', Number(raw.status_id || 0) || 0)
             syncRec.set('priority', String(raw.priority || '').trim())
             // Convênio da dispensação (para o filtro da Curva ABC).
-            // Campos reais do payload SpinCare: health_insurance_id /
-            // health_insurance_name (confirmado pelo usuário).
-            const healthInsIdRaw =
-              raw.health_insurance_id !== undefined
-                ? raw.health_insurance_id
-                : raw.health_insurance !== undefined
-                  ? raw.health_insurance
-                  : raw.insurance_id !== undefined
-                    ? raw.insurance_id
-                    : 0
-            syncRec.set('insurance_id', Number(healthInsIdRaw || 0) || 0)
-            syncRec.set(
-              'insurance_name',
-              String(
-                raw.health_insurance_name || raw.insurance_name || raw.insurance_ds || '',
-              ).trim(),
-            )
+            // O endpoint get/dispensations não traz health_insurance diretamente.
+            // Derivamos de:
+            // 1. Campo direto no payload da dispensação (se existir em alguma versão da API).
+            // 2. Vínculo budget_id com a coleção orcamentos_sync (que já possui convenio e payload.insurance_id/insurance_name).
+            // 3. Fallback: chamada ao vivo à API do SpinCare get/budgets?id={budget_id} com cache em memória.
+            let resolvedInsuranceId =
+              Number(raw.health_insurance_id || raw.health_insurance || raw.insurance_id || 0) || 0
+            let resolvedInsuranceName = String(
+              raw.health_insurance_name || raw.insurance_name || raw.insurance_ds || '',
+            ).trim()
+
+            const bId = Number(raw.budget_id || 0) || 0
+            if (!resolvedInsuranceName && bId > 0) {
+              if (budgetConvenioCache.has(bId)) {
+                const cached = budgetConvenioCache.get(bId)
+                resolvedInsuranceId = cached.id
+                resolvedInsuranceName = cached.name
+              } else {
+                let foundOrc = null
+                try {
+                  const orcRecs = app.findRecordsByFilter(
+                    'orcamentos_sync',
+                    'spincare_id = "' + bId + '"',
+                    '',
+                    1,
+                    0,
+                  )
+                  if (orcRecs && orcRecs.length > 0) foundOrc = orcRecs[0]
+                } catch (_) {}
+
+                if (foundOrc) {
+                  const nome = foundOrc.getString('convenio').trim()
+                  let insId = 0
+                  try {
+                    const py = JSON.parse(foundOrc.getString('payload') || '{}')
+                    insId = Number(py.insurance_id || py.health_insurance_id || 0) || 0
+                  } catch (_) {}
+                  resolvedInsuranceId = insId
+                  resolvedInsuranceName = nome
+                  budgetConvenioCache.set(bId, { id: insId, name: nome })
+                } else if (apiToken) {
+                  // Consulta ao vivo para orçamentos que ainda não estão em orcamentos_sync
+                  try {
+                    const bUrl =
+                      baseUrl +
+                      '/integration-engine/get/budgets?token=' +
+                      encodeURIComponent(apiToken) +
+                      '&id=' +
+                      bId +
+                      '&page_number=1&page_size=1'
+                    const bResp = $http.send({ url: bUrl, method: 'GET', timeout: 5 })
+                    if (bResp && bResp.statusCode === 200) {
+                      const bData = bResp.json || JSON.parse(bResp.raw || 'null')
+                      if (bData && typeof bData === 'object') {
+                        const insName = String(
+                          bData.insurance_name || bData.health_insurance_name || '',
+                        ).trim()
+                        const insId =
+                          Number(bData.insurance_id || bData.health_insurance_id || 0) || 0
+                        resolvedInsuranceId = insId
+                        resolvedInsuranceName = insName
+                        budgetConvenioCache.set(bId, { id: insId, name: insName })
+                      }
+                    }
+                  } catch (_) {
+                    budgetConvenioCache.set(bId, { id: 0, name: '' })
+                  }
+                }
+              }
+            }
+
+            syncRec.set('insurance_id', resolvedInsuranceId)
+            syncRec.set('insurance_name', resolvedInsuranceName)
             // Fim do bloco de convênio
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
@@ -784,15 +835,14 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           }
           syncRec.set('price', price)
 
-          // Última compra do produto: campo last_buy_value do payload da API
-          // SpinCare (confirmado pelo usuário). Fallback: imported_prices, para
-          // produtos em que a API não devolve last_buy_value.
+          // Última compra do produto:
+          // 1. Campo explícito last_buy_value (ou aninhado em last_buy / last_buy_info).
+          // 2. Fallback na API SpinCare real: imported_prices (itens com pfb_value / pmc_value / price).
+          //    pfb_value = Preço Fábrica (custo base da tabela Brasíndice/Simpro/Própria).
           let ultimaCompra = 0
           if (raw.last_buy_value !== undefined && raw.last_buy_value !== null) {
             ultimaCompra = parseMoney(raw.last_buy_value)
           } else {
-            // Payload real: last_buy_value pode vir aninhado em last_buy /
-            // last_buy_info; cobra essas formas antes do fallback.
             const lb = raw.last_buy || raw.last_buy_info || null
             if (lb && typeof lb === 'object') {
               ultimaCompra = parseMoney(
@@ -807,26 +857,21 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           if (!(ultimaCompra > 0)) {
             const importedPrices = raw.imported_prices
             if (Array.isArray(importedPrices) && importedPrices.length > 0) {
-              let best = null
-              let bestTs = -Infinity
               for (let k = 0; k < importedPrices.length; k++) {
                 const ip = importedPrices[k] || {}
-                const val = parseMoney(ip.price)
-                if (!(val > 0)) continue
-                const dtRaw = String(ip.dt || ip.date || '').trim()
-                let ts = 0
-                if (dtRaw) {
-                  const parsed = new Date(dtRaw).getTime()
-                  if (!isNaN(parsed)) ts = parsed
-                }
-                // Sem data: usa a ordem do array (SpinCare envia mais recente primeiro)
-                const score = ts > 0 ? ts : -Infinity
-                if (best === null || score > bestTs) {
-                  best = val
-                  bestTs = score
+                // Prioriza pfb_value (preço fábrica/custo), depois price, depois pmc_value
+                const val = parseMoney(
+                  ip.pfb_value !== undefined && ip.pfb_value !== null
+                    ? ip.pfb_value
+                    : ip.price !== undefined && ip.price !== null
+                      ? ip.price
+                      : ip.pmc_value,
+                )
+                if (val > 0) {
+                  ultimaCompra = val
+                  break
                 }
               }
-              if (best !== null && best > 0) ultimaCompra = best
             }
           }
           syncRec.set('ultima_compra_price', ultimaCompra)
@@ -871,6 +916,7 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
       windowsProcessed: 0,
       syncedAt: new Date().toISOString(),
     }
+    const budgetConvenioCache = new Map()
     let dispCol = null
     try {
       dispCol = app.findCollectionByNameOrId('dispensacoes_spincare')
@@ -999,23 +1045,79 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             syncRec.set('status_id', Number(raw.status_id || 0) || 0)
             syncRec.set('priority', String(raw.priority || '').trim())
             // Convênio da dispensação (para o filtro da Curva ABC).
-            // Campos reais do payload SpinCare: health_insurance_id /
-            // health_insurance_name (confirmado pelo usuário).
-            const healthInsIdRaw =
-              raw.health_insurance_id !== undefined
-                ? raw.health_insurance_id
-                : raw.health_insurance !== undefined
-                  ? raw.health_insurance
-                  : raw.insurance_id !== undefined
-                    ? raw.insurance_id
-                    : 0
-            syncRec.set('insurance_id', Number(healthInsIdRaw || 0) || 0)
-            syncRec.set(
-              'insurance_name',
-              String(
-                raw.health_insurance_name || raw.insurance_name || raw.insurance_ds || '',
-              ).trim(),
-            )
+            // O endpoint get/dispensations não traz health_insurance diretamente.
+            // Derivamos de:
+            // 1. Campo direto no payload da dispensação (se existir em alguma versão da API).
+            // 2. Vínculo budget_id com a coleção orcamentos_sync (que já possui convenio e payload.insurance_id/insurance_name).
+            // 3. Fallback: chamada ao vivo à API do SpinCare get/budgets?id={budget_id} com cache em memória.
+            let resolvedInsuranceId =
+              Number(raw.health_insurance_id || raw.health_insurance || raw.insurance_id || 0) || 0
+            let resolvedInsuranceName = String(
+              raw.health_insurance_name || raw.insurance_name || raw.insurance_ds || '',
+            ).trim()
+
+            const bId = Number(raw.budget_id || 0) || 0
+            if (!resolvedInsuranceName && bId > 0) {
+              if (budgetConvenioCache.has(bId)) {
+                const cached = budgetConvenioCache.get(bId)
+                resolvedInsuranceId = cached.id
+                resolvedInsuranceName = cached.name
+              } else {
+                let foundOrc = null
+                try {
+                  const orcRecs = app.findRecordsByFilter(
+                    'orcamentos_sync',
+                    'spincare_id = "' + bId + '"',
+                    '',
+                    1,
+                    0,
+                  )
+                  if (orcRecs && orcRecs.length > 0) foundOrc = orcRecs[0]
+                } catch (_) {}
+
+                if (foundOrc) {
+                  const nome = foundOrc.getString('convenio').trim()
+                  let insId = 0
+                  try {
+                    const py = JSON.parse(foundOrc.getString('payload') || '{}')
+                    insId = Number(py.insurance_id || py.health_insurance_id || 0) || 0
+                  } catch (_) {}
+                  resolvedInsuranceId = insId
+                  resolvedInsuranceName = nome
+                  budgetConvenioCache.set(bId, { id: insId, name: nome })
+                } else if (apiToken) {
+                  // Consulta ao vivo para orçamentos que ainda não estão em orcamentos_sync
+                  try {
+                    const bUrl =
+                      baseUrl +
+                      '/integration-engine/get/budgets?token=' +
+                      encodeURIComponent(apiToken) +
+                      '&id=' +
+                      bId +
+                      '&page_number=1&page_size=1'
+                    const bResp = $http.send({ url: bUrl, method: 'GET', timeout: 5 })
+                    if (bResp && bResp.statusCode === 200) {
+                      const bData = bResp.json || JSON.parse(bResp.raw || 'null')
+                      if (bData && typeof bData === 'object') {
+                        const insName = String(
+                          bData.insurance_name || bData.health_insurance_name || '',
+                        ).trim()
+                        const insId =
+                          Number(bData.insurance_id || bData.health_insurance_id || 0) || 0
+                        resolvedInsuranceId = insId
+                        resolvedInsuranceName = insName
+                        budgetConvenioCache.set(bId, { id: insId, name: insName })
+                      }
+                    }
+                  } catch (_) {
+                    budgetConvenioCache.set(bId, { id: 0, name: '' })
+                  }
+                }
+              }
+            }
+
+            syncRec.set('insurance_id', resolvedInsuranceId)
+            syncRec.set('insurance_name', resolvedInsuranceName)
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
             syncRec.set('synced_at', nowDisp)
