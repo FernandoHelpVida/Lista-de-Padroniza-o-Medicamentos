@@ -22,6 +22,7 @@ import {
   DollarSign,
   FileSpreadsheet,
   AlertCircle,
+  Package,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -217,6 +218,7 @@ export default function Layout() {
     if (path.startsWith('/orcamentos')) return 'Orçamentos Aprovados (SpinCare)'
     if (path.startsWith('/prescricoes')) return 'Prescrições Médicas (SpinCare)'
     if (path.startsWith('/relatorio-orcamentos')) return 'Relatório Financeiro de Orçamentos'
+    if (path.startsWith('/produtos')) return 'Produtos e Curva ABC (SpinCare)'
     if (path.startsWith('/importar')) return 'Importar Lista Padronizada (Planilha)'
     if (path.startsWith('/equipe')) return 'Gestão de Contas da Equipe'
     if (path.startsWith('/assistente')) return 'Assistente Virtual da Farmácia'
@@ -251,6 +253,11 @@ export default function Layout() {
             title: 'Relatório Financeiro',
             path: '/relatorio-orcamentos',
             icon: DollarSign,
+          },
+          {
+            title: 'Produtos',
+            path: '/produtos',
+            icon: Package,
           },
         ]
       : []),

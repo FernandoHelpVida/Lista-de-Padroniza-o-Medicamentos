@@ -480,3 +480,118 @@ export async function getBudgetsSyncStatus(): Promise<BudgetSyncStatusResult> {
     method: 'GET',
   })
 }
+
+// ============================================================================
+// PRODUTOS & DISPENSAÇÕES SPINCARE (catálogo + curva ABC)
+// ============================================================================
+
+export interface SpincareProdutoRecord {
+  id: string
+  spincare_id: number
+  code: string
+  description: string
+  group_description: string
+  type_description: string
+  active: boolean
+  price: number
+  measure_unit: string
+  prescription_measure_unit: string
+  prescription_conversion_qt: number
+  barcode: string
+  company_id: number
+  payload: Record<string, unknown>
+  synced_at: string
+  created: string
+  updated: string
+}
+
+export interface SpincareDispensacaoItem {
+  record_id: string
+  product_id: number
+  product_ds: string
+  qt: number
+  sent_qt: number
+  returned_qt: number
+  status: string
+  consumption_qt: number
+}
+
+export interface SpincareDispensacaoRecord {
+  id: string
+  spincare_id: number
+  budget_id: number
+  prescription_id: number
+  patient_id: number
+  patient_name: string
+  expected_deliver_dt: string
+  returned_dt: string
+  stock_location: string
+  send_reason: string
+  status: string
+  status_id: number
+  priority: string
+  itens: SpincareDispensacaoItem[]
+  payload: Record<string, unknown>
+  synced_at: string
+  created: string
+  updated: string
+}
+
+export interface SyncProductsResult {
+  success: boolean
+  trigger?: string
+  produtos: {
+    pagesProcessed: number
+    totalFetched: number
+    created: number
+    updated: number
+    ignored: number
+  }
+  dispensacoes: {
+    windowsProcessed: number
+    totalFetched: number
+    created: number
+    updated: number
+    ignored: number
+  }
+  syncedAt: string
+  durationMs: number
+  alreadyRunning?: boolean
+  message?: string
+}
+
+export interface ProductsSyncStatusResult {
+  isRunning: boolean
+  totalProdutos: number
+  totalDispensacoes: number
+  lastSyncedAt: string
+  lastDispensacaoSyncedAt: string
+}
+
+/** Dispara manualmente a sincronização (CDC) de produtos e dispensações. */
+export async function triggerProductsSync(): Promise<SyncProductsResult> {
+  return await pb.send<SyncProductsResult>('/backend/v1/spincare/products/sync', {
+    method: 'POST',
+  })
+}
+
+/** Consulta o status da replicação de produtos/dispensações. */
+export async function getProductsSyncStatus(): Promise<ProductsSyncStatusResult> {
+  return await pb.send<ProductsSyncStatusResult>('/backend/v1/spincare/products/sync-status', {
+    method: 'GET',
+  })
+}
+
+/** Carrega o catálogo completo de produtos sincronizados do SpinCare. */
+export async function getSpincareProdutos(): Promise<SpincareProdutoRecord[]> {
+  return await pb
+    .collection('produtos_spincare')
+    .getFullList<SpincareProdutoRecord>({ sort: 'description', requestKey: null })
+}
+
+/** Carrega todas as dispensações sincronizadas do SpinCare. */
+export async function getSpincareDispensacoes(): Promise<SpincareDispensacaoRecord[]> {
+  return await pb
+    .collection('dispensacoes_spincare')
+    .getFullList<SpincareDispensacaoRecord>({ sort: '-spincare_id', requestKey: null })
+}

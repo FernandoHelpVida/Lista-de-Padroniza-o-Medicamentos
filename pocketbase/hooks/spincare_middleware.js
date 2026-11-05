@@ -9,6 +9,8 @@
  * - Autenticação: GET /token/v1?login=...&password=...
  * - Pacientes: GET /integration-engine/get/patients?token=...&page_number=...&page_size=...
  * - Orçamentos: GET /integration-engine/get/budgets?token=...&initial_dt=...&page_number=...&page_size=...
+ * - Produtos: GET /integration-engine/get/products?token=...&ds=&insurance_id=0&page_number=N&page_size=400
+ *   (implementado em pocketbase/hooks/spincare_products.js, disparado pelo bloco do cron abaixo)
  * ============================================================================
  */
 
@@ -993,6 +995,42 @@ cronAdd('spincare_prescriptions_daily_sync', '0 3 * * *', () => {
     )
   } catch (orcCronErr) {
     console.error('[Cron Orçamentos] Erro:', orcCronErr)
+  }
+
+  // ============================================================================
+  // Cron: sincronização diária de produtos + dispensações SpinCare (03:00)
+  // ============================================================================
+  try {
+    console.log('[Cron Orçamentos] Disparando sincronização de produtos/dispensações...')
+    const app = typeof $app !== 'undefined' ? $app : null
+    if (app && typeof prodRunProductsSync === 'function') {
+      const tokenRef = prodLoadToken(app)
+      if (tokenRef) {
+        const resProd = prodRunProductsSync(app, tokenRef)
+        const resDisp = prodRunDispensationsSync(app, tokenRef)
+        prodWriteAudit(
+          app,
+          'produtos_spincare',
+          'SPINCARE_PRODUCT_SYNC_CRON_DAILY',
+          'Replicação CDC de produtos/dispensações concluída (cron): produtos buscados=' +
+            (resProd.totalFetched || 0) +
+            ', criados=' +
+            (resProd.created || 0) +
+            ', atualizados=' +
+            (resProd.updated || 0) +
+            '; dispensações buscadas=' +
+            (resDisp.totalFetched || 0) +
+            ', criadas=' +
+            (resDisp.created || 0) +
+            ', atualizadas=' +
+            (resDisp.updated || 0),
+        )
+      } else {
+        console.error('[Cron Produtos] Configuração do SpinCare não encontrada.')
+      }
+    }
+  } catch (prodCronErr) {
+    console.error('[Cron Produtos] Erro:', prodCronErr)
   }
 })
 
