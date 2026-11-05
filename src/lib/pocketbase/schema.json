@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T12:50:30.553Z",
+  "generatedAt": "2026-11-05T13:42:18.455Z",
   "collections": [
     {
       "name": "users",
@@ -994,6 +994,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "ultima_compra_price",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -1117,6 +1123,18 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "insurance_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "insurance_name",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

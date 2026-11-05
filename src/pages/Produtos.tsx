@@ -42,7 +42,7 @@ import type {
 import { toast } from '@/hooks/use-toast'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { formatIsoToBr } from '@/lib/dateUtils'
-import { computeCurvaAbc, distinctGrupos } from '@/lib/curvaAbc'
+import { computeCurvaAbc, distinctGrupos, distinctConvenios } from '@/lib/curvaAbc'
 import type { CurvaAbcItem, CurvaAbcFiltros } from '@/lib/curvaAbc'
 
 const DEFAULT_INICIO = '2026-01-01'
@@ -103,6 +103,7 @@ export default function Produtos() {
   const [abcInicio, setAbcInicio] = useState(DEFAULT_INICIO)
   const [abcFim, setAbcFim] = useState(HOJE)
   const [abcGrupo, setAbcGrupo] = useState('todos')
+  const [abcConvenio, setAbcConvenio] = useState('todos')
   const [abcBusca, setAbcBusca] = useState('')
   const [abcSortField, setAbcSortField] = useState<AbcSortField>('posicao')
   const [abcSortDir, setAbcSortDir] = useState<'asc' | 'desc'>('asc')
@@ -136,10 +137,13 @@ export default function Produtos() {
         dataInicio: abcInicio,
         dataFim: abcFim,
         grupo: abcGrupo,
+        convenio: abcConvenio,
         busca: abcBusca,
       }),
-    [dispensacoes, produtos, abcInicio, abcFim, abcGrupo, abcBusca],
+    [dispensacoes, produtos, abcInicio, abcFim, abcGrupo, abcConvenio, abcBusca],
   )
+
+  const convenios = useMemo(() => distinctConvenios(dispensacoes), [dispensacoes])
 
   const curvaOrdenada = useMemo(() => {
     const lista = [...curva.itens]
@@ -281,12 +285,20 @@ export default function Produtos() {
         ]
         XLSX.utils.book_append_sheet(workbook, ws, 'Catálogo')
       } else {
+        const convenioLabel =
+          abcConvenio === 'todos'
+            ? 'Todos'
+            : convenios.find((c) => c.convenioId === abcConvenio)?.convenioNome || abcConvenio
         const rows = curvaOrdenada.map((i) => ({
           Posição: i.posicao,
           Código: i.codigo,
           Produto: i.descricao,
           Grupo: i.grupo,
-          Quantidade: i.quantidade,
+          Convênio: convenioLabel,
+          'Preço Unitário (R$)': Number(i.precoUnitario.toFixed(2)),
+          'Fonte do Preço':
+            i.precoBase === 'ultima_compra' ? 'Última compra' : 'Catálogo (fallback)',
+          'Quantidade Dispensada': i.quantidade,
           'Valor Total (R$)': Number(i.valorTotal.toFixed(2)),
           '% do Total': Number(i.percentual.toFixed(1)),
           '% Acumulado': Number(i.percentualAcumulado.toFixed(1)),
@@ -298,7 +310,10 @@ export default function Produtos() {
           { wch: 14 },
           { wch: 44 },
           { wch: 24 },
-          { wch: 12 },
+          { wch: 20 },
+          { wch: 18 },
+          { wch: 18 },
+          { wch: 20 },
           { wch: 16 },
           { wch: 11 },
           { wch: 12 },
@@ -306,12 +321,23 @@ export default function Produtos() {
         ]
         XLSX.utils.book_append_sheet(workbook, ws, 'Curva ABC')
 
-        const resumoRows = curva.resumo.map((r) => ({
-          Classe: r.rotulo,
-          'Nº de Itens': r.quantidadeItens,
-          'Valor Total (R$)': Number(r.valorTotal.toFixed(2)),
-          '% do Movimento': r.percentual,
-        }))
+        const convenioLabel2 = convenioLabel
+        const resumoRows: Array<Record<string, string | number>> = [
+          {
+            Classe: `Período: ${abcInicio} a ${abcFim} · Convênio: ${convenioLabel2}`,
+            'Nº de Itens': '',
+            'Valor Total (R$)': '',
+            '% do Movimento': '',
+          },
+        ]
+        for (const r of curva.resumo) {
+          resumoRows.push({
+            Classe: r.rotulo,
+            'Nº de Itens': r.quantidadeItens,
+            'Valor Total (R$)': Number(r.valorTotal.toFixed(2)),
+            '% do Movimento': r.percentual,
+          })
+        }
         const wsRes = XLSX.utils.json_to_sheet(resumoRows)
         wsRes['!cols'] = [{ wch: 34 }, { wch: 12 }, { wch: 16 }, { wch: 15 }]
         XLSX.utils.book_append_sheet(workbook, wsRes, 'Resumo')
@@ -372,8 +398,9 @@ export default function Produtos() {
           </p>
           <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
             <AlertCircle size={13} />
-            Itens de dispensação não trazem valor monetário: o valor da Curva ABC é quantidade
-            dispensada × preço do produto.
+            Base da Curva ABC: quantidade dispensada × preço da ÚLTIMA COMPRA do produto no SpinCare
+            (campo imported_prices). Produtos sem compra registrada usam o preço de catálogo
+            (fallback) — {curva.produtosFallbackCatalogo} na visão atual.
           </p>
         </div>
         <div className="flex flex-col items-start sm:items-end gap-2">
@@ -554,10 +581,10 @@ export default function Produtos() {
                 <Filter size={16} className="text-[#0D8272]" /> Filtros da Curva ABC
               </CardTitle>
               <CardDescription>
-                Período de entrega, grupo e busca no catálogo sincronizado.
+                Período de entrega, convênio, grupo e busca no catálogo sincronizado.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <CardContent className="grid grid-cols-1 sm:grid-cols-5 gap-3">
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">
                   <Calendar size={12} className="inline mr-1" /> Data inicial
@@ -585,6 +612,22 @@ export default function Produtos() {
                     {grupos.map((g) => (
                       <SelectItem key={g} value={g}>
                         {g}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">Convênio</label>
+                <Select value={abcConvenio} onValueChange={setAbcConvenio}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos os convênios" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos os convênios</SelectItem>
+                    {convenios.map((c) => (
+                      <SelectItem key={c.convenioId} value={c.convenioId}>
+                        {c.convenioNome}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -703,7 +746,10 @@ export default function Produtos() {
                           <td className="px-3 py-2">
                             <span className="text-slate-800 font-medium">{i.descricao}</span>
                             <span className="block text-xs text-slate-400 font-mono">
-                              {i.codigo || '—'} · {i.grupo || '—'}
+                              {i.codigo || '—'} · {i.grupo || '—'} ·{' '}
+                              {i.precoBase === 'ultima_compra'
+                                ? 'última compra'
+                                : 'preço de catálogo (fallback)'}
                             </span>
                           </td>
                           <td className="px-3 py-2 text-slate-700">{i.quantidade}</td>

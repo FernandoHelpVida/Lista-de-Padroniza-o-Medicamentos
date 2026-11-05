@@ -231,6 +231,41 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             price = parseFloat(raw.price.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
           }
           syncRec.set('price', price)
+
+          // Última compra do produto: imported_prices do SpinCare
+          // (histórico de preços de compra, ordenado por data DESC no payload).
+          let ultimaCompra = 0
+          const importedPrices = raw.imported_prices
+          if (Array.isArray(importedPrices) && importedPrices.length > 0) {
+            let best = null
+            let bestTs = -Infinity
+            for (let k = 0; k < importedPrices.length; k++) {
+              const ip = importedPrices[k] || {}
+              const val =
+                typeof ip.price === 'number'
+                  ? ip.price
+                  : parseFloat(
+                      String(ip.price || '')
+                        .replace(/[^\d.,-]/g, '')
+                        .replace(',', '.'),
+                    ) || 0
+              if (!(val > 0)) continue
+              const dtRaw = String(ip.dt || ip.date || '').trim()
+              let ts = 0
+              if (dtRaw) {
+                const parsed = new Date(dtRaw).getTime()
+                if (!isNaN(parsed)) ts = parsed
+              }
+              // Sem data: usa a ordem do array (SpinCare envia mais recente primeiro)
+              const score = ts > 0 ? ts : -Infinity
+              if (best === null || score > bestTs) {
+                best = val
+                bestTs = score
+              }
+            }
+            if (best !== null && best > 0) ultimaCompra = best
+          }
+          syncRec.set('ultima_compra_price', ultimaCompra)
           syncRec.set('measure_unit', String(raw.measure_unit || '').trim())
           syncRec.set(
             'prescription_measure_unit',
@@ -400,6 +435,18 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             syncRec.set('status', String(raw.status || '').trim())
             syncRec.set('status_id', Number(raw.status_id || 0) || 0)
             syncRec.set('priority', String(raw.priority || '').trim())
+            // Convênio da dispensação (para o filtro da Curva ABC)
+            const insuranceIdRaw =
+              raw.insurance_id !== undefined
+                ? raw.insurance_id
+                : raw.insurance !== undefined
+                  ? raw.insurance
+                  : 0
+            syncRec.set('insurance_id', Number(insuranceIdRaw || 0) || 0)
+            syncRec.set(
+              'insurance_name',
+              String(raw.insurance_name || raw.insurance_ds || '').trim(),
+            )
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
             syncRec.set('synced_at', nowDisp)
@@ -691,6 +738,41 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             price = parseFloat(raw.price.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
           }
           syncRec.set('price', price)
+
+          // Última compra do produto: imported_prices do SpinCare
+          // (histórico de preços de compra, ordenado por data DESC no payload).
+          let ultimaCompra = 0
+          const importedPrices = raw.imported_prices
+          if (Array.isArray(importedPrices) && importedPrices.length > 0) {
+            let best = null
+            let bestTs = -Infinity
+            for (let k = 0; k < importedPrices.length; k++) {
+              const ip = importedPrices[k] || {}
+              const val =
+                typeof ip.price === 'number'
+                  ? ip.price
+                  : parseFloat(
+                      String(ip.price || '')
+                        .replace(/[^\d.,-]/g, '')
+                        .replace(',', '.'),
+                    ) || 0
+              if (!(val > 0)) continue
+              const dtRaw = String(ip.dt || ip.date || '').trim()
+              let ts = 0
+              if (dtRaw) {
+                const parsed = new Date(dtRaw).getTime()
+                if (!isNaN(parsed)) ts = parsed
+              }
+              // Sem data: usa a ordem do array (SpinCare envia mais recente primeiro)
+              const score = ts > 0 ? ts : -Infinity
+              if (best === null || score > bestTs) {
+                best = val
+                bestTs = score
+              }
+            }
+            if (best !== null && best > 0) ultimaCompra = best
+          }
+          syncRec.set('ultima_compra_price', ultimaCompra)
           syncRec.set('measure_unit', String(raw.measure_unit || '').trim())
           syncRec.set(
             'prescription_measure_unit',
@@ -859,6 +941,18 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             syncRec.set('status', String(raw.status || '').trim())
             syncRec.set('status_id', Number(raw.status_id || 0) || 0)
             syncRec.set('priority', String(raw.priority || '').trim())
+            // Convênio da dispensação (para o filtro da Curva ABC)
+            const insuranceIdRaw =
+              raw.insurance_id !== undefined
+                ? raw.insurance_id
+                : raw.insurance !== undefined
+                  ? raw.insurance
+                  : 0
+            syncRec.set('insurance_id', Number(insuranceIdRaw || 0) || 0)
+            syncRec.set(
+              'insurance_name',
+              String(raw.insurance_name || raw.insurance_ds || '').trim(),
+            )
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
             syncRec.set('synced_at', nowDisp)
