@@ -399,7 +399,7 @@ export default function Produtos() {
           <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
             <AlertCircle size={13} />
             Base da Curva ABC: quantidade dispensada × preço da ÚLTIMA COMPRA do produto no SpinCare
-            (campo imported_prices). Produtos sem compra registrada usam o preço de catálogo
+            (campo last_buy_value). Produtos sem compra registrada usam o preço de catálogo
             (fallback) — {curva.produtosFallbackCatalogo} na visão atual.
           </p>
         </div>
