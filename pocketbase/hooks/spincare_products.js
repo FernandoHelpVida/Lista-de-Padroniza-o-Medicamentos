@@ -252,6 +252,19 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           let ultimaCompra = 0
           if (raw.last_buy_value !== undefined && raw.last_buy_value !== null) {
             ultimaCompra = parseMoney(raw.last_buy_value)
+          } else {
+            // Payload real: last_buy_value pode vir aninhado em last_buy /
+            // last_buy_info; cobra essas formas antes do fallback.
+            const lb = raw.last_buy || raw.last_buy_info || null
+            if (lb && typeof lb === 'object') {
+              ultimaCompra = parseMoney(
+                lb.value !== undefined
+                  ? lb.value
+                  : lb.last_buy_value !== undefined
+                    ? lb.last_buy_value
+                    : lb.price,
+              )
+            }
           }
           if (!(ultimaCompra > 0)) {
             const importedPrices = raw.imported_prices
@@ -776,6 +789,19 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           let ultimaCompra = 0
           if (raw.last_buy_value !== undefined && raw.last_buy_value !== null) {
             ultimaCompra = parseMoney(raw.last_buy_value)
+          } else {
+            // Payload real: last_buy_value pode vir aninhado em last_buy /
+            // last_buy_info; cobra essas formas antes do fallback.
+            const lb = raw.last_buy || raw.last_buy_info || null
+            if (lb && typeof lb === 'object') {
+              ultimaCompra = parseMoney(
+                lb.value !== undefined
+                  ? lb.value
+                  : lb.last_buy_value !== undefined
+                    ? lb.last_buy_value
+                    : lb.price,
+              )
+            }
           }
           if (!(ultimaCompra > 0)) {
             const importedPrices = raw.imported_prices
