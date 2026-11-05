@@ -479,6 +479,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
                 raw.health_insurance_name || raw.insurance_name || raw.insurance_ds || '',
               ).trim(),
             )
+            // Fim do bloco de convênio
             syncRec.set('itens', itensList)
             syncRec.set('payload', raw)
             syncRec.set('synced_at', nowDisp)
