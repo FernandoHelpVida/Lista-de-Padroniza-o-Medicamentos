@@ -2639,6 +2639,74 @@ routerAdd(
 routerAdd('GET', '/backend/v1/spincare/internal-diag-probe', (e) => {
   try {
     const q = e.request.url.query()
+    if (q.get('mode') === 'trigger_diag_buprenorfina') {
+      const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
+      if (!records || records.length === 0) return e.json(500, { error: 'no cfg' })
+      const cfgRec = records[0]
+      const baseUrl = (
+        cfgRec.getString('base_url') || 'https://integration.spincare.com.br/spincare_integration'
+      )
+        .trim()
+        .replace(/\/+$/, '')
+      let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
+      let apiToken = rawStoredToken.startsWith('Bearer ')
+        ? rawStoredToken.substring(7).trim()
+        : rawStoredToken
+
+      const prodId = q.get('prod_id') || '2645'
+      const url =
+        baseUrl +
+        '/integration-engine/get/stocks?token=' +
+        encodeURIComponent(apiToken) +
+        '&product_id=' +
+        prodId +
+        '&page_number=1&page_size=500'
+      const res = $http.send({ url: url, method: 'GET', timeout: 25 })
+      const list = res.json || JSON.parse(res.raw || '[]')
+      const items = Array.isArray(list) ? list : list && list.items ? list.items : []
+
+      const prodStocks = items.filter((x) => {
+        if (!x) return false
+        const pid = x.product_id !== undefined ? x.product_id : x.product ? x.product.id : null
+        return Number(pid) === Number(prodId)
+      })
+
+      const auditCol = e.app.findCollectionByNameOrId('audit_logs')
+      const auditRec = new Record(auditCol)
+      auditRec.set('colecao', 'produtos_spincare')
+      auditRec.set('registro_id', 'diag_buprenorfina_probe')
+      auditRec.set('acao', 'DIAG_BUPRENORFINA_PROBE')
+      auditRec.set('usuario_nome', 'Diag')
+      auditRec.set('usuario_email', 'diag@internal')
+      auditRec.set('usuario_role', 'sistema')
+      auditRec.set('status_novo', 'ok')
+      auditRec.set(
+        'detalhes',
+        JSON.stringify({
+          total_items: items.length,
+          prod_stocks_count: prodStocks.length,
+          items: prodStocks.map((x) => ({
+            id: x.id,
+            created_at: x.created_at,
+            dt: x.batch_fabrication_dt,
+            op_type: x.operation_type,
+            op_ds: x.operation_ds,
+            qt: x.quantity,
+            unit_price: x.cost_unit_price,
+            total_price: x.cost_total_price,
+            balance: x.balance,
+            current_balance: x.current_balance,
+            available_balance: x.available_balance,
+            stock_balance: x.stock_balance,
+            location: x.stock_location || x.location,
+            keys: Object.keys(x),
+          })),
+        }),
+      )
+      e.app.save(auditRec)
+
+      return e.json(200, { ok: true, count: prodStocks.length })
+    }
     if (q.get('mode') === 'calc_custo_medio_enox') {
       // Simular cálculos sobre as 55 NFs do endpoint /integration-engine/get/stocks
       const records = e.app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
