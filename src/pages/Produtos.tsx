@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   CheckCircle2,
   Clock,
+  X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import pb from '@/lib/pocketbase/client'
@@ -114,6 +115,7 @@ export default function Produtos() {
     'expected' | 'creation' | 'expected_or_creation'
   >('expected')
   const [abcBusca, setAbcBusca] = useState('')
+  const [abcClasseFiltro, setAbcClasseFiltro] = useState<'A' | 'B' | 'C' | null>(null)
   const [abcSortField, setAbcSortField] = useState<AbcSortField>('posicao')
   const [abcSortDir, setAbcSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -155,8 +157,11 @@ export default function Produtos() {
 
   const convenios = useMemo(() => distinctConvenios(dispensacoes), [dispensacoes])
 
-  const curvaOrdenada = useMemo(() => {
-    const lista = [...curva.itens]
+  const curvaFiltradaEOrdenada = useMemo(() => {
+    let lista = [...curva.itens]
+    if (abcClasseFiltro) {
+      lista = lista.filter((i) => i.classe === abcClasseFiltro)
+    }
     const dir = abcSortDir === 'asc' ? 1 : -1
     lista.sort((a, b) => {
       if (abcSortField === 'posicao') return (a.posicao - b.posicao) * dir
@@ -167,7 +172,7 @@ export default function Produtos() {
       return a.descricao.localeCompare(b.descricao, 'pt-BR') * dir
     })
     return lista
-  }, [curva.itens, abcSortField, abcSortDir])
+  }, [curva.itens, abcClasseFiltro, abcSortField, abcSortDir])
 
   const toggleAbcSort = (field: AbcSortField) => {
     if (abcSortField === field) {
@@ -262,7 +267,7 @@ export default function Produtos() {
       })
       return
     }
-    if (aba === 'curva' && curva.itens.length === 0) {
+    if (aba === 'curva' && curvaFiltradaEOrdenada.length === 0) {
       toast({
         title: 'Nenhum movimento para exportar',
         description: 'Ajuste os filtros da aba Curva ABC.',
@@ -301,7 +306,7 @@ export default function Produtos() {
           abcConvenio === 'todos'
             ? 'Todos'
             : convenios.find((c) => c.convenioId === abcConvenio)?.convenioNome || abcConvenio
-        const rows = curvaOrdenada.map((i) => ({
+        const rows = curvaFiltradaEOrdenada.map((i) => ({
           Posição: i.posicao,
           Código: i.codigo,
           Produto: i.descricao,
@@ -335,22 +340,24 @@ export default function Produtos() {
         ]
         XLSX.utils.book_append_sheet(workbook, ws, 'Curva ABC')
 
-        const convenioLabel2 = convenioLabel
+        const classeFiltroTexto = abcClasseFiltro ? ` · Classe: ${abcClasseFiltro}` : ''
         const resumoRows: Array<Record<string, string | number>> = [
           {
-            Classe: `Período: ${abcInicio} a ${abcFim} · Convênio: ${convenioLabel2}`,
+            Classe: `Período: ${abcInicio} a ${abcFim} · Convênio: ${convenioLabel}${classeFiltroTexto}`,
             'Nº de Itens': '',
             'Valor Total (R$)': '',
             '% do Movimento': '',
           },
         ]
         for (const r of curva.resumo) {
-          resumoRows.push({
-            Classe: r.rotulo,
-            'Nº de Itens': r.quantidadeItens,
-            'Valor Total (R$)': Number(r.valorTotal.toFixed(2)),
-            '% do Movimento': r.percentual,
-          })
+          if (!abcClasseFiltro || abcClasseFiltro === r.classe) {
+            resumoRows.push({
+              Classe: r.rotulo,
+              'Nº de Itens': r.quantidadeItens,
+              'Valor Total (R$)': Number(r.valorTotal.toFixed(2)),
+              '% do Movimento': r.percentual,
+            })
+          }
         }
         const wsRes = XLSX.utils.json_to_sheet(resumoRows)
         wsRes['!cols'] = [{ wch: 34 }, { wch: 12 }, { wch: 16 }, { wch: 15 }]
@@ -686,33 +693,106 @@ export default function Produtos() {
           </Card>
 
           {/* Cartões de resumo por classe */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {curva.resumo.map((r) => {
-              const cfg =
-                r.classe === 'A'
-                  ? { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-800' }
-                  : r.classe === 'B'
-                    ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800' }
-                    : { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-600' }
-              return (
-                <Card key={r.classe} className={`${cfg.bg} border ${cfg.border} rounded-2xl`}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-bold ${cfg.text}`}>{r.rotulo}</span>
-                      <Badge variant="outline" className={cfg.text}>
-                        {r.classe}
-                      </Badge>
-                    </div>
-                    <p className={`text-2xl font-bold mt-2 ${cfg.text}`}>
-                      {formatCurrency(r.valorTotal)}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {r.quantidadeItens} item(ns) · {r.percentual.toFixed(1)}% do movimento
-                    </p>
-                  </CardContent>
-                </Card>
-              )
-            })}
+          <div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {curva.resumo.map((r) => {
+                const isSelected = abcClasseFiltro === r.classe
+                const cfg =
+                  r.classe === 'A'
+                    ? {
+                        bg: isSelected ? 'bg-emerald-100/90' : 'bg-[#f0fdf4]',
+                        border: isSelected
+                          ? 'border-[#0D8272] ring-2 ring-[#0D8272]/30 shadow-md'
+                          : 'border-emerald-200/80 hover:border-[#0D8272]/60 hover:shadow-sm',
+                        text: 'text-emerald-900',
+                        badgeText: 'text-emerald-700 border-emerald-300 bg-white/70',
+                      }
+                    : r.classe === 'B'
+                      ? {
+                          bg: isSelected ? 'bg-amber-100/90' : 'bg-[#fffbeb]',
+                          border: isSelected
+                            ? 'border-amber-600 ring-2 ring-amber-500/30 shadow-md'
+                            : 'border-amber-200/80 hover:border-amber-500/60 hover:shadow-sm',
+                          text: 'text-amber-900',
+                          badgeText: 'text-amber-800 border-amber-300 bg-white/70',
+                        }
+                      : {
+                          bg: isSelected ? 'bg-slate-200/90' : 'bg-[#f8fafc]',
+                          border: isSelected
+                            ? 'border-slate-600 ring-2 ring-slate-400/30 shadow-md'
+                            : 'border-slate-200 hover:border-slate-400/60 hover:shadow-sm',
+                          text: 'text-slate-800',
+                          badgeText: 'text-slate-600 border-slate-300 bg-white/70',
+                        }
+
+                return (
+                  <Card
+                    key={r.classe}
+                    onClick={() => {
+                      setAbcClasseFiltro((prev) => (prev === r.classe ? null : r.classe))
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setAbcClasseFiltro((prev) => (prev === r.classe ? null : r.classe))
+                      }
+                    }}
+                    aria-pressed={isSelected}
+                    className={`cursor-pointer transition-all duration-150 select-none ${cfg.bg} border ${cfg.border} rounded-2xl relative overflow-hidden`}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs font-bold ${cfg.text}`}>{r.rotulo}</span>
+                        <Badge variant="outline" className={`font-semibold ${cfg.badgeText}`}>
+                          {r.classe}
+                        </Badge>
+                      </div>
+                      <p className={`text-2xl font-bold mt-2 ${cfg.text}`}>
+                        {formatCurrency(r.valorTotal)}
+                      </p>
+                      <div className="flex items-center justify-between mt-1 text-xs text-slate-600">
+                        <span>
+                          {r.quantidadeItens} item(ns) · {r.percentual.toFixed(1)}% do movimento
+                        </span>
+                        <span
+                          className={`text-[11px] font-medium ml-2 ${
+                            isSelected ? 'text-[#0D8272] underline' : 'text-slate-400'
+                          }`}
+                        >
+                          {isSelected ? '✓ Selecionado' : 'Clique para filtrar'}
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+
+            {/* Indicador visual de filtro ativo por classe */}
+            {abcClasseFiltro && (
+              <div className="mt-2.5 flex items-center justify-between bg-emerald-50/80 border border-emerald-200 text-emerald-900 px-3.5 py-2 rounded-xl text-xs">
+                <div className="flex items-center gap-2">
+                  <Filter size={14} className="text-[#0D8272]" />
+                  <span>
+                    Filtrado pela{' '}
+                    <strong className="font-semibold">Classe {abcClasseFiltro}</strong>: exibindo{' '}
+                    <strong className="font-semibold">{curvaFiltradaEOrdenada.length}</strong> de{' '}
+                    {curva.itens.length} produto(s)
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAbcClasseFiltro(null)}
+                  className="h-6 px-2 text-xs text-emerald-800 hover:text-emerald-950 hover:bg-emerald-100/60 flex items-center gap-1"
+                >
+                  <X size={13} />
+                  Limpar filtro de classe
+                </Button>
+              </div>
+            )}
           </div>
 
           <Card className="border-slate-200 shadow-sm rounded-2xl overflow-hidden">
@@ -775,15 +855,31 @@ export default function Produtos() {
                           Carregando…
                         </td>
                       </tr>
-                    ) : curvaOrdenada.length === 0 ? (
+                    ) : curvaFiltradaEOrdenada.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-3 py-10 text-center text-slate-400">
-                          Nenhum movimento no período selecionado. Sincronize dispensações ou ajuste
-                          os filtros.
+                          {abcClasseFiltro ? (
+                            <div className="flex flex-col items-center justify-center gap-2">
+                              <span>
+                                Nenhum produto encontrado na{' '}
+                                <strong>Classe {abcClasseFiltro}</strong> com os filtros aplicados.
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setAbcClasseFiltro(null)}
+                                className="text-xs"
+                              >
+                                Limpar filtro de classe
+                              </Button>
+                            </div>
+                          ) : (
+                            'Nenhum movimento no período selecionado. Sincronize dispensações ou ajuste os filtros.'
+                          )}
                         </td>
                       </tr>
                     ) : (
-                      curvaOrdenada.map((i) => (
+                      curvaFiltradaEOrdenada.map((i) => (
                         <tr
                           key={i.productId}
                           className="border-b border-slate-100 hover:bg-emerald-50/40"
@@ -828,14 +924,30 @@ export default function Produtos() {
               {curva.itens.length > 0 && (
                 <div className="px-3 py-2.5 border-t border-slate-100 flex flex-wrap gap-4 text-xs text-slate-500">
                   <span>
-                    Valor total do período:{' '}
+                    Valor total do período
+                    {abcClasseFiltro ? ` (todos os itens)` : ''}:{' '}
                     <strong className="text-slate-700">
                       {formatCurrency(curva.valorTotalGeral)}
                     </strong>
                   </span>
+                  {abcClasseFiltro && (
+                    <span>
+                      Total exibido (Classe {abcClasseFiltro}):{' '}
+                      <strong className="text-emerald-700">
+                        {formatCurrency(
+                          curvaFiltradaEOrdenada.reduce((acc, it) => acc + it.valorTotal, 0),
+                        )}
+                      </strong>
+                    </span>
+                  )}
                   <span>
                     Total enviado para casa:{' '}
-                    <strong className="text-slate-700">{curva.quantidadeTotal}</strong>
+                    <strong className="text-slate-700">
+                      {abcClasseFiltro
+                        ? curvaFiltradaEOrdenada.reduce((acc, it) => acc + it.quantidade, 0)
+                        : curva.quantidadeTotal}
+                    </strong>
+                    {abcClasseFiltro ? ` (de ${curva.quantidadeTotal} geral)` : ''}
                   </span>
                   <span className="text-slate-500">
                     Cálculo: Qtd. Enviada Casa × Custo Médio (2 casas decimais).
