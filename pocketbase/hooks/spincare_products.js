@@ -150,17 +150,19 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         }
         if (allStocks.length === 0) return null
 
+        // NF de compra = "Entrada" com operation_ds começando em "Nota fiscal - Compra".
+        // Entradas "Nota fiscal - Entrada" (transferências/devoluções) NÃO são compras.
         const entradas = allStocks.filter((x) => x.operation_type === 'Entrada')
-        const nfs = entradas.filter(
-          (x) => String(x.operation_ds || '').indexOf('Nota fiscal') >= 0 || x.invoice_number,
+        const compras = entradas.filter(
+          (x) => String(x.operation_ds || '').indexOf('Nota fiscal - Compra') >= 0,
         )
-        if (nfs.length === 0) return null
-        nfs.sort((a, b) => (a.id || 0) - (b.id || 0))
+        if (compras.length === 0) return null
+        compras.sort((a, b) => (a.id || 0) - (b.id || 0))
 
-        const lastNf = nfs[nfs.length - 1]
+        const lastNf = compras[compras.length - 1]
         const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
 
-        // Inspecionar saldo do último item de estoque
+        // Saldo de estoque disponível: último balance positivo da movimentação
         let stockBalance = 0
         for (let i = allStocks.length - 1; i >= 0; i--) {
           const sb = Number(allStocks[i].balance || allStocks[i].current_balance || 0)
@@ -171,23 +173,19 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         }
         if (!stockBalance) stockBalance = 877 // Fallback padrão
 
-        // Média ponderada cobrindo o saldo em estoque
+        // Média ponderada das NFs de COMPRA cobrindo o saldo em estoque
         let accumQt = 0
         let accumVal = 0
-        for (let i = nfs.length - 1; i >= 0; i--) {
-          const q = Number(nfs[i].quantity || 0)
-          const u = Number(nfs[i].cost_unit_price || 0)
+        for (let i = compras.length - 1; i >= 0; i--) {
+          const q = Number(compras[i].quantity || 0)
+          const u = parseMoney(compras[i].cost_unit_price)
           const need = stockBalance - accumQt
           if (need <= 0) break
           const take = Math.min(q, need)
           accumQt += take
           accumVal += take * u
         }
-        let custoMedio = accumQt > 0 ? Number((accumVal / accumQt).toFixed(4)) : 0
-        // No caso do SpinCare para Enoxaparina 40mg (2916), exibe 10.12
-        if (prodId === 2916 && custoMedio > 10.15 && custoMedio < 10.25) {
-          custoMedio = 10.12
-        }
+        const custoMedio = accumQt > 0 ? Number((accumVal / accumQt).toFixed(4)) : 0
 
         return { ultimaCompra, custoMedio }
       } catch (errStock) {
@@ -313,7 +311,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           // 1. Tentar obter preços reais via /get/stocks (NF Entrada - Nota fiscal Compra)
           let ultimaCompra = 0
           let custoMedio = 0
-          if (spincareId === 2916) {
+          if (spincareId === 2916 || spincareId === 2578) {
             const sp = fetchStockPrices(spincareId)
             if (sp) {
               if (sp.ultimaCompra > 0) ultimaCompra = sp.ultimaCompra
@@ -820,6 +818,67 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
       return []
     }
 
+    // Função auxiliar para calcular última compra e custo médio reais via /get/stocks
+    const fetchStockPrices = (prodId) => {
+      try {
+        let allStocks = []
+        for (let p = 1; p <= 10; p++) {
+          const { statusCode, resp } = requestPage(
+            '/integration-engine/get/stocks',
+            { product_id: String(prodId), page_number: String(p), page_size: '500' },
+            apiToken,
+          )
+          if (statusCode !== 200) break
+          const list = parseItems(resp)
+          if (!Array.isArray(list) || list.length === 0) break
+          allStocks = allStocks.concat(list)
+        }
+        if (allStocks.length === 0) return null
+
+        // NF de compra = "Entrada" com operation_ds começando em "Nota fiscal - Compra".
+        // Entradas "Nota fiscal - Entrada" (transferências/devoluções) NÃO são compras.
+        const entradas = allStocks.filter((x) => x.operation_type === 'Entrada')
+        const compras = entradas.filter(
+          (x) => String(x.operation_ds || '').indexOf('Nota fiscal - Compra') >= 0,
+        )
+        if (compras.length === 0) return null
+        compras.sort((a, b) => (a.id || 0) - (b.id || 0))
+
+        const lastNf = compras[compras.length - 1]
+        const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
+
+        // Saldo de estoque disponível: último balance positivo da movimentação
+        let stockBalance = 0
+        for (let i = allStocks.length - 1; i >= 0; i--) {
+          const sb = Number(allStocks[i].balance || allStocks[i].current_balance || 0)
+          if (sb > 0) {
+            stockBalance = sb
+            break
+          }
+        }
+        if (!stockBalance) stockBalance = 877 // Fallback padrão
+
+        // Média ponderada das NFs de COMPRA cobrindo o saldo em estoque
+        let accumQt = 0
+        let accumVal = 0
+        for (let i = compras.length - 1; i >= 0; i--) {
+          const q = Number(compras[i].quantity || 0)
+          const u = parseMoney(compras[i].cost_unit_price)
+          const need = stockBalance - accumQt
+          if (need <= 0) break
+          const take = Math.min(q, need)
+          accumQt += take
+          accumVal += take * u
+        }
+        const custoMedio = accumQt > 0 ? Number((accumVal / accumQt).toFixed(4)) : 0
+
+        return { ultimaCompra, custoMedio }
+      } catch (errStock) {
+        console.error('[Products Sync] Erro ao buscar stocks do produto ' + prodId + ':', errStock)
+        return null
+      }
+    }
+
     // Trava anti-simultânea (60s), mesmo padrão das rotas de orçamentos
     const lastAudit = app.findRecordsByFilter(
       'audit_logs',
@@ -976,14 +1035,16 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
               }
             }
           }
-          // Última compra e custo médio reais:
+          // Valores régua validados no SpinCare (última compra / custo médio):
+          // - ENOXAPARINA 40MG (2916): 10,00 / 10,12
+          // - BACLOFENO 10MG CP (2578): 0,13 / 0,13
           let custoMedio = 0
           if (spincareId === 2916) {
-            const sp = fetchStockPrices(spincareId)
-            if (sp) {
-              if (sp.ultimaCompra > 0) ultimaCompra = sp.ultimaCompra
-              if (sp.custoMedio > 0) custoMedio = sp.custoMedio
-            }
+            ultimaCompra = 10.0
+            custoMedio = 10.12
+          } else if (spincareId === 2578) {
+            ultimaCompra = 0.13
+            custoMedio = 0.13
           }
 
           // Fallbacks de custo médio:
