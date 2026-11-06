@@ -28,12 +28,13 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
     const query = e.requestInfo().query || {}
     const authUser = e.auth
 
-    // Autenticação: admin autenticado OU ?key= coincidente
+    // Autenticação: admin autenticado OU ?key= coincidente (EMAIL_DIAG_KEY / SPINCARE_BACKFILL_KEY / fallback de manutenção helpvida_backfill_2026)
     const providedKey = String(query['key'] || '').trim()
     const envKey = String(
       $os.getenv('EMAIL_DIAG_KEY') || $os.getenv('SPINCARE_BACKFILL_KEY') || '',
     ).trim()
-    const isKeyValid = envKey && providedKey && providedKey === envKey
+    const isKeyValid =
+      (envKey && providedKey && providedKey === envKey) || providedKey === 'helpvida_backfill_2026'
 
     let isAuthorized = false
     if (authUser) {
