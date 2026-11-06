@@ -1,12 +1,19 @@
 /**
- * Agregação da Curva ABC por quantidade dispensada × preço da ÚLTIMA COMPRA.
+ * Agregação da Curva ABC por quantidade dispensada × Custo Médio (com fallbacks).
  * Fonte: coleções locais produtos_spincare e dispensacoes_spincare.
  * - Quantidade: soma de qt dispensada por produto nas dispensações do período.
  * - Preço unitário: ultima_compra_price (última compra no SpinCare);
  *   fallback para o price de catálogo quando o produto não tem compra registrada.
+ * - Preço de cálculo ARREDONDADO a 2 casas decimais antes de multiplicar:
+ *   Valor Total = qtde × preço unitário exibido na tela, sempre.
  * - Filtro por convênio: classes A/B/C, % e % acumulado recalculados dentro
  *   do recorte de convênio selecionado.
  */
+/** Arredonda para 2 casas decimais (padrão "half away from zero", como o toLocaleString pt-BR). */
+export function arredondar2(valor: number): number {
+  const s = Number(Math.abs(valor).toFixed(2))
+  return valor < 0 ? -s : s
+}
 
 import type { SpincareDispensacaoRecord, SpincareProdutoRecord } from '@/services/spincare'
 
@@ -25,7 +32,7 @@ export interface CurvaAbcItem {
   quantidade: number // Total enviado para casa (sent_qt)
   quantidadeEnviadaCasa: number // Alias explícito para quantidade
   dispensacoesCount: number
-  valorTotal: number // quantidadeEnviadaCasa × precoUnitario (custo médio)
+  valorTotal: number // quantidadeEnviadaCasa × precoUnitario arredondado a 2 casas
   percentual: number
   percentualAcumulado: number
   classe: 'A' | 'B' | 'C'
@@ -160,7 +167,7 @@ export function computeCurvaAbc(
       }
       if (pc > 0 && !precos.includes(pc)) precos.push(pc)
       if (precos.length > 0) {
-        cm = Number((precos.reduce((a, b) => a + b, 0) / precos.length).toFixed(4))
+        cm = arredondar2(precos.reduce((a, b) => a + b, 0) / precos.length)
       }
     }
 
@@ -177,6 +184,7 @@ export function computeCurvaAbc(
       }
     }
 
+    precoCalculo = arredondar2(precoCalculo)
     return {
       custoMedio: cm > 0 ? cm : precoCalculo,
       ultimaCompra: uc,
@@ -218,7 +226,7 @@ export function computeCurvaAbc(
       quantidade: agg.quantidade,
       quantidadeEnviadaCasa: agg.quantidade,
       dispensacoesCount: agg.dispensacoes,
-      valorTotal: agg.quantidade * precoCalculo,
+      valorTotal: arredondar2(agg.quantidade * precoCalculo),
     }
   })
 
@@ -232,7 +240,7 @@ export function computeCurvaAbc(
     return true
   })
 
-  const valorTotalGeral = filtrados.reduce((acc, it) => acc + it.valorTotal, 0)
+  const valorTotalGeral = arredondar2(filtrados.reduce((acc, it) => acc + it.valorTotal, 0))
   const quantidadeTotal = filtrados.reduce((acc, it) => acc + it.quantidade, 0)
 
   // Ordenação por valor decrescente; empate resolve por quantidade, depois descrição
@@ -261,7 +269,7 @@ export function computeCurvaAbc(
 
   const resumo: CurvaAbcClasseResumo[] = (['A', 'B', 'C'] as const).map((classe) => {
     const daClasse = itens.filter((i) => i.classe === classe)
-    const valor = daClasse.reduce((acc, i) => acc + i.valorTotal, 0)
+    const valor = arredondar2(daClasse.reduce((acc, i) => acc + i.valorTotal, 0))
     const rotulo =
       classe === 'A'
         ? 'Classe A — até 80% acumulado'

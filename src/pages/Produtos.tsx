@@ -317,8 +317,6 @@ export default function Produtos() {
                 ? 'Última Compra (fallback)'
                 : 'Catálogo (fallback)',
           'Valor Total (R$)': Number(i.valorTotal.toFixed(2)),
-          '% do Total': Number(i.percentual.toFixed(1)),
-          '% Acumulado': Number(i.percentualAcumulado.toFixed(1)),
           Classe: i.classe,
         }))
         const ws = XLSX.utils.json_to_sheet(rows)
@@ -333,8 +331,6 @@ export default function Produtos() {
           { wch: 18 },
           { wch: 22 },
           { wch: 16 },
-          { wch: 11 },
-          { wch: 12 },
           { wch: 9 },
         ]
         XLSX.utils.book_append_sheet(workbook, ws, 'Curva ABC')
@@ -416,9 +412,9 @@ export default function Produtos() {
           </p>
           <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
             <AlertCircle size={13} />
-            Base da Curva ABC: quantidade dispensada × preço da ÚLTIMA COMPRA do produto no SpinCare
-            (campo last_buy_value). Produtos sem compra registrada usam o preço de catálogo
-            (fallback) — {curva.produtosFallbackCatalogo} na visão atual.
+            Base da Curva ABC: quantidade dispensada × Custo Médio do produto (2 casas decimais).
+            Produtos sem custo médio usam a Última Compra ou o preço de catálogo (fallback) —{' '}
+            {curva.produtosFallbackCatalogo} na visão atual.
           </p>
         </div>
         <div className="flex flex-col items-start sm:items-end gap-2">
@@ -764,16 +760,10 @@ export default function Produtos() {
                       <th
                         onClick={() => toggleAbcSort('valorTotal')}
                         className="px-3 py-2.5 text-left font-semibold text-slate-600 cursor-pointer hover:text-[#0D8272] whitespace-nowrap"
-                        title="Valor Total = Qtd. Enviada Casa × Custo Médio"
+                        title="Valor Total = Qtd. Enviada Casa × Custo Médio (2 casas decimais)"
                       >
                         Valor Total
                         {abcSortField === 'valorTotal' && (abcSortDir === 'asc' ? ' ▲' : ' ▼')}
-                      </th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600 whitespace-nowrap">
-                        % Total
-                      </th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600 whitespace-nowrap">
-                        % Acumulado
                       </th>
                       <th className="px-3 py-2.5 text-left font-semibold text-slate-600">Classe</th>
                     </tr>
@@ -781,13 +771,13 @@ export default function Produtos() {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-10 text-center text-slate-400">
+                        <td colSpan={7} className="px-3 py-10 text-center text-slate-400">
                           Carregando…
                         </td>
                       </tr>
                     ) : curvaOrdenada.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-10 text-center text-slate-400">
+                        <td colSpan={7} className="px-3 py-10 text-center text-slate-400">
                           Nenhum movimento no período selecionado. Sincronize dispensações ou ajuste
                           os filtros.
                         </td>
@@ -824,12 +814,6 @@ export default function Produtos() {
                           <td className="px-3 py-2 text-slate-800 font-semibold whitespace-nowrap">
                             {formatCurrency(i.valorTotal)}
                           </td>
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
-                            {i.percentual.toFixed(2)}%
-                          </td>
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
-                            {i.percentualAcumulado.toFixed(2)}%
-                          </td>
                           <td className="px-3 py-2">
                             <Badge variant="outline" className={CLASSE_BADGE[i.classe].className}>
                               {CLASSE_BADGE[i.classe].label}
@@ -854,8 +838,7 @@ export default function Produtos() {
                     <strong className="text-slate-700">{curva.quantidadeTotal}</strong>
                   </span>
                   <span className="text-slate-500">
-                    Cálculo: Qtd. Enviada Casa × Custo Médio (média ponderada dos lotes NF cobrindo
-                    saldo em estoque).
+                    Cálculo: Qtd. Enviada Casa × Custo Médio (2 casas decimais).
                   </span>
                   <span className="text-slate-400 italic">
                     * Nota de conciliação: Na ENOXAPARINA 40MG (código 0000077066), a última compra
