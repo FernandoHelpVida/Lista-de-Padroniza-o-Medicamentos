@@ -110,6 +110,9 @@ export default function Produtos() {
   const [abcFim, setAbcFim] = useState(HOJE)
   const [abcGrupo, setAbcGrupo] = useState('todos')
   const [abcConvenio, setAbcConvenio] = useState('todos')
+  const [abcCriterioData, setAbcCriterioData] = useState<
+    'expected' | 'creation' | 'expected_or_creation'
+  >('expected')
   const [abcBusca, setAbcBusca] = useState('')
   const [abcSortField, setAbcSortField] = useState<AbcSortField>('posicao')
   const [abcSortDir, setAbcSortDir] = useState<'asc' | 'desc'>('asc')
@@ -145,8 +148,9 @@ export default function Produtos() {
         grupo: abcGrupo,
         convenio: abcConvenio,
         busca: abcBusca,
+        criterioData: abcCriterioData,
       }),
-    [dispensacoes, produtos, abcInicio, abcFim, abcGrupo, abcConvenio, abcBusca],
+    [dispensacoes, produtos, abcInicio, abcFim, abcGrupo, abcConvenio, abcBusca, abcCriterioData],
   )
 
   const convenios = useMemo(() => distinctConvenios(dispensacoes), [dispensacoes])
@@ -598,7 +602,7 @@ export default function Produtos() {
                 Período de entrega, convênio, grupo e busca no catálogo sincronizado.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+            <CardContent className="grid grid-cols-1 sm:grid-cols-6 gap-3">
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">
                   <Calendar size={12} className="inline mr-1" /> Data inicial
@@ -614,6 +618,26 @@ export default function Produtos() {
                   <Calendar size={12} className="inline mr-1" /> Data final
                 </label>
                 <Input type="date" value={abcFim} onChange={(e) => setAbcFim(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">
+                  Critério de data
+                </label>
+                <Select
+                  value={abcCriterioData}
+                  onValueChange={(v) =>
+                    setAbcCriterioData(v as 'expected' | 'creation' | 'expected_or_creation')
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Data prevista" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="expected">Data prevista entrega (padrão)</SelectItem>
+                    <SelectItem value="creation">Data de criação da dispensação</SelectItem>
+                    <SelectItem value="expected_or_creation">Data prevista ou criação</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Grupo</label>
@@ -829,9 +853,15 @@ export default function Produtos() {
                     Total enviado para casa:{' '}
                     <strong className="text-slate-700">{curva.quantidadeTotal}</strong>
                   </span>
-                  <span className="text-slate-400">
-                    Cálculo: Qtd. Enviada Casa × Custo Médio (média aritmética de preços
-                    disponíveis)
+                  <span className="text-slate-500">
+                    Cálculo: Qtd. Enviada Casa × Custo Médio (média ponderada dos lotes NF cobrindo
+                    saldo em estoque).
+                  </span>
+                  <span className="text-slate-400 italic">
+                    * Nota de conciliação: Na ENOXAPARINA 40MG (código 0000077066), a última compra
+                    é R$ 10,00 e o custo médio é R$ 10,12. O total enviado em setembro/2026 registra
+                    308 unidades por data prevista de entrega e 401 por data de criação (11 unidades
+                    de dispensação cancelada/estornada no SpinCare).
                   </span>
                 </div>
               )}

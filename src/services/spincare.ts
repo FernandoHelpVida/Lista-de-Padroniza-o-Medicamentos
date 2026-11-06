@@ -527,6 +527,7 @@ export interface SpincareDispensacaoRecord {
   patient_name: string
   expected_deliver_dt: string
   returned_dt: string
+  creation_dt?: string
   stock_location: string
   send_reason: string
   status: string

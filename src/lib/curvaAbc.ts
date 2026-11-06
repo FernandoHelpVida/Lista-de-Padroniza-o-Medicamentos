@@ -46,6 +46,7 @@ export interface CurvaAbcFiltros {
   grupo: string
   convenio: string // id da dispensação-fonte do convênio ('todos' = todos)
   busca: string
+  criterioData?: 'expected' | 'creation' | 'expected_or_creation' // critério de data da dispensação
 }
 
 export interface CurvaAbcResult {
@@ -63,9 +64,21 @@ export interface ConvenioCurvaOpcao {
 }
 
 function matchesFilters(d: SpincareDispensacaoRecord, f: CurvaAbcFiltros): boolean {
-  // expected_deliver_dt em ISO (yyyy-mm-dd) — filtro por período da entrega
-  const data = (d.expected_deliver_dt || '').slice(0, 10)
-  if (!data || data < f.dataInicio || data > f.dataFim) return false
+  const criterio = f.criterioData || 'expected'
+  const dataExp = (d.expected_deliver_dt || '').slice(0, 10)
+  const py = (d.payload || {}) as Record<string, unknown>
+  const dataCrt = (
+    d.creation_dt || (typeof py.creation_dt === 'string' ? py.creation_dt : '')
+  ).slice(0, 10)
+
+  let dataAvaliada = dataExp
+  if (criterio === 'creation') {
+    dataAvaliada = dataCrt
+  } else if (criterio === 'expected_or_creation') {
+    dataAvaliada = dataExp || dataCrt
+  }
+
+  if (!dataAvaliada || dataAvaliada < f.dataInicio || dataAvaliada > f.dataFim) return false
   // Filtro por convênio da dispensação (chave de réplica local)
   if (f.convenio !== 'todos' && String(d.insurance_id || '') !== f.convenio) return false
   return true
