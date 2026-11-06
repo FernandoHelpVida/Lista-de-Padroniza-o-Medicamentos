@@ -574,6 +574,44 @@ export interface ProductsSyncStatusResult {
   lastDispensacaoSyncedAt: string
 }
 
+export interface ProductsBackfillResult {
+  success: boolean
+  durationSec: number
+  totalNaColecao: number
+  loteTamanho: number
+  processados: number
+  atualizados: number
+  pulados: number
+  semCompras: number
+  amostras: Array<{
+    spincare_id: number
+    description: string
+    ultima_compra: number
+    custo_medio: number
+  }>
+}
+
+/** Dispara o backfill completo de estoques SpinCare de A a Z. */
+export async function triggerProductsStocksBackfill(params?: {
+  offset?: number
+  limit?: number
+  resume?: boolean
+  sleep_ms?: number
+}): Promise<ProductsBackfillResult> {
+  const q = new URLSearchParams()
+  if (params?.offset !== undefined) q.set('offset', String(params.offset))
+  if (params?.limit !== undefined) q.set('limit', String(params.limit))
+  if (params?.resume !== undefined) q.set('resume', String(params.resume))
+  if (params?.sleep_ms !== undefined) q.set('sleep_ms', String(params.sleep_ms))
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return await pb.send<ProductsBackfillResult>(
+    `/backend/v1/admin/spincare/products/backfill-stocks${qs}`,
+    {
+      method: 'GET',
+    },
+  )
+}
+
 /** Dispara manualmente a sincronização (CDC) de produtos e dispensações. */
 export async function triggerProductsSync(): Promise<SyncProductsResult> {
   return await pb.send<SyncProductsResult>('/backend/v1/spincare/products/sync', {
