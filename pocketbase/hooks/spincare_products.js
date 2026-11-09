@@ -134,6 +134,10 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
     }
 
     // Função auxiliar para calcular última compra e custo médio reais via /get/stocks
+    // USA A FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js):
+    //   ultima_compra = cost_unit_price da NF de compra mais recente (maior id)
+    //   custo_medio   = média aritmética simples dos preços DISTINTOS das NFs de compra
+    // A fórmula fecha as 5 réguas do SpinCare (2645, 2915, 2916, 2917, 2578).
     const fetchStockPrices = (prodId) => {
       try {
         let allStocks = []
@@ -149,71 +153,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           allStocks = allStocks.concat(list)
         }
         if (allStocks.length === 0) return null
-
-        // Réguas fixadas e validadas
-        if (prodId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5 }
-        if (prodId === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12 }
-        if (prodId === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7 }
-        if (prodId === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13 }
-
-        // Filtrar explicitamente por product_id para evitar contaminação entre produtos
-        const prodStocks = allStocks.filter((x) => {
-          if (!x) return false
-          const pid = x.product_id !== undefined ? x.product_id : x.product ? x.product.id : null
-          return Number(pid) === Number(prodId)
-        })
-
-        // NF de compra = "Entrada" com operation_ds contendo "Nota fiscal - Compra".
-        const entradas = prodStocks.filter((x) => x && x.operation_type === 'Entrada')
-        const compras = entradas.filter(
-          (x) => String(x.operation_ds || '').indexOf('Nota fiscal - Compra') >= 0,
-        )
-        if (compras.length === 0) return null
-        compras.sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0))
-
-        const lastNf = compras[compras.length - 1]
-        const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
-
-        // Saldo de estoque disponível: partir ESTRITAMENTE do saldo da movimentação mais recente (último registro do produto).
-        // Se a movimentação mais recente reporta saldo zero ou negativo, não há estoque disponível -> custo médio = última compra.
-        // Nunca retroceder varrendo registros antigos para encontrar um balance > 0 histórico que já saiu do estoque.
-        const lastMov = prodStocks[prodStocks.length - 1]
-        let stockBalance = 0
-        if (lastMov) {
-          const b = Number(
-            lastMov.balance !== undefined
-              ? lastMov.balance
-              : lastMov.current_balance !== undefined
-                ? lastMov.current_balance
-                : 0,
-          )
-          if (b > 0) {
-            stockBalance = b
-          }
-        }
-
-        let custoMedio = 0
-        if (stockBalance > 0) {
-          // Média ponderada das NFs de COMPRA cobrindo EXATAMENTE o saldo em estoque atual:
-          // retroceder pelos lotes de NF de entrada até esgotar esse saldo; lotes mais antigos NÃO entram na média.
-          let accumQt = 0
-          let accumVal = 0
-          for (let i = compras.length - 1; i >= 0; i--) {
-            const q = Number(compras[i].quantity || 0)
-            const u = parseMoney(compras[i].cost_unit_price)
-            const need = stockBalance - accumQt
-            if (need <= 0) break
-            const take = Math.min(q, need)
-            accumQt += take
-            accumVal += take * u
-          }
-          custoMedio = accumQt > 0 ? Number((accumVal / accumQt).toFixed(4)) : ultimaCompra
-        } else {
-          // Sem saldo válido (>0) na movimentação mais recente: custo médio cai para a última compra
-          custoMedio = ultimaCompra
-        }
-
-        return { ultimaCompra, custoMedio }
+        return computeStockValues(prodId, allStocks, parseMoney)
       } catch (errStock) {
         console.error('[Cron Produtos] Erro ao buscar stocks do produto ' + prodId + ':', errStock)
         return null
@@ -333,30 +273,21 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           }
           syncRec.set('price', price)
 
-          // Última compra e custo médio do produto:
-          // 1. Tentar obter preços reais via /get/stocks (NF Entrada - Nota fiscal Compra)
+          // Última compra e custo médio do produto — FÓRMULA ÚNICA VALIDADA
+          // (spincare_stock_formula.js): /get/stocks é consultado em TODA
+          // sincronização (cron 03:00 e Sincronizar agora usam o mesmo código).
+          // Sem NF de compra acessível, preserva os valores já gravados.
           let ultimaCompra = 0
           let custoMedio = 0
-          if (spincareId === 2916) {
-            ultimaCompra = 10.0
-            custoMedio = 10.12
-          } else if (spincareId === 2578) {
-            ultimaCompra = 0.13
-            custoMedio = 0.13
+          const sp = fetchStockPrices(spincareId)
+          if (sp && sp.hasCompras) {
+            ultimaCompra = sp.ultimaCompra
+            custoMedio = sp.custoMedio
           } else {
-            // Consulta de estoques SpinCare para produtos reais se já não tem preço apurado
             const existingUc = syncRec.getFloat ? syncRec.getFloat('ultima_compra_price') : 0
             const existingCm = syncRec.getFloat ? syncRec.getFloat('custo_medio_price') : 0
-            if (existingUc > 0 && existingCm > 0) {
-              ultimaCompra = existingUc
-              custoMedio = existingCm
-            } else {
-              const sp = fetchStockPrices(spincareId)
-              if (sp) {
-                if (sp.ultimaCompra > 0) ultimaCompra = sp.ultimaCompra
-                if (sp.custoMedio > 0) custoMedio = sp.custoMedio
-              }
-            }
+            if (existingUc > 0) ultimaCompra = existingUc
+            if (existingCm > 0) custoMedio = existingCm
           }
 
           // 2. Fallbacks de última compra
@@ -859,6 +790,10 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
     }
 
     // Função auxiliar para calcular última compra e custo médio reais via /get/stocks
+    // USA A FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js):
+    //   ultima_compra = cost_unit_price da NF de compra mais recente (maior id)
+    //   custo_medio   = média aritmética simples dos preços DISTINTOS das NFs de compra
+    // A fórmula fecha as 5 réguas do SpinCare (2645, 2915, 2916, 2917, 2578).
     const fetchStockPrices = (prodId) => {
       try {
         let allStocks = []
@@ -874,71 +809,7 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           allStocks = allStocks.concat(list)
         }
         if (allStocks.length === 0) return null
-
-        // Réguas fixadas e validadas
-        if (prodId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5 }
-        if (prodId === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12 }
-        if (prodId === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7 }
-        if (prodId === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13 }
-
-        // Filtrar explicitamente por product_id para evitar contaminação entre produtos
-        const prodStocks = allStocks.filter((x) => {
-          if (!x) return false
-          const pid = x.product_id !== undefined ? x.product_id : x.product ? x.product.id : null
-          return Number(pid) === Number(prodId)
-        })
-
-        // NF de compra = "Entrada" com operation_ds contendo "Nota fiscal - Compra".
-        const entradas = prodStocks.filter((x) => x && x.operation_type === 'Entrada')
-        const compras = entradas.filter(
-          (x) => String(x.operation_ds || '').indexOf('Nota fiscal - Compra') >= 0,
-        )
-        if (compras.length === 0) return null
-        compras.sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0))
-
-        const lastNf = compras[compras.length - 1]
-        const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
-
-        // Saldo de estoque disponível: partir ESTRITAMENTE do saldo da movimentação mais recente (último registro do produto).
-        // Se a movimentação mais recente reporta saldo zero ou negativo, não há estoque disponível -> custo médio = última compra.
-        // Nunca retroceder varrendo registros antigos para encontrar um balance > 0 histórico que já saiu do estoque.
-        const lastMov = prodStocks[prodStocks.length - 1]
-        let stockBalance = 0
-        if (lastMov) {
-          const b = Number(
-            lastMov.balance !== undefined
-              ? lastMov.balance
-              : lastMov.current_balance !== undefined
-                ? lastMov.current_balance
-                : 0,
-          )
-          if (b > 0) {
-            stockBalance = b
-          }
-        }
-
-        let custoMedio = 0
-        if (stockBalance > 0) {
-          // Média ponderada das NFs de COMPRA cobrindo EXATAMENTE o saldo em estoque atual:
-          // retroceder pelos lotes de NF de entrada até esgotar esse saldo; lotes mais antigos NÃO entram na média.
-          let accumQt = 0
-          let accumVal = 0
-          for (let i = compras.length - 1; i >= 0; i--) {
-            const q = Number(compras[i].quantity || 0)
-            const u = parseMoney(compras[i].cost_unit_price)
-            const need = stockBalance - accumQt
-            if (need <= 0) break
-            const take = Math.min(q, need)
-            accumQt += take
-            accumVal += take * u
-          }
-          custoMedio = accumQt > 0 ? Number((accumVal / accumQt).toFixed(4)) : ultimaCompra
-        } else {
-          // Sem saldo válido (>0) na movimentação mais recente: custo médio cai para a última compra
-          custoMedio = ultimaCompra
-        }
-
-        return { ultimaCompra, custoMedio }
+        return computeStockValues(prodId, allStocks, parseMoney)
       } catch (errStock) {
         console.error('[Products Sync] Erro ao buscar stocks do produto ' + prodId + ':', errStock)
         return null
@@ -1101,29 +972,20 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
               }
             }
           }
-          // Valores régua validados no SpinCare (última compra / custo médio):
-          // - ENOXAPARINA 40MG (2916): 10,00 / 10,12
-          // - BACLOFENO 10MG CP (2578): 0,13 / 0,13
+          // FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js): /get/stocks é
+          // consultado em TODA sincronização (cron 03:00 e Sincronizar agora
+          // compartilham o mesmo código). Sem NF de compra acessível, preserva
+          // os valores já gravados.
           let custoMedio = 0
-          if (spincareId === 2916) {
-            ultimaCompra = 10.0
-            custoMedio = 10.12
-          } else if (spincareId === 2578) {
-            ultimaCompra = 0.13
-            custoMedio = 0.13
+          const sp = fetchStockPrices(spincareId)
+          if (sp && sp.hasCompras) {
+            ultimaCompra = sp.ultimaCompra
+            custoMedio = sp.custoMedio
           } else {
             const existingUc = syncRec.getFloat ? syncRec.getFloat('ultima_compra_price') : 0
             const existingCm = syncRec.getFloat ? syncRec.getFloat('custo_medio_price') : 0
-            if (existingUc > 0 && existingCm > 0) {
-              ultimaCompra = existingUc
-              custoMedio = existingCm
-            } else {
-              const sp = fetchStockPrices(spincareId)
-              if (sp) {
-                if (sp.ultimaCompra > 0) ultimaCompra = sp.ultimaCompra
-                if (sp.custoMedio > 0) custoMedio = sp.custoMedio
-              }
-            }
+            if (existingUc > 0) ultimaCompra = existingUc
+            if (existingCm > 0) custoMedio = existingCm
           }
 
           // Fallbacks de custo médio:
