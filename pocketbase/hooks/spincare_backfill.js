@@ -184,7 +184,63 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
     }
 
     const calcStockValues = (prodId, allStocks) => {
-      return computeStockValues(prodId, allStocks, parseMoney)
+      // Tenta usar a função global se disponível, senão executa a fórmula canônica inline
+      if (typeof computeStockValues === 'function') {
+        return computeStockValues(prodId, allStocks, parseMoney)
+      }
+      if (
+        typeof globalThis !== 'undefined' &&
+        typeof globalThis.computeStockValues === 'function'
+      ) {
+        return globalThis.computeStockValues(prodId, allStocks, parseMoney)
+      }
+
+      // FÓRMULA CANÔNICA SPINCARE (Help Vida) — idêntica a spincare_stock_formula.js:
+      //  - última compra: cost_unit_price da NF de compra mais recente (maior id)
+      //  - custo médio: média aritmética simples dos preços distintos das NFs de compra
+      const num = (v) => {
+        const n = Number(v)
+        return isNaN(n) ? 0 : n
+      }
+      if (!allStocks || allStocks.length === 0) {
+        return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
+      }
+      const prodStocks = allStocks.filter((x) => {
+        if (!x) return false
+        const pid = x.product_id !== undefined ? x.product_id : x.product ? x.product.id : null
+        return Number(pid) === Number(prodId)
+      })
+      const compras = prodStocks.filter(
+        (x) =>
+          x &&
+          x.operation_type === 'Entrada' &&
+          String(x.operation_ds || '').indexOf('Nota fiscal - Compra') >= 0,
+      )
+      if (compras.length === 0) {
+        return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
+      }
+      let lastNf = compras[0]
+      for (let i = 1; i < compras.length; i++) {
+        if (num(compras[i].id) > num(lastNf.id)) lastNf = compras[i]
+      }
+      const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
+
+      const precosDistintos = []
+      for (let i = 0; i < compras.length; i++) {
+        const u = parseMoney(compras[i].cost_unit_price)
+        if (u > 0 && precosDistintos.indexOf(u) < 0) precosDistintos.push(u)
+      }
+
+      let soma = 0
+      for (let i = 0; i < precosDistintos.length; i++) soma += precosDistintos[i]
+      let custoMedio = precosDistintos.length > 0 ? soma / precosDistintos.length : 0
+      custoMedio = Number(custoMedio.toFixed(4))
+
+      return {
+        ultimaCompra: ultimaCompra > 0 ? Number(ultimaCompra.toFixed(4)) : 0,
+        custoMedio: custoMedio > 0 ? Number(custoMedio.toFixed(4)) : 0,
+        hasCompras: true,
+      }
     }
 
     // Parâmetros de execução
