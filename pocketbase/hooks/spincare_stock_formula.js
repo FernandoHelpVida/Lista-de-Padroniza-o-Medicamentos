@@ -23,7 +23,11 @@
  * ============================================================================
  */
 
-const computeStockValues = (prodId, allStocks, parseMoney) => {
+// Escopo global explícito: top-level `const` em um arquivo de hook NÃO é
+// visível nos outros arquivos na JSVM do PocketBase (goja) — cada arquivo tem
+// seu próprio escopo de script. Só propriedades do objeto global são
+// compartilhadas entre hooks, cron e rotas.
+globalThis.computeStockValues = (prodId, allStocks, parseMoney) => {
   const num = (v) => {
     const n = Number(v)
     return isNaN(n) ? 0 : n
