@@ -162,15 +162,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         ) {
           return globalThis.computeStockValues(prodId, allStocks, parseMoney)
         }
-        // Fallback canônico inline
-        const pId = Number(prodId)
-        if (pId === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
-        if (pId === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
-        if (pId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
-        if (pId === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12, hasCompras: true }
-        if (pId === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7, hasCompras: true }
-        if (pId === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13, hasCompras: true }
-
+        // Fallback canônico inline (fórmula ponderada)
         const num = (v) => {
           const n = Number(v)
           return isNaN(n) ? 0 : n
@@ -222,14 +214,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         }
 
         if (!(custoMedio > 0)) {
-          const precosDistintos = []
-          for (let i = 0; i < compras.length; i++) {
-            const u = parseMoney(compras[i].cost_unit_price)
-            if (u > 0 && precosDistintos.indexOf(u) < 0) precosDistintos.push(u)
-          }
-          let soma = 0
-          for (let i = 0; i < precosDistintos.length; i++) soma += precosDistintos[i]
-          custoMedio = precosDistintos.length > 0 ? soma / precosDistintos.length : ultimaCompra
+          custoMedio = ultimaCompra
         }
         custoMedio = Number(custoMedio.toFixed(4))
         return {
@@ -901,15 +886,7 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
         ) {
           return globalThis.computeStockValues(prodId, allStocks, parseMoney)
         }
-        // Fallback canônico inline
-        const pId = Number(prodId)
-        if (pId === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
-        if (pId === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
-        if (pId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
-        if (pId === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12, hasCompras: true }
-        if (pId === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7, hasCompras: true }
-        if (pId === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13, hasCompras: true }
-
+        // Fallback canônico inline (fórmula ponderada)
         const num = (v) => {
           const n = Number(v)
           return isNaN(n) ? 0 : n
@@ -961,14 +938,7 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
         }
 
         if (!(custoMedio > 0)) {
-          const precosDistintos = []
-          for (let i = 0; i < compras.length; i++) {
-            const u = parseMoney(compras[i].cost_unit_price)
-            if (u > 0 && precosDistintos.indexOf(u) < 0) precosDistintos.push(u)
-          }
-          let soma = 0
-          for (let i = 0; i < precosDistintos.length; i++) soma += precosDistintos[i]
-          custoMedio = precosDistintos.length > 0 ? soma / precosDistintos.length : ultimaCompra
+          custoMedio = ultimaCompra
         }
         custoMedio = Number(custoMedio.toFixed(4))
         return {

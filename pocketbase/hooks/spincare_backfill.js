@@ -197,7 +197,7 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
 
       // FÓRMULA CANÔNICA SPINCARE (Help Vida) — idêntica a spincare_stock_formula.js:
       //  - última compra: cost_unit_price da NF de compra mais recente (maior id)
-      //  - custo médio: média aritmética simples dos preços distintos das NFs de compra
+      //  - custo médio: média ponderada das NFs de compra cobrindo o saldo atual
       const num = (v) => {
         const n = Number(v)
         return isNaN(n) ? 0 : n
@@ -219,26 +219,49 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       if (compras.length === 0) {
         return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
       }
-      let lastNf = compras[0]
-      for (let i = 1; i < compras.length; i++) {
-        if (num(compras[i].id) > num(lastNf.id)) lastNf = compras[i]
-      }
+      const sortedCompras = compras.slice().sort((a, b) => num(b.id) - num(a.id))
+      const lastNf = sortedCompras[0]
       const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
 
-      const precosDistintos = []
-      for (let i = 0; i < compras.length; i++) {
-        const u = parseMoney(compras[i].cost_unit_price)
-        if (u > 0 && precosDistintos.indexOf(u) < 0) precosDistintos.push(u)
+      let currentBalance = 0
+      if (prodStocks.length > 0) {
+        const sortedAll = prodStocks.slice().sort((a, b) => num(b.id) - num(a.id))
+        currentBalance = num(
+          sortedAll[0].balance !== undefined ? sortedAll[0].balance : sortedAll[0].stock_balance,
+        )
       }
 
-      let soma = 0
-      for (let i = 0; i < precosDistintos.length; i++) soma += precosDistintos[i]
-      let custoMedio = precosDistintos.length > 0 ? soma / precosDistintos.length : 0
+      let custoMedio = 0
+      if (currentBalance > 0) {
+        let needed = currentBalance
+        let weightedSum = 0
+        let qtySum = 0
+        for (let i = 0; i < sortedCompras.length; i++) {
+          const c = sortedCompras[i]
+          const q = num(c.quantity !== undefined ? c.quantity : c.qt)
+          const cost = parseMoney(c.cost_unit_price)
+          if (q > 0 && cost > 0) {
+            const take = Math.min(needed, q)
+            weightedSum += take * cost
+            qtySum += take
+            needed -= take
+            if (needed <= 0) break
+          }
+        }
+        if (qtySum > 0) {
+          custoMedio = weightedSum / qtySum
+        }
+      }
+
+      if (!(custoMedio > 0)) {
+        custoMedio = ultimaCompra
+      }
+
       custoMedio = Number(custoMedio.toFixed(4))
 
       return {
         ultimaCompra: ultimaCompra > 0 ? Number(ultimaCompra.toFixed(4)) : 0,
-        custoMedio: custoMedio > 0 ? Number(custoMedio.toFixed(4)) : 0,
+        custoMedio: custoMedio > 0 ? custoMedio : 0,
         hasCompras: true,
       }
     }
