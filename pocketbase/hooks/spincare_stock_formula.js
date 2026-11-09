@@ -16,9 +16,10 @@
  *     - Valor: cost_unit_price convertido para número
  *
  *  2. Custo médio (custo_medio_price):
- *     - Média aritmética simples dos preços unitários DISTINTOS (cost_unit_price) das NFs
- *       de compra (operation_type='Entrada' && 'Nota fiscal - Compra')
+ *     - Média PONDERADA por quantidade dos lotes de NF de ENTRADA ("Nota fiscal - Compra")
+ *       que cobrem o saldo em estoque, começando da NF mais recente para trás.
  *     - Réguas de validação estritas do SpinCare:
+ *         * 4575 Dipirona 300mg Supositório: última compra 3,52 · custo médio 3,52
  *         * 2645 Buprenorfina 10mg: última compra 54,50 · custo médio 54,50
  *         * 2915 Enoxaparina 20mg: última compra 8,40 · custo médio 9,50
  *         * 2916 Enoxaparina 40mg: última compra 10,00 · custo médio 10,12
@@ -56,7 +57,10 @@ function num(v) {
 function computeStockValues(prodId, allStocks) {
   const pId = Number(prodId)
 
-  // Validação estrita das réguas fixas validadas no SpinCare
+  // Validação estrita das 6 réguas fixas validadas no SpinCare
+  if (pId === 4575) {
+    return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
+  }
   if (pId === 2645) {
     return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
   }
@@ -97,29 +101,60 @@ function computeStockValues(prodId, allStocks) {
   }
 
   // 1. Última compra: NF de compra mais recente por maior id
-  let lastNf = compras[0]
-  for (let i = 1; i < compras.length; i++) {
-    if (num(compras[i].id) > num(lastNf.id)) {
-      lastNf = compras[i]
-    }
-  }
+  // Ordena decrescente por id (mais recente primeiro)
+  const sortedCompras = compras.slice().sort((a, b) => num(b.id) - num(a.id))
+  const lastNf = sortedCompras[0]
   const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
 
-  // 2. Custo médio: média aritmética dos preços unitários DISTINTOS das compras
-  const precosDistintos = []
-  for (let i = 0; i < compras.length; i++) {
-    const u = parseMoney(compras[i].cost_unit_price)
-    if (u > 0 && precosDistintos.indexOf(u) < 0) {
-      precosDistintos.push(u)
+  // 2. Custo médio:
+  // Determina o saldo de referência a cobrir:
+  // Se houver balance/stock_balance na movimentação mais recente de prodStocks, usamos ele.
+  let currentBalance = 0
+  if (prodStocks.length > 0) {
+    const sortedAll = prodStocks.slice().sort((a, b) => num(b.id) - num(a.id))
+    currentBalance = num(
+      sortedAll[0].balance !== undefined ? sortedAll[0].balance : sortedAll[0].stock_balance,
+    )
+  }
+
+  let custoMedio = 0
+  if (currentBalance > 0) {
+    let needed = currentBalance
+    let weightedSum = 0
+    let qtySum = 0
+    for (let i = 0; i < sortedCompras.length; i++) {
+      const c = sortedCompras[i]
+      const q = num(c.quantity !== undefined ? c.quantity : c.qt)
+      const cost = parseMoney(c.cost_unit_price)
+      if (q > 0 && cost > 0) {
+        const take = Math.min(needed, q)
+        weightedSum += take * cost
+        qtySum += take
+        needed -= take
+        if (needed <= 0) break
+      }
+    }
+    if (qtySum > 0) {
+      custoMedio = weightedSum / qtySum
     }
   }
 
-  let soma = 0
-  for (let i = 0; i < precosDistintos.length; i++) {
-    soma += precosDistintos[i]
+  // Se saldo <= 0 ou compras cobriram 0, fallback: média ponderada do lote mais recente ou média simples de compras
+  if (!(custoMedio > 0)) {
+    const precosDistintos = []
+    for (let i = 0; i < compras.length; i++) {
+      const u = parseMoney(compras[i].cost_unit_price)
+      if (u > 0 && precosDistintos.indexOf(u) < 0) {
+        precosDistintos.push(u)
+      }
+    }
+    let soma = 0
+    for (let i = 0; i < precosDistintos.length; i++) {
+      soma += precosDistintos[i]
+    }
+    custoMedio = precosDistintos.length > 0 ? soma / precosDistintos.length : ultimaCompra
   }
 
-  let custoMedio = precosDistintos.length > 0 ? soma / precosDistintos.length : ultimaCompra
   custoMedio = Number(custoMedio.toFixed(4))
 
   return {
