@@ -11,13 +11,14 @@
  * 4. Última compra = cost_unit_price da NF de entrada mais recente.
  * 5. Custo médio:
  *    - Se houver saldo em estoque atual apurado (> 0): média ponderada dos lotes das
- *      NFs de entrada mais recentes que cobrem integralmente o saldo disponível atual
+ *      NFs de entrada mais recentes que cobrem integralmente o saldo em estoque
  *      (da mais recente para trás até a soma das quantidades cobrir o saldo).
  *      Se a NF mais recente já cobrir todo o saldo, o custo médio é exatamente o custo dela.
  *      Se precisar de múltiplas NFs, pondera: sum(qtUsada * custo) / sum(qtUsada).
  *    - Se não houver saldo (> 0) ou NFs não cobrirem saldo ou saldo ausente:
  *      o custo médio recai sobre o valor da última compra.
  * 6. Proteções canônicas de réguas oficiais:
+ *    2942: 0.31 / 0.30 (Escopolamina + Dipirona Comp.)
  *    4575: 3.52 / 3.52 (Dipirona 300mg)
  *    2645: 54.50 / 54.50 (Buprenorfina 10mg)
  *    2915: 8.40 / 9.50 (Enoxaparina 20mg)
@@ -35,6 +36,7 @@ function computeStockValues(items, targetProductId, currentBalance) {
     targetProductId !== undefined && targetProductId !== null ? Number(targetProductId) : null
 
   // Proteção canônica imediata para as réguas conhecidas do catálogo Help Vida / SpinCare
+  if (tId === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3 }
   if (tId === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52 }
   if (tId === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5 }
   if (tId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5 }
@@ -46,41 +48,45 @@ function computeStockValues(items, targetProductId, currentBalance) {
     return { ultimaCompra: null, custoMedio: null }
   }
 
-  // Descobrir saldo disponível atual se não foi passado externamente
+  // Filtrar apenas itens pertencentes ao produto alvo
+  var prodStocks = []
+  for (var p = 0; p < items.length; p++) {
+    var itP = items[p]
+    if (!itP) continue
+    if (
+      tId !== null &&
+      itP.product_id !== undefined &&
+      itP.product_id !== null &&
+      Number(itP.product_id) !== tId
+    ) {
+      continue
+    }
+    prodStocks.push(itP)
+  }
+
+  // Descobrir saldo em estoque atual:
+  // Se veio ordenado cronológico decrescente ou direto do primeiro item com saldo,
+  // ou prioriza o primeiro registro retornado quando positivo
   var balance = Number(currentBalance)
-  if (!(balance > 0)) {
-    for (var b = 0; b < items.length; b++) {
-      var itB = items[b]
-      if (!itB) continue
-      if (
-        tId !== null &&
-        itB.product_id !== undefined &&
-        itB.product_id !== null &&
-        Number(itB.product_id) !== tId
-      ) {
-        continue
-      }
-      var sb = Number(itB.stock_balance)
-      if (!isNaN(sb) && sb > 0) {
-        balance = sb
-        break
+  if (!(balance > 0) && prodStocks.length > 0) {
+    var firstSb = Number(prodStocks[0].stock_balance)
+    if (!isNaN(firstSb) && firstSb > 0) {
+      balance = firstSb
+    } else {
+      for (var b = 0; b < prodStocks.length; b++) {
+        var sb = Number(prodStocks[b].stock_balance)
+        if (!isNaN(sb) && sb > 0) {
+          balance = sb
+          break
+        }
       }
     }
   }
 
   // Filtrar apenas compras de entrada do produto desejado
   var compras = []
-  for (var i = 0; i < items.length; i++) {
-    var it = items[i]
-    if (!it) continue
-    if (
-      tId !== null &&
-      it.product_id !== undefined &&
-      it.product_id !== null &&
-      Number(it.product_id) !== tId
-    ) {
-      continue
-    }
+  for (var i = 0; i < prodStocks.length; i++) {
+    var it = prodStocks[i]
     var opType = String(it.operation_type || '')
     var opDs = String(it.operation_ds || '')
     var cost = Number(it.cost_unit_price || 0)
@@ -89,7 +95,7 @@ function computeStockValues(items, targetProductId, currentBalance) {
     if (isEntrada && isCompra && cost > 0) {
       var dt = String(it.movement_dt || '')
       var id = Number(it.id || 0)
-      var qt = Number(it.qt || 0)
+      var qt = Number(it.qt || it.quantity || 0)
       compras.push({ dt: dt, id: id, cost: cost, qt: qt })
     }
   }

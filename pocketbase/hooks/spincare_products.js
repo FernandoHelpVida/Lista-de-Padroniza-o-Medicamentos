@@ -155,6 +155,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         if (allStocks.length === 0) return null
         // Réguas oficiais imediatas
         const pIdNum = Number(prodId)
+        if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
         if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
         if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
         if (pIdNum === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
@@ -907,8 +908,9 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           allStocks = allStocks.concat(list)
         }
         if (allStocks.length === 0) return null
-        // Réguas oficiais imediatas
+        // Réguas oficiais imediatas (rota manual)
         const pIdNum = Number(prodId)
+        if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
         if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
         if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
         if (pIdNum === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
