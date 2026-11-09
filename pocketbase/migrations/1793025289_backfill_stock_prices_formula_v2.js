@@ -90,7 +90,10 @@ migrate(
             resp = $http.send({
               url: url,
               method: 'GET',
-              headers: { Accept: 'application/json', 'User-Agent': 'HelpVida-SpinCare-Backfill/1.0' },
+              headers: {
+                Accept: 'application/json',
+                'User-Agent': 'HelpVida-SpinCare-Backfill/1.0',
+              },
               timeout: 25,
             })
           } catch (_) {
@@ -227,7 +230,13 @@ migrate(
       // 1. Processar prioritariamente os produtos régua e os que já possuem movimentações registradas
       // Busca todos os produtos da base
       const totalProds = app.countRecords('produtos_spincare')
-      const produtos = app.findRecordsByFilter('produtos_spincare', 'id != ""', 'description', 2500, 0)
+      const produtos = app.findRecordsByFilter(
+        'produtos_spincare',
+        'id != ""',
+        'description',
+        2500,
+        0,
+      )
       console.log('[Migration Backfill A-Z] Processando ' + produtos.length + ' produtos...')
 
       let atualizados = 0
@@ -243,7 +252,8 @@ migrate(
 
         // Se for régua conhecida ou produto já com preço, ou para cobrir todos
         // Para garantir resposta no tempo da migração, priorizamos produtos que possuem movimentação/dispensação/preço
-        const jaTemPreco = rec.getFloat('ultima_compra_price') > 0 || rec.getFloat('custo_medio_price') > 0
+        const jaTemPreco =
+          rec.getFloat('ultima_compra_price') > 0 || rec.getFloat('custo_medio_price') > 0
         const isRegua = reguasIds.indexOf(prodId) >= 0
 
         // Se é régua ou já tem preço, processamos nesta migração; os demais a rota de backfill complementa
