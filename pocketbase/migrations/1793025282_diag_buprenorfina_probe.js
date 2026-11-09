@@ -19,7 +19,7 @@ migrate(
         '&product_id=2645&page_number=1&page_size=500'
       const res = $http.send({ url: url, method: 'GET', timeout: 25 })
       const list = res.json || JSON.parse(res.raw || '[]')
-      const items = Array.isArray(list) ? list : (list && list.items ? list.items : [])
+      const items = Array.isArray(list) ? list : list && list.items ? list.items : []
 
       const prodStocks = items.filter((x) => {
         if (!x) return false

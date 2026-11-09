@@ -221,17 +221,28 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       const lastNf = compras[compras.length - 1]
       const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
 
+      // Saldo de estoque disponível: partir ESTRITAMENTE do saldo da movimentação mais recente (último registro do produto).
+      // Se a movimentação mais recente reporta saldo zero ou negativo, não há estoque disponível -> custo médio = última compra.
+      // Nunca retroceder varrendo registros antigos para encontrar um balance > 0 histórico que já saiu do estoque.
+      const lastMov = prodStocks[prodStocks.length - 1]
       let stockBalance = 0
-      for (let i = prodStocks.length - 1; i >= 0; i--) {
-        const sb = Number(prodStocks[i].balance || prodStocks[i].current_balance || 0)
-        if (sb > 0) {
-          stockBalance = sb
-          break
+      if (lastMov) {
+        const b = Number(
+          lastMov.balance !== undefined
+            ? lastMov.balance
+            : lastMov.current_balance !== undefined
+              ? lastMov.current_balance
+              : 0,
+        )
+        if (b > 0) {
+          stockBalance = b
         }
       }
 
       let custoMedio = 0
       if (stockBalance > 0) {
+        // Média ponderada das NFs de COMPRA cobrindo EXATAMENTE o saldo em estoque atual:
+        // retroceder pelos lotes de NF de entrada até esgotar esse saldo; lotes mais antigos NÃO entram na média.
         let accumQt = 0
         let accumVal = 0
         for (let i = compras.length - 1; i >= 0; i--) {
@@ -245,7 +256,7 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
         }
         custoMedio = accumQt > 0 ? Number((accumVal / accumQt).toFixed(4)) : ultimaCompra
       } else {
-        // Sem saldo válido apurado: custo médio cai para a última compra (sem fallback arbitrário 877)
+        // Sem saldo válido (>0) na movimentação mais recente: custo médio cai para a última compra
         custoMedio = ultimaCompra
       }
 
