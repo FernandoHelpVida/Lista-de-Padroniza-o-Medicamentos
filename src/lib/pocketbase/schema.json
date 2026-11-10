@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-09T15:06:45.569Z",
+  "generatedAt": "2026-11-10T14:56:18.259Z",
   "collections": [
     {
       "name": "users",
@@ -1004,6 +1004,12 @@
         {
           "name": "custo_medio_price",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "fonte_preco",
+          "type": "text",
           "required": false,
           "system": false
         }

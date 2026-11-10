@@ -378,15 +378,25 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
           // Sem NF de compra acessível, preserva os valores já gravados.
           let ultimaCompra = 0
           let custoMedio = 0
+          let fontePreco = ''
           const sp = fetchStockPrices(spincareId)
           if (sp && sp.hasCompras) {
             ultimaCompra = sp.ultimaCompra
             custoMedio = sp.custoMedio
+            fontePreco = 'nf_compra'
           } else {
             const existingUc = syncRec.getFloat ? syncRec.getFloat('ultima_compra_price') : 0
             const existingCm = syncRec.getFloat ? syncRec.getFloat('custo_medio_price') : 0
             if (existingUc > 0) ultimaCompra = existingUc
             if (existingCm > 0) custoMedio = existingCm
+            fontePreco =
+              existingUc > 0 || existingCm > 0 ? syncRec.getString('fonte_preco') || '' : ''
+          }
+          // Fallback obrigatório sem NF: preço de catálogo (nunca null/zero)
+          if (!(custoMedio > 0) && !(ultimaCompra > 0) && price > 0) {
+            ultimaCompra = price
+            custoMedio = price
+            fontePreco = 'catalogo'
           }
 
           // 2. Fallbacks de última compra
@@ -452,6 +462,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
 
           syncRec.set('ultima_compra_price', ultimaCompra)
           syncRec.set('custo_medio_price', custoMedio)
+          if (fontePreco) syncRec.set('fonte_preco', fontePreco)
           syncRec.set('measure_unit', String(raw.measure_unit || '').trim())
           syncRec.set(
             'prescription_measure_unit',
@@ -1175,15 +1186,25 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           // compartilham o mesmo código). Sem NF de compra acessível, preserva
           // os valores já gravados.
           let custoMedio = 0
+          let fontePreco = ''
           const sp = fetchStockPrices(spincareId)
           if (sp && sp.hasCompras) {
             ultimaCompra = sp.ultimaCompra
             custoMedio = sp.custoMedio
+            fontePreco = 'nf_compra'
           } else {
             const existingUc = syncRec.getFloat ? syncRec.getFloat('ultima_compra_price') : 0
             const existingCm = syncRec.getFloat ? syncRec.getFloat('custo_medio_price') : 0
             if (existingUc > 0) ultimaCompra = existingUc
             if (existingCm > 0) custoMedio = existingCm
+            fontePreco =
+              existingUc > 0 || existingCm > 0 ? syncRec.getString('fonte_preco') || '' : ''
+          }
+          // Fallback obrigatório sem NF: preço de catálogo (nunca null/zero)
+          if (!(custoMedio > 0) && !(ultimaCompra > 0) && price > 0) {
+            ultimaCompra = price
+            custoMedio = price
+            fontePreco = 'catalogo'
           }
 
           // Fallbacks de custo médio:
@@ -1212,6 +1233,7 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
 
           syncRec.set('ultima_compra_price', ultimaCompra)
           syncRec.set('custo_medio_price', custoMedio)
+          if (fontePreco) syncRec.set('fonte_preco', fontePreco)
           syncRec.set('measure_unit', String(raw.measure_unit || '').trim())
           syncRec.set(
             'prescription_measure_unit',

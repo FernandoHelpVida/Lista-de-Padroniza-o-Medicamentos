@@ -2,22 +2,30 @@
  * ============================================================================
  * BACKFILL COMPLETO DE PREÇOS DE ESTOQUE (SPINCARE) — DE A A Z
  * ============================================================================
- * Rota de manutenção e utilitário para percorrer TODOS os registros de
- * produtos_spincare em ordem alfabética (description ASC), chamar o endpoint
- * /integration-engine/get/stocks?product_id=X no SpinCare e calcular:
- *  - ultima_compra_price: cost_unit_price da última NF "Entrada" com
- *    "Nota fiscal - Compra" em operation_ds
- *  - custo_medio_price: média ponderada das NFs de compra cobrindo o saldo atual
+ * Reprocessa TODOS os registros de produtos_spincare (ordem alfabética) com a
+ * FÓRMULA ÚNICA já validada (spincare_stock_formula.js):
+ *  - ultima_compra_price = cost_unit_price da NF "Entrada" com
+ *    "Nota fiscal - Compra" mais recente (maior movement_dt / maior id)
+ *  - custo_medio_price = média ponderada dos lotes das NFs de compra cobrindo
+ *    o saldo em estoque atual (stock_balance)
  *
- * Se o produto não tiver nenhuma NF de compra, ultima_compra_price e
- * custo_medio_price permanecem 0 (ou com os fallbacks da Curva ABC / catálogo).
+ * Fallback (produto sem NF de compra): usa o preço de CATÁLOGO (campo price,
+ * que vem do payload da API /get/products) e marca fonte_preco = "catalogo";
+ * com NF válida, fonte_preco = "nf_compra". NUNCA deixa null/zero quando existe
+ * qualquer preço conhecido.
  *
- * Proteções:
- *  - Autenticação por $apis.requireAuth() OU por chave ?key= (EMAIL_DIAG_KEY ou SPINCARE_BACKFILL_KEY)
- *  - Execução em lotes com pausa configurável (padrão: 50ms) entre chamadas
- *  - Retomabilidade via parâmetro ?resume=true (pula produtos já processados após marco)
- *  - Suporte a paginação/offset: ?offset=0&limit=50 ou ?all=true
- *  - Log estruturado no console e gravação de resumo em audit_logs
+ * Hardcode das réguas: existe APENAS na fórmula (spincare_stock_formula.js e
+ * nos fallbacks inline dela) e vale exclusivamente para o product_id da sua
+ * própria régua — nenhum outro produto é afetado.
+ *
+ * Execução em lotes com retomabilidade:
+ *  GET /backend/v1/admin/spincare/products/backfill-stocks
+ *    ?key=<EMAIL_DIAG_KEY|SPINCARE_BACKFILL_KEY>   (ou admin autenticado)
+ *    &offset=0&limit=100          (lote; offset = índice alfabético de onde retomar)
+ *    &sleep_ms=40                 (pausa entre produtos — rate limit SpinCare)
+ *    &resume=true                 (pula quem já tem fonte_preco preenchida)
+ * A resposta traz o offset do próximo lote em nextOffset; quando nextOffset
+ * vem null, o catálogo inteiro foi processado.
  * ============================================================================
  */
 
@@ -28,13 +36,12 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
     const query = e.requestInfo().query || {}
     const authUser = e.auth
 
-    // Autenticação: admin autenticado OU ?key= coincidente (EMAIL_DIAG_KEY / SPINCARE_BACKFILL_KEY / fallback de manutenção helpvida_backfill_2026)
+    // Autenticação: admin autenticado OU ?key= coincidente
     const providedKey = String(query['key'] || '').trim()
     const envKey = String(
       $os.getenv('EMAIL_DIAG_KEY') || $os.getenv('SPINCARE_BACKFILL_KEY') || '',
     ).trim()
-    const isKeyValid =
-      (envKey && providedKey && providedKey === envKey) || providedKey === 'helpvida_backfill_2026'
+    const isKeyValid = envKey && providedKey && providedKey === envKey
 
     let isAuthorized = false
     if (authUser) {
@@ -139,18 +146,17 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
         if (resp && resp.statusCode === 401) {
           const fresh = fetchFreshToken()
           if (fresh) {
-            url =
-              baseUrl +
-              '/integration-engine/get/stocks?token=' +
-              encodeURIComponent(fresh) +
-              '&product_id=' +
-              prodId +
-              '&page_number=' +
-              p +
-              '&page_size=500'
             try {
               resp = $http.send({
-                url: url,
+                url:
+                  baseUrl +
+                  '/integration-engine/get/stocks?token=' +
+                  encodeURIComponent(fresh) +
+                  '&product_id=' +
+                  prodId +
+                  '&page_number=' +
+                  p +
+                  '&page_size=500',
                 method: 'GET',
                 headers: {
                   Accept: 'application/json',
@@ -183,6 +189,9 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       return allStocks
     }
 
+    // FÓRMULA ÚNICA (idêntica a spincare_stock_formula.js). Réguas hardcoded
+    // apenas para o product_id da própria régua; fallback inline com a mesma
+    // fórmula ponderada cobrindo o saldo atual.
     const calcStockValues = (prodId, allStocks) => {
       const pIdNum = Number(prodId)
       // Réguas canônicas obrigatórias SpinCare
@@ -213,9 +222,6 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
         }
       }
 
-      // FÓRMULA CANÔNICA SPINCARE (Help Vida) — idêntica a spincare_stock_formula.js:
-      //  - última compra: cost_unit_price da NF de compra mais recente (maior id / dt)
-      //  - custo médio: média ponderada das NFs de compra cobrindo o saldo atual
       const num = (v) => {
         const n = Number(v)
         return isNaN(n) ? 0 : n
@@ -247,13 +253,11 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
 
       let currentBalance = 0
-      if (prodStocks.length > 0) {
-        for (let sbIdx = 0; sbIdx < prodStocks.length; sbIdx++) {
-          const bVal = num(prodStocks[sbIdx].stock_balance)
-          if (bVal > 0) {
-            currentBalance = bVal
-            break
-          }
+      for (let sbIdx = 0; sbIdx < prodStocks.length; sbIdx++) {
+        const bVal = num(prodStocks[sbIdx].stock_balance)
+        if (bVal > 0) {
+          currentBalance = bVal
+          break
         }
       }
 
@@ -277,14 +281,10 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
             if (needed <= 0) break
           }
         }
-        if (qtySum > 0) {
-          custoMedio = Math.round((weightedSum / qtySum) * 100) / 100
-        }
+        if (qtySum > 0) custoMedio = Math.round((weightedSum / qtySum) * 100) / 100
       }
 
-      if (!(custoMedio > 0)) {
-        custoMedio = ultimaCompra
-      }
+      if (!(custoMedio > 0)) custoMedio = ultimaCompra
 
       const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100
       return {
@@ -295,24 +295,24 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
     }
 
     // Parâmetros de execução
-    const limitParam = parseInt(String(query['limit'] || '1000'), 10) || 1000
+    const limitParam = parseInt(String(query['limit'] || '100'), 10) || 100
     const offsetParam = parseInt(String(query['offset'] || '0'), 10) || 0
     const resumeMode = query['resume'] === 'true' || query['resume'] === '1'
     const sleepMs = parseInt(String(query['sleep_ms'] || '40'), 10) || 40
 
-    // Busca produtos ordenados de A a Z por description
     const totalNoBanco = app.countRecords('produtos_spincare')
-    const filter = 'id != ""'
+    // Ordem alfabética determinística (empate por spincare_id) para retomar
+    // exatamente de onde o lote anterior parou.
     const produtos = app.findRecordsByFilter(
       'produtos_spincare',
-      filter,
-      'description',
+      'id != ""',
+      'description,spincare_id',
       limitParam,
       offsetParam,
     )
 
     console.log(
-      '[Backfill Estoques] Iniciando processamento de ' +
+      '[Backfill Estoques] Lote: ' +
         produtos.length +
         ' produtos (total na coleção: ' +
         totalNoBanco +
@@ -329,7 +329,8 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
     let atualizados = 0
     let pulados = 0
     let semCompras = 0
-    let comPrecoPositivo = 0
+    let fallbackCatalogo = 0
+    let semPreco = 0
     const amostras = []
 
     for (let i = 0; i < produtos.length; i++) {
@@ -341,33 +342,65 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
         continue
       }
 
-      // Se modo resume, pode pular quem já tem marca ou synced_at recente E preço > 0
+      // Modo resume: pula quem já tem fonte_preco preenchida e preço>0
+      const fonteAtual = rec.getString('fonte_preco')
       if (
         resumeMode &&
+        fonteAtual &&
         rec.getFloat('ultima_compra_price') > 0 &&
         rec.getFloat('custo_medio_price') > 0
       ) {
         pulados++
-        comPrecoPositivo++
         continue
+      }
+
+      // Limpeza de segurança: nunca gravar/ver sufixo de diagnóstico
+      const descAtual = rec.getString('description')
+      if (descAtual.indexOf(' [D:') >= 0 || descAtual.indexOf(' [DIAG:') >= 0) {
+        rec.set('description', descAtual.split(' [D:')[0].split(' [DIAG:')[0].trim())
       }
 
       const allStocks = requestStocks(prodId)
       const { ultimaCompra, custoMedio, hasCompras } = calcStockValues(prodId, allStocks)
 
-      let mudou = false
+      // Fallback obrigatório: sem NF de compra, usa preço de CATÁLOGO (price),
+      // nunca null/zero, e marca a fonte. O preço de catálogo vem do payload
+      // (campo price da API /get/products) já espelhado no registro.
+      let fontePreco = ''
+      let ucFinal = 0
+      let cmFinal = 0
       if (hasCompras && (ultimaCompra > 0 || custoMedio > 0)) {
-        rec.set('ultima_compra_price', ultimaCompra)
-        rec.set('custo_medio_price', custoMedio)
-        rec.set('synced_at', new Date().toISOString())
-        mudou = true
-        comPrecoPositivo++
+        ucFinal = ultimaCompra > 0 ? ultimaCompra : custoMedio
+        cmFinal = custoMedio > 0 ? custoMedio : ultimaCompra
+        fontePreco = 'nf_compra'
       } else {
         semCompras++
-        // Se já tinha fallback anterior ou 0, mantém
-        if (rec.getFloat('ultima_compra_price') > 0) {
-          comPrecoPositivo++
+        const catalogPrice = rec.getFloat('price')
+        if (catalogPrice > 0) {
+          ucFinal = catalogPrice
+          cmFinal = catalogPrice
+          fontePreco = 'catalogo'
+          fallbackCatalogo++
+        } else if (
+          rec.getFloat('ultima_compra_price') > 0 &&
+          rec.getFloat('custo_medio_price') > 0
+        ) {
+          // Sem preço de catálogo e sem NF: preserva o que já havia gravado
+          ucFinal = rec.getFloat('ultima_compra_price')
+          cmFinal = rec.getFloat('custo_medio_price')
+          fontePreco = 'preservado'
+        } else {
+          semPreco++
         }
+      }
+
+      let mudou = false
+      if (fontePreco) {
+        rec.set('ultima_compra_price', ucFinal)
+        rec.set('custo_medio_price', cmFinal)
+        rec.set('fonte_preco', fontePreco)
+        rec.set('synced_at', new Date().toISOString())
+        mudou = true
       }
 
       if (mudou) {
@@ -380,12 +413,14 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       }
 
       processados++
-      if (amostras.length < 15 && hasCompras) {
+      if (amostras.length < 15) {
         amostras.push({
           spincare_id: prodId,
           description: desc,
-          ultima_compra: ultimaCompra,
-          custo_medio: custoMedio,
+          price: rec.getFloat('price'),
+          ultima_compra: ucFinal,
+          custo_medio: cmFinal,
+          fonte_preco: fontePreco || rec.getString('fonte_preco'),
         })
       }
 
@@ -395,10 +430,12 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
             processados +
             '/' +
             produtos.length +
-            ' produtos processados. Atualizados com NF: ' +
+            ' produtos processados. Atualizados: ' +
             atualizados +
-            ', sem NF: ' +
-            semCompras,
+            ', sem NF (catálogo/preservado): ' +
+            fallbackCatalogo +
+            ', sem preço: ' +
+            semPreco,
         )
       }
 
@@ -410,9 +447,13 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       }
     }
 
+    const totalProcessadoAteAqui = offsetParam + processados + pulados
+    const nextOffset = offsetParam + produtos.length
+    const done = nextOffset >= totalNoBanco
+
     const durationSec = Math.round((new Date().getTime() - startTime) / 1000)
     console.log(
-      '[Backfill Estoques] Concluído em ' +
+      '[Backfill Estoques] Lote concluído em ' +
         durationSec +
         's: processados=' +
         processados +
@@ -421,10 +462,18 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
         ', pulados=' +
         pulados +
         ', semCompras=' +
-        semCompras,
+        semCompras +
+        ', fallbackCatalogo=' +
+        fallbackCatalogo +
+        ', semPreco=' +
+        semPreco +
+        ', nextOffset=' +
+        nextOffset +
+        ', done=' +
+        done,
     )
 
-    // Auditoria
+    // Auditoria por lote
     try {
       const auditCol = app.findCollectionByNameOrId('audit_logs')
       const auditRecord = new Record(auditCol)
@@ -437,19 +486,25 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
         authUser ? authUser.getString('name') || '' : 'admin_backfill',
       )
       auditRecord.set('usuario_role', authUser ? authUser.getString('role') || 'admin' : 'admin')
-      auditRecord.set('status_novo', 'sucesso')
+      auditRecord.set('status_novo', done ? 'sucesso' : 'em_progresso')
       auditRecord.set(
         'detalhes',
-        'Backfill completo de estoques SpinCare concluído de A a Z: total_produtos=' +
-          produtos.length +
+        'Backfill de estoques SpinCare (lote A a Z): offset=' +
+          offsetParam +
           ', processados=' +
           processados +
           ', atualizados=' +
           atualizados +
           ', sem_compras=' +
           semCompras +
-          ', pulados=' +
-          pulados +
+          ', fallback_catalogo=' +
+          fallbackCatalogo +
+          ', sem_preco=' +
+          semPreco +
+          ', next_offset=' +
+          nextOffset +
+          ', total=' +
+          totalNoBanco +
           ', duracao=' +
           durationSec +
           's',
@@ -461,11 +516,16 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       success: true,
       durationSec: durationSec,
       totalNaColecao: totalNoBanco,
+      offset: offsetParam,
       loteTamanho: produtos.length,
       processados: processados,
       atualizados: atualizados,
       pulados: pulados,
       semCompras: semCompras,
+      fallbackCatalogo: fallbackCatalogo,
+      semPreco: semPreco,
+      nextOffset: done ? null : nextOffset,
+      done: done,
       amostras: amostras,
     })
   } catch (err) {
