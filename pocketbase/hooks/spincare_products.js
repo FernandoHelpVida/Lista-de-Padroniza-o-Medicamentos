@@ -906,6 +906,18 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
     // A fórmula fecha as 6 réguas do SpinCare (4575, 2645, 2915, 2916, 2917, 2578).
     const fetchStockPrices = (prodId) => {
       try {
+        // Réguas oficiais PRIMEIRO: valem mesmo se a consulta de estoques
+        // falhar (API fora do ar / token expirado / rate limit) — assim o
+        // cron diário nunca deixa as réguas canônicas zeradas.
+        const pIdNum = Number(prodId)
+        if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
+        if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
+        if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
+        if (pIdNum === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
+        if (pIdNum === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12, hasCompras: true }
+        if (pIdNum === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7, hasCompras: true }
+        if (pIdNum === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13, hasCompras: true }
+
         let allStocks = []
         for (let p = 1; p <= 10; p++) {
           const { statusCode, resp } = requestPage(
@@ -919,15 +931,6 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           allStocks = allStocks.concat(list)
         }
         if (allStocks.length === 0) return null
-        // Réguas oficiais imediatas (rota manual)
-        const pIdNum = Number(prodId)
-        if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
-        if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
-        if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
-        if (pIdNum === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
-        if (pIdNum === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12, hasCompras: true }
-        if (pIdNum === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7, hasCompras: true }
-        if (pIdNum === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13, hasCompras: true }
 
         let calculated = null
         if (typeof computeStockValues === 'function') {
@@ -1205,6 +1208,41 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             ultimaCompra = price
             custoMedio = price
             fontePreco = 'catalogo'
+          }
+
+          // Proteção das réguas canônicas: mesmo que /get/stocks falhe e o
+          // fetchStockPrices retorne null, nunca gravar régua zerada.
+          if (!sp) {
+            const pIdNum2 = Number(spincareId)
+            if (pIdNum2 === 2942) {
+              ultimaCompra = 0.31
+              custoMedio = 0.3
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 4575) {
+              ultimaCompra = 3.52
+              custoMedio = 3.52
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2645) {
+              ultimaCompra = 54.5
+              custoMedio = 54.5
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2915) {
+              ultimaCompra = 8.4
+              custoMedio = 9.5
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2916) {
+              ultimaCompra = 10.0
+              custoMedio = 10.12
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2917) {
+              ultimaCompra = 15.0
+              custoMedio = 15.7
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2578) {
+              ultimaCompra = 0.13
+              custoMedio = 0.13
+              fontePreco = 'nf_compra'
+            }
           }
 
           // Fallbacks de custo médio:
