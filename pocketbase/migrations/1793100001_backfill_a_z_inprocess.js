@@ -21,7 +21,7 @@
 ///   - custo médio = média ponderada dos lotes de entrada que cobrem o SALDO
 ///     DISPONÍVEL (total_qt - reserved_qt) em estoque.
 ///
-migration(
+migrate(
   (app) => {
     const startTime = new Date().getTime()
     const BATCH_LIMIT = 100
