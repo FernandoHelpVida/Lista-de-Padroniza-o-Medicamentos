@@ -14,7 +14,7 @@
  * ============================================================================
  */
 
-cronAdd('spincare_backfill_az_temp', '*/2 * * * *', () => {
+cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
   try {
     const app = typeof $app !== 'undefined' ? $app : null
     if (!app) return
@@ -43,7 +43,7 @@ cronAdd('spincare_backfill_az_temp', '*/2 * * * *', () => {
     const nowMs = new Date().getTime()
     if (lastRun && lastRun.length > 0) {
       const lastCreated = new Date(lastRun[0].getString('created')).getTime()
-      if (nowMs - lastCreated < 90000) {
+      if (nowMs - lastCreated < 65000) {
         console.log('[Backfill AZ Temp] Lote anterior muito recente — aguardando próximo tick.')
         return
       }
@@ -286,8 +286,8 @@ cronAdd('spincare_backfill_az_temp', '*/2 * * * *', () => {
       }
     }
 
-    // ---- LOTE: 25 produtos por execução, ordem alfabética ----
-    const LOTE = 25
+    // ---- LOTE: 400 produtos por execução, ordem alfabética ----
+    const LOTE = 400
     const totalNoBanco = app.countRecords('produtos_spincare')
     const produtos = app.findRecordsByFilter(
       'produtos_spincare',
