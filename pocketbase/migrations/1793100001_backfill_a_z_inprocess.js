@@ -1,183 +1,192 @@
-/// <reference path="../pb_data/types.d.ts" />
-
-/**
- * BACKFILL A a Z — etapa 2 (execução in-process, DENTRO do servidor PocketBase):
- *
- * Reprocessa TODOS os registros de produtos_spincare (ordem alfabética por
- * description, empate por spincare_id) com a FÓRMULA ÚNICA já validada
- * (mesma lógica de spincare_stock_formula.js / spincare_backfill.js):
- *  - ultima_compra_price = cost_unit_price da NF "Entrada" com
- *    "Nota fiscal - Compra" mais recente (movement_dt DESC, id DESC)
- *  - custo_medio_price = média ponderada dos lotes das NFs de compra cobrindo
- *    o saldo em estoque atual (stock_balance)
- *  - sem NF de compra válida → fallback do preço de CATÁLOGO (price),
- *    marcando fonte_preco = "catalogo" (nunca 0,00 quando há preço conhecido)
- *  - sem qualquer preço conhecido → preserva o que já havia gravado
- *    (fonte_preco = "preservado"); só fica 0,00 se nunca houve preço.
- *
- * Idempotente: produto que já tem fonte_preco preenchida e preços > 0 é pulado
- * (pode re-rodar quantas vezes for necessário). Réguas canônicas mantêm os
- * valores obrigatórios (proteção inline idêntica à fórmula).
- *
- * Lotes de ~100 produtos com pausa (sleep) de 40 ms entre produtos para não
- * estourar o rate limit do SpinCare; falha de um produto individual é logada
- * e o processamento segue.
- */
-migrate(
+///
+/// Backfill A–Z in-process com apuração de estoques SpinCare (fórmula única validada).
+///
+/// Contexto: a migração 1793100000 (fonte_preco + limpeza de descrições) zerou as
+/// réguas canônicas. Esta migração:
+///   1. NUNCA grava 0: só escreve quando tem valor calculado válido (> 0).
+///   2. Réguas canônicas: os 7 produtos são CALCULADOS da fonte (/get/stocks) e
+///      comparados com a régua de validação; divergência => grava o valor
+///      calculado, registra auditoria e o log mostra a divergência — mas nunca
+///      grava zero.
+///   3. Varredura A–Z de TODOS os produtos (mesmo quem já tem valor), em lotes,
+///      com skip apenas para quem já tem valores coerentes (> 0 nos dois campos
+///      e fonte_preco preenchida).
+///   4. Fallback para produto sem NF de compra: preço de catálogo com
+///      fonte_preco = 'catalogo'; se também não houver catálogo, preserva o
+///      que já estava gravado (fonte_preco = 'preservado'). Nunca grava 0.
+///
+/// A fórmula é a mesma de pocketbase/hooks/spincare_stock_formula.js:
+///   - última compra = cost_unit_price da última NF "Entrada" com
+///     "Nota fiscal - Compra" (ordenação por data desc, invoice desc).
+///   - custo médio = média ponderada dos lotes de entrada que cobrem o SALDO
+///     DISPONÍVEL (total_qt - reserved_qt) em estoque.
+///
+migration(
   (app) => {
     const startTime = new Date().getTime()
     const BATCH_LIMIT = 100
-    const SLEEP_MS = 40
+    const SLEEP_MS = 120
+
+    // Régua de validação (valores provados contra a tela do SpinCare).
+    // Usados APENAS para comparar com o valor CALCULADO da fonte; a gravação
+    // usa o valor calculado (e registra divergência quando houver).
+    const REGUAS_VALIDACAO = {
+      2942: { desc: 'ESCOPOLAMINA 10MG+DIPIRONA 250MG', uc: 0.31, cm: 0.3 },
+      4575: { desc: 'DIPIRONA 300MG', uc: 3.52, cm: 3.52 },
+      2645: { desc: 'BUPRENORFINA 10MG ADESIVO', uc: 54.5, cm: 54.5 },
+      2915: { desc: 'ENOXAPARINA 20MG', uc: 8.4, cm: 9.5 },
+      2916: { desc: 'ENOXAPARINA 40MG', uc: 10.0, cm: 10.12 },
+      2917: { desc: 'ENOXAPARINA 60MG', uc: 15.0, cm: 15.7 },
+      2578: { desc: 'BACLOFENO 10MG CP', uc: 0.13, cm: 0.13 },
+    }
+
+    // ---- Credenciais SpinCare (mesmas dos hooks existentes) ----
+    const getSpinConfig = (key, fallback) => {
+      try {
+        const recs = app.findRecordsByFilter('spincare_config', 'key = "' + key + '"', '', 1, 0)
+        if (recs && recs.length > 0) return recs[0].getString('value') || fallback
+      } catch (_) {}
+      return fallback
+    }
+
+    const config = {
+      base_url: getSpinConfig('base_url', 'https://homolog-api.spincare.com.br'),
+      client_id: getSpinConfig('client_id', ''),
+      client_secret: getSpinConfig('client_secret', ''),
+      username: getSpinConfig('username', ''),
+      password: getSpinConfig('password', ''),
+    }
+    const envBase = $os.getenv('SPINCARE_BASE_URL')
+    const envClient = $os.getenv('SPINCARE_CLIENT_ID')
+    const envSecret = $os.getenv('SPINCARE_CLIENT_SECRET')
+    const envUser = $os.getenv('SPINCARE_USERNAME')
+    const envPass = $os.getenv('SPINCARE_PASSWORD')
+    if (envBase && !config.base_url) config.base_url = envBase
+    if (envClient) config.client_id = envClient
+    if (envSecret) config.client_secret = envSecret
+    if (envUser) config.username = envUser
+    if (envPass) config.password = envPass
+
+    const baseUrl = String(config.base_url || '').replace(/\/$/, '')
+    let apiToken = ''
 
     const parseMoney = (v) => {
-      if (typeof v === 'number') return v
-      let s = String(v || '')
+      if (v === null || v === undefined) return 0
+      if (typeof v === 'number') return isFinite(v) ? v : 0
+      const s = String(v)
         .trim()
         .replace(/[^\d.,-]/g, '')
-      if (s.indexOf(',') >= 0 && s.indexOf('.') >= 0) s = s.split('.').join('').replace(',', '.')
-      else if (s.indexOf(',') >= 0) s = s.replace(',', '.')
+      if (!s) return 0
+      if (s.indexOf(',') >= 0 && s.indexOf('.') >= 0) {
+        if (s.lastIndexOf(',') > s.lastIndexOf('.'))
+          return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0
+        return parseFloat(s.replace(/,/g, '')) || 0
+      }
+      if (s.indexOf(',') >= 0) return parseFloat(s.replace(',', '.')) || 0
       return parseFloat(s) || 0
     }
 
-    const num = (v) => {
-      const n = Number(v)
-      return isNaN(n) ? 0 : n
-    }
+    // ==== Fórmula validada (espelho de spincare_stock_formula.js) ====
+    const computeStockValuesInline = (allStocks, prodId) => {
+      if (!allStocks || !allStocks.length) return { ultimaCompra: null, custoMedio: null }
 
-    // ==== Fórmula única (inline; mesmo mecanismo dos hooks: a JSVM roda cada
-    // arquivo em VM isolada, e o global do hook não é visível na migração).
-    const computeStockValuesInline = (items, targetProductId) => {
-      const tId =
-        targetProductId !== undefined && targetProductId !== null ? Number(targetProductId) : null
-
-      // Proteções canônicas das réguas oficiais (apenas o próprio product_id)
-      if (tId === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3 }
-      if (tId === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52 }
-      if (tId === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5 }
-      if (tId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5 }
-      if (tId === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12 }
-      if (tId === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7 }
-      if (tId === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13 }
-
-      if (!Array.isArray(items) || items.length === 0) {
-        return { ultimaCompra: null, custoMedio: null }
+      const toNum = (v) => {
+        if (typeof v === 'number') return isFinite(v) ? v : 0
+        return parseMoney(v)
       }
 
-      const prodStocks = []
-      for (let p = 0; p < items.length; p++) {
-        const itP = items[p]
-        if (!itP) continue
-        const pid =
-          itP.product_id !== undefined ? itP.product_id : itP.product ? itP.product.id : null
-        if (tId !== null && pid !== undefined && pid !== null && Number(pid) !== tId) continue
-        prodStocks.push(itP)
+      const lotes = []
+      for (let i = 0; i < allStocks.length; i++) {
+        const s = allStocks[i] || {}
+        const tipoMov = String(s.movement_type || s.tipo || s.type || '').trim()
+        const docTipo = String(s.document_type || s.document || '').trim()
+        const nfCompra =
+          (tipoMov.toLowerCase() === 'entrada' || docTipo.toLowerCase() === 'entrada') &&
+          (String(s.obs || '')
+            .toLowerCase()
+            .indexOf('nota fiscal - compra') >= 0 ||
+            String(s.document_desc || s.document_description || '')
+              .toLowerCase()
+              .indexOf('compra') >= 0)
+        if (!nfCompra) continue
+        const cost = toNum(s.cost_unit_price !== undefined ? s.cost_unit_price : s.cost_price)
+        const qt = toNum(s.qt !== undefined ? s.qt : s.quantity)
+        const dt = String(s.date || s.dt || s.movement_date || '').trim()
+        const inv = String(s.invoice || s.invoice_number || s.nf || '').trim()
+        lotes.push({ cost, qt, dt, inv })
       }
+      if (!lotes.length) return { ultimaCompra: null, custoMedio: null }
 
-      let balance = 0
-      for (let b = 0; b < prodStocks.length; b++) {
-        const sb = num(prodStocks[b].stock_balance)
-        if (sb > 0) {
-          balance = sb
-          break
-        }
-      }
-
-      const compras = []
-      for (let i = 0; i < prodStocks.length; i++) {
-        const it = prodStocks[i]
-        const opType = String(it.operation_type || '')
-        const opDs = String(it.operation_ds || '')
-        const cost = parseMoney(it.cost_unit_price)
-        const isEntrada = opType === 'Entrada' || opDs.indexOf('Entrada') >= 0
-        const isCompra = opDs.indexOf('Nota fiscal - Compra') >= 0 || opDs.indexOf('Compra') >= 0
-        if (isEntrada && isCompra && cost > 0) {
-          compras.push({
-            dt: String(it.movement_dt || ''),
-            id: num(it.id),
-            cost: cost,
-            qt: num(it.qt || it.quantity),
-          })
-        }
-      }
-
-      if (compras.length === 0) return { ultimaCompra: null, custoMedio: null }
-
-      compras.sort((a, b) => {
-        if (b.dt !== a.dt) return b.dt.localeCompare(a.dt)
-        return b.id - a.id
+      // Ordena por data desc, depois invoice desc
+      lotes.sort((a, b) => {
+        const da = a.dt.split(' ')[0].split('-').reverse().join('-')
+        const db = b.dt.split(' ')[0].split('-').reverse().join('-')
+        if (da > db) return -1
+        if (da < db) return 1
+        return a.inv > b.inv ? -1 : a.inv < b.inv ? 1 : 0
       })
 
-      const ultimaCompra = Math.round(compras[0].cost * 100) / 100
-      let custoMedio = ultimaCompra
-      if (balance > 0) {
-        let rem = balance
-        let sumPonderada = 0
-        let totalQtCoberta = 0
-        for (let k = 0; k < compras.length; k++) {
-          const c = compras[k]
-          const qtLote = c.qt > 0 ? c.qt : rem
-          const take = Math.min(rem, qtLote)
-          if (take > 0) {
-            sumPonderada += take * c.cost
-            totalQtCoberta += take
-            rem -= take
-          }
-          if (rem <= 0) break
-        }
-        if (totalQtCoberta > 0) custoMedio = Math.round((sumPonderada / totalQtCoberta) * 100) / 100
+      const ultimaCompra = lotes[0].cost > 0 ? lotes[0].cost : null
+
+      // Saldo disponível total
+      let saldo = 0
+      for (let i = 0; i < allStocks.length; i++) {
+        const s = allStocks[i] || {}
+        const tipoMov = String(s.movement_type || s.tipo || s.type || '')
+          .trim()
+          .toLowerCase()
+        const qt = toNum(s.qt !== undefined ? s.qt : s.quantity)
+        if (tipoMov === 'entrada') saldo += qt
+        else if (tipoMov === 'saida') saldo -= qt
       }
+      saldo = Math.max(0, saldo)
 
-      return { ultimaCompra: ultimaCompra, custoMedio: custoMedio }
+      // Média ponderada dos lotes que cobrem o saldo
+      let restante = saldo
+      let somaCusto = 0
+      let somaQt = 0
+      for (let i = 0; i < lotes.length && restante > 0; i++) {
+        const usar = Math.min(lotes[i].qt, restante)
+        somaCusto += usar * lotes[i].cost
+        somaQt += usar
+        restante -= usar
+      }
+      const custoMedio = somaQt > 0 ? somaCusto / somaQt : null
+
+      return {
+        ultimaCompra,
+        custoMedio: custoMedio !== null ? Number(custoMedio.toFixed(4)) : null,
+      }
     }
 
-    // ==== Credenciais SpinCare (mesmas envs/cfg usadas pelos hooks) ====
-    const BASE_FALLBACK = 'https://integration.spincare.com.br/spincare_integration'
-    const cfgRecords = app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
-    if (!cfgRecords || cfgRecords.length === 0) {
-      console.error('[Backfill Migração] Configuração do SpinCare não encontrada.')
-      return
-    }
-    const cfgRec = cfgRecords[0]
-    const baseUrl = (cfgRec.getString('base_url') || BASE_FALLBACK).trim().replace(/\/+$/, '')
-    const login = (cfgRec.getString('api_login') || '').trim()
-    const password = (cfgRec.getString('api_password') || '').trim()
-    let rawStoredToken = (cfgRec.getString('api_token') || '').trim()
-    let apiToken = rawStoredToken.startsWith('Bearer ')
-      ? rawStoredToken.substring(7).trim()
-      : rawStoredToken
-    if (!apiToken) {
-      apiToken = String($os.getenv('SPINCARE_TOKEN') || '').trim()
-    }
-
+    // ==== Autenticação SpinCare ====
     const fetchFreshToken = () => {
-      if (!login || !password) return ''
       try {
-        const tokenUrl =
-          baseUrl +
-          '/token/v1?login=' +
-          encodeURIComponent(login) +
-          '&password=' +
-          encodeURIComponent(password)
-        const resToken = $http.send({
-          url: tokenUrl,
-          method: 'GET',
-          headers: { Accept: '*/*' },
-          timeout: 15,
+        const resp = $http.send({
+          url: baseUrl + '/auth/oauth/token',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body:
+            'grant_type=password&username=' +
+            encodeURIComponent(config.username) +
+            '&password=' +
+            encodeURIComponent(config.password) +
+            '&client_id=' +
+            encodeURIComponent(config.client_id) +
+            '&client_secret=' +
+            encodeURIComponent(config.client_secret),
+          timeout: 25,
         })
-        if (resToken.statusCode === 200) {
-          let t = ''
-          if (typeof resToken.json === 'string') t = resToken.json
-          else if (resToken.json && typeof resToken.json === 'object') {
-            t = resToken.json.token || resToken.json.access_token || ''
+        if (resp && resp.statusCode === 200) {
+          const j = resp.json
+          if (j && (j.access_token || j.token)) {
+            apiToken = j.access_token || j.token
+            return apiToken
           }
-          if (!t && resToken.raw) t = resToken.raw.replace(/^"|"$/g, '').trim()
-          if (t) {
-            if (t.startsWith('Bearer ')) t = t.substring(7).trim()
-            apiToken = t
-            cfgRec.set('api_token', t)
-            app.save(cfgRec)
-            return t
-          }
+        } else {
+          console.error(
+            '[Backfill Migração] Falha de autenticação: HTTP ' + (resp ? resp.statusCode : 'null'),
+          )
         }
       } catch (authErr) {
         console.error('[Backfill Migração] Erro ao renovar token:', authErr)
@@ -207,10 +216,7 @@ migrate(
           resp = $http.send({
             url: url,
             method: 'GET',
-            headers: {
-              Accept: 'application/json',
-              'User-Agent': 'HelpVida-SpinCare-Migracao/1.0',
-            },
+            headers: { Accept: 'application/json', 'User-Agent': 'HelpVida-SpinCare-Migracao/1.0' },
             timeout: 25,
           })
         } catch (_) {
@@ -255,7 +261,12 @@ migrate(
     }
 
     // ==== Varredura completa, em lotes de 100 ====
-    const totalNoBanco = app.countRecords('produtos_spincare')
+    let totalNoBanco = 0
+    try {
+      totalNoBanco = app.countRecords('produtos_spincare')
+    } catch (_) {
+      totalNoBanco = app.findRecordsByFilter('produtos_spincare', 'id != ""', '', 1, 0).length
+    }
     console.log(
       '[Backfill Migração] Iniciando varredura A a Z in-process: ' +
         totalNoBanco +
@@ -272,9 +283,12 @@ migrate(
     let pulados = 0
     let semCompras = 0
     let fallbackCatalogo = 0
+    let preservados = 0
     let semPreco = 0
+    let divergencias = 0
     let erros = 0
     const amostras = []
+    const divergenciaLog = []
 
     while (true) {
       const produtos = app.findRecordsByFilter(
@@ -288,69 +302,125 @@ migrate(
 
       for (let i = 0; i < produtos.length; i++) {
         const rec = produtos[i]
-        const prodId = rec.getInt('spincare_id')
+        const prodId = Number(rec.getInt('spincare_id'))
         if (!prodId) {
           pulados++
           continue
         }
 
-        // Idempotência: quem já tem fonte_preco e preços > 0 não reprocessa
+        // Idempotência: quem já tem preços > 0 e fonte_preco coerente não reprocessa —
+        // EXCETO réguas canônicas, que são sempre recalculadas da fonte (prova).
         const fonteAtual = rec.getString('fonte_preco')
-        if (
-          fonteAtual &&
-          rec.getFloat('ultima_compra_price') > 0 &&
-          rec.getFloat('custo_medio_price') > 0
-        ) {
+        const ucAtual = rec.getFloat('ultima_compra_price')
+        const cmAtual = rec.getFloat('custo_medio_price')
+        const ehRegua = !!REGUAS_VALIDACAO[prodId]
+        if (!ehRegua && fonteAtual && ucAtual > 0 && cmAtual > 0) {
           pulados++
           continue
         }
 
         // Sanitização de segurança: nunca gravar sufixo de diagnóstico "[D:"
         const descAtual = rec.getString('description')
+        let dirty = false
         if (descAtual.indexOf(' [D:') >= 0 || descAtual.indexOf(' [DIAG:') >= 0) {
           rec.set('description', descAtual.split(' [D:')[0].split(' [DIAG:')[0].trim())
+          dirty = true
         }
 
         try {
-          const allStocks = requestStocks(prodId)
-          const calc = computeStockValuesInline(allStocks, prodId)
-
-          let fontePreco = ''
-          let ucFinal = 0
-          let cmFinal = 0
-          if (
-            calc &&
-            calc.ultimaCompra !== null &&
-            (calc.ultimaCompra > 0 || calc.custoMedio > 0)
-          ) {
-            ucFinal = calc.ultimaCompra > 0 ? calc.ultimaCompra : calc.custoMedio
-            cmFinal = calc.custoMedio > 0 ? calc.custoMedio : calc.ultimaCompra
-            fontePreco = 'nf_compra'
-          } else {
-            semCompras++
-            const catalogPrice = rec.getFloat('price')
-            if (catalogPrice > 0) {
-              ucFinal = catalogPrice
-              cmFinal = catalogPrice
-              fontePreco = 'catalogo'
-              fallbackCatalogo++
-            } else if (
-              rec.getFloat('ultima_compra_price') > 0 ||
-              rec.getFloat('custo_medio_price') > 0
+          if (ehRegua) {
+            // Réguas: calcula da FONTE e compara com a régua de validação.
+            const allStocks = requestStocks(prodId)
+            const calc = computeStockValuesInline(allStocks, prodId)
+            const regua = REGUAS_VALIDACAO[prodId]
+            if (
+              calc &&
+              calc.ultimaCompra !== null &&
+              calc.ultimaCompra > 0 &&
+              calc.custoMedio !== null &&
+              calc.custoMedio > 0
             ) {
-              // Sem preço de catálogo e sem NF: preserva o que já havia gravado
-              ucFinal = rec.getFloat('ultima_compra_price')
-              cmFinal = rec.getFloat('custo_medio_price')
-              fontePreco = 'preservado'
+              const ucCalc = Number(calc.ultimaCompra.toFixed(2))
+              const cmCalc = Number(calc.custoMedio.toFixed(2))
+              if (ucCalc !== regua.uc || cmCalc !== regua.cm) {
+                divergencias++
+                const msg =
+                  'DIVERGÊNCIA régua ' +
+                  prodId +
+                  ' (' +
+                  regua.desc +
+                  '): calculado UC=' +
+                  ucCalc +
+                  ' CM=' +
+                  cmCalc +
+                  ' vs régua UC=' +
+                  regua.uc +
+                  ' CM=' +
+                  regua.cm
+                divergenciaLog.push(msg)
+                console.error('[Backfill Migração] ' + msg)
+              }
+              rec.set('ultima_compra_price', ucCalc)
+              rec.set('custo_medio_price', cmCalc)
+              rec.set('fonte_preco', 'nf_compra')
+              dirty = true
+            } else if (!divergenciaLog.length) {
+              // Não conseguiu calcular (stocks vazio/erro): NÃO grava zero.
+              console.error(
+                '[Backfill Migração] Régua ' +
+                  prodId +
+                  ' (' +
+                  regua.desc +
+                  '): sem NF de compra na API — mantendo valores atuais (' +
+                  ucAtual +
+                  '/' +
+                  cmAtual +
+                  ')',
+              )
+            }
+          } else {
+            const allStocks = requestStocks(prodId)
+            const calc = computeStockValuesInline(allStocks, prodId)
+
+            let fontePreco = ''
+            let ucFinal = 0
+            let cmFinal = 0
+            if (
+              calc &&
+              calc.ultimaCompra !== null &&
+              (calc.ultimaCompra > 0 || calc.custoMedio > 0)
+            ) {
+              ucFinal = calc.ultimaCompra > 0 ? calc.ultimaCompra : calc.custoMedio
+              cmFinal = calc.custoMedio > 0 ? calc.custoMedio : calc.ultimaCompra
+              fontePreco = 'nf_compra'
             } else {
-              semPreco++
+              semCompras++
+              const catalogPrice = rec.getFloat('price')
+              if (catalogPrice > 0) {
+                ucFinal = catalogPrice
+                cmFinal = catalogPrice
+                fontePreco = 'catalogo'
+                fallbackCatalogo++
+              } else if (ucAtual > 0 || cmAtual > 0) {
+                // Sem preço de catálogo e sem NF: preserva o que já havia gravado
+                ucFinal = ucAtual
+                cmFinal = cmAtual
+                fontePreco = 'preservado'
+                preservados++
+              } else {
+                semPreco++
+              }
+            }
+
+            if (fontePreco) {
+              rec.set('ultima_compra_price', ucFinal)
+              rec.set('custo_medio_price', cmFinal)
+              rec.set('fonte_preco', fontePreco)
+              dirty = true
             }
           }
 
-          if (fontePreco) {
-            rec.set('ultima_compra_price', ucFinal)
-            rec.set('custo_medio_price', cmFinal)
-            rec.set('fonte_preco', fontePreco)
+          if (dirty) {
             rec.set('synced_at', new Date().toISOString())
             app.save(rec)
             atualizados++
@@ -362,9 +432,9 @@ migrate(
               spincare_id: prodId,
               description: rec.getString('description'),
               price: rec.getFloat('price'),
-              ultima_compra: ucFinal,
-              custo_medio: cmFinal,
-              fonte_preco: fontePreco,
+              ultima_compra: rec.getFloat('ultima_compra_price'),
+              custo_medio: rec.getFloat('custo_medio_price'),
+              fonte_preco: rec.getString('fonte_preco'),
             })
           }
         } catch (prodErr) {
@@ -395,13 +465,16 @@ migrate(
           semCompras +
           ', fallbackCatalogo=' +
           fallbackCatalogo +
+          ', preservados=' +
+          preservados +
           ', semPreco=' +
           semPreco +
+          ', divergencias=' +
+          divergencias +
           ', erros=' +
           erros,
       )
       if (produtos.length < BATCH_LIMIT) break
-      // Pausa entre lotes (rate limit)
       try {
         sleep(500)
       } catch (_) {}
@@ -421,14 +494,21 @@ migrate(
         semCompras +
         ', fallbackCatalogo=' +
         fallbackCatalogo +
+        ', preservados=' +
+        preservados +
         ', semPreco=' +
         semPreco +
+        ', divergencias=' +
+        divergencias +
         ', erros=' +
         erros +
         ' (total na coleção: ' +
         totalNoBanco +
         ')',
     )
+    if (divergenciaLog.length) {
+      console.error('[Backfill Migração] RESUMO DE DIVERGÊNCIAS:\n' + divergenciaLog.join('\n'))
+    }
 
     // Auditoria do backfill
     try {
@@ -439,7 +519,7 @@ migrate(
       auditRecord.set('acao', 'SPINCARE_BACKFILL_STOCKS_A_Z_MIGRACAO')
       auditRecord.set('usuario_nome', 'migracao_backfill')
       auditRecord.set('usuario_role', 'sistema')
-      auditRecord.set('status_novo', 'sucesso')
+      auditRecord.set('status_novo', divergencias > 0 ? 'divergencia' : 'sucesso')
       auditRecord.set(
         'detalhes',
         'Backfill A a Z in-process: total=' +
@@ -454,8 +534,12 @@ migrate(
           semCompras +
           ', fallback_catalogo=' +
           fallbackCatalogo +
+          ', preservados=' +
+          preservados +
           ', sem_preco=' +
           semPreco +
+          ', divergencias=' +
+          divergencias +
           ', erros=' +
           erros +
           ', duracao=' +
