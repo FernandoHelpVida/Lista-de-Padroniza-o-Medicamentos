@@ -1,16 +1,30 @@
 /**
  * ============================================================================
- * CRON TEMPORÁRIO — VARREDURA A–Z DE ESTOQUES (BACKFILL IN-PROCESS)
+ * CRON TEMPORÁRIO — VARREDURA A–Z DE ESTOQUES (BACKFILL IN-PROCESS) — v2
  * ============================================================================
- * Executa a MESMA lógica de pocketbase/hooks/spincare_backfill.js (rota
- * /backend/v1/admin/spincare/products/backfill-stocks), porém in-process via
- * cron — sem depender de chamada HTTP externa e sem precisar de chave.
+ * Correções da v1 (que travava no offset 0):
+ * 1. Marcador de lote gravado ANTES do processamento (BACKFILL_AZ_LOTE_INI,
+ *    com start_offset e next_offset previstos) — se o tick morrer no meio,
+ *    o próximo retoma de onde parou. O marcador final (BACKFILL_AZ_LOTE)
+ *    consolida o progresso real. Se a gravação do marcador inicial falhar,
+ *    o tick ABORTA (nunca processa sem marcador — evita loop no offset 0).
+ * 2. Trava anti-simultânea real: enquanto o marcador mais recente for um
+ *    INI com menos de 2 min, outro tick está em andamento → pula. Lotes
+ *    concluídos exigem apenas 20s de intervalo entre ticks.
+ * 3. Limites de rede apertados: no máx. 5 páginas de /get/stocks por produto
+ *    e timeout de 20s, para o lote caber no intervalo entre ticks.
+ * 4. Lote de 60 produtos (não 400): com ~5 requisições HTTP por produto,
+ *    400 nunca cabiam nos 60s entre ticks — o tick era morto sem gravar
+ *    o marcador final e o próximo tick recomeçava do offset 0 (loop
+ *    eterno na letra A). Além disso, o marcador BACKFILL_AZ_LOTE é
+ *    gravado DENTRO do loop a cada 10 produtos, garantindo retomada
+ *    mesmo que o tick seja morto no meio.
  *
- * Dispara 15 s após a inicialização do servidor, em LOTES de 25 produtos
- * (ordem alfabética por description), com retomabilidade: cada lote grava um
- * marcador em audit_logs e o próximo lote só começa depois de um intervalo.
+ * Fórmula única (spincare_stock_formula.js): ultima_compra = cost_unit_price
+ * da última NF "Entrada" com "Nota fiscal - Compra"; custo médio = média
+ * ponderada dos lotes de compra que cobrem o saldo em estoque atual.
  * NUNCA grava 0 sobre régua válida: sem NF de compra usa preço de catálogo
- * (campo price) e marca fonte_preco = "catalogo".
+ * (campo price) e marca fonte_preco = "catalogo" (ou "preservado").
  * ============================================================================
  */
 
@@ -19,7 +33,7 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     const app = typeof $app !== 'undefined' ? $app : null
     if (!app) return
 
-    // ---- Conclusão: quando nada restar, remove este próprio cron ----
+    // ---- Conclusão: quando nada restar, apenas retorna ----
     const doneMarker = app.findRecordsByFilter(
       'audit_logs',
       'colecao = "produtos_spincare" && acao = "BACKFILL_AZ_DONE"',
@@ -28,33 +42,73 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
       0,
     )
     if (doneMarker && doneMarker.length > 0) {
-      console.log('[Backfill AZ Temp] Marca BACKFILL_AZ_DONE presente — varredura concluída.')
+      console.log('[Backfill AZ] Marca BACKFILL_AZ_DONE presente — varredura concluída.')
       return
     }
 
-    // ---- Trava anti-simultânea: lote em andamento ou iniciado há menos de 90 s ----
+    const writeMarker = (acao, status, detalhes) => {
+      const auditCol = app.findCollectionByNameOrId('audit_logs')
+      const auditRecord = new Record(auditCol)
+      auditRecord.set('colecao', 'produtos_spincare')
+      auditRecord.set('registro_id', 'backfill_az_temp')
+      auditRecord.set('acao', acao)
+      auditRecord.set('usuario_nome', 'Cron Backfill AZ')
+      auditRecord.set('usuario_email', 'cron@helpvida.internal')
+      auditRecord.set('usuario_role', 'sistema')
+      auditRecord.set('status_novo', status)
+      auditRecord.set('detalhes', detalhes)
+      app.save(auditRecord)
+    }
+
+    // ---- Estado do marcador mais recente (retomada + trava) ----
     const lastRun = app.findRecordsByFilter(
       'audit_logs',
-      'colecao = "produtos_spincare" && (acao = "BACKFILL_AZ_LOTE" || acao = "BACKFILL_AZ_DONE")',
+      'colecao = "produtos_spincare" && (acao = "BACKFILL_AZ_LOTE" || acao = "BACKFILL_AZ_LOTE_INI" || acao = "BACKFILL_AZ_DONE")',
       '-created',
       1,
       0,
     )
     const nowMs = new Date().getTime()
+    let resumeOffset = 0
     if (lastRun && lastRun.length > 0) {
-      const lastCreated = new Date(lastRun[0].getString('created')).getTime()
-      if (nowMs - lastCreated < 65000) {
-        console.log('[Backfill AZ Temp] Lote anterior muito recente — aguardando próximo tick.')
+      const last = lastRun[0]
+      const lastAcao = String(last.getString('acao') || '')
+      const det = String(last.getString('detalhes') || '')
+      const lastCreated = new Date(last.getString('created')).getTime()
+      const ageMs = nowMs - lastCreated
+
+      if (lastAcao === 'BACKFILL_AZ_DONE') {
+        console.log('[Backfill AZ] Varredura já concluída anteriormente.')
         return
       }
-    }
-
-    // ---- Offset de retomada (persistido no próprio marcador de lote) ----
-    let resumeOffset = 0
-    if (lastRun && lastRun.length > 0 && lastRun[0].getString('acao') === 'BACKFILL_AZ_LOTE') {
-      const det = String(lastRun[0].getString('detalhes') || '')
-      const m = det.match(/next_offset=(\d+)/)
-      if (m) resumeOffset = parseInt(m[1], 10) || 0
+      if (lastAcao === 'BACKFILL_AZ_LOTE_INI') {
+        if (ageMs < 120000) {
+          // Lote em andamento em outro tick (ou tick recém-iniciado) → aguarda.
+          console.log(
+            '[Backfill AZ] Lote em andamento (idade ' +
+              Math.round(ageMs / 1000) +
+              's) — pulando tick.',
+          )
+          return
+        }
+        // Tick órfão (morreu sem marcador final): retoma do INÍCIO do lote
+        // que ficou pela metade (reprocessar é seguro — gravação é idempotente).
+        const mStart = det.match(/start_offset=(\d+)/)
+        resumeOffset = mStart ? parseInt(mStart[1], 10) || 0 : 0
+        console.log(
+          '[Backfill AZ] Tick órfão detectado — retomando lote em start_offset=' + resumeOffset,
+        )
+      } else {
+        // LOTE concluído: retoma do next_offset consolidado.
+        const mNext = det.match(/next_offset=(\d+)/)
+        resumeOffset = mNext ? parseInt(mNext[1], 10) || 0 : 0
+        if (ageMs < 20000) {
+          console.log(
+            '[Backfill AZ] Lote anterior concluído há menos de 20s — aguardando próximo tick.',
+          )
+          return
+        }
+      }
     }
 
     const parseMoney = (v) => {
@@ -70,7 +124,7 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     const BASE_FALLBACK = 'https://integration.spincare.com.br/spincare_integration'
     const records = app.findRecordsByFilter('spincare_config', 'id != ""', '-created', 1, 0)
     if (!records || records.length === 0) {
-      console.error('[Backfill AZ Temp] Configuração do SpinCare não encontrada.')
+      console.error('[Backfill AZ] Configuração do SpinCare não encontrada.')
       return
     }
     const cfgRec = records[0]
@@ -113,7 +167,7 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
           }
         }
       } catch (authErr) {
-        console.error('[Backfill AZ Temp] Erro ao renovar token:', authErr)
+        console.error('[Backfill AZ] Erro ao renovar token:', authErr)
       }
       return ''
     }
@@ -122,23 +176,22 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
 
     const requestStocks = (prodId) => {
       let allStocks = []
-      for (let p = 1; p <= 10; p++) {
-        const url =
-          baseUrl +
-          '/integration-engine/get/stocks?token=' +
-          encodeURIComponent(apiToken) +
-          '&product_id=' +
-          prodId +
-          '&page_number=' +
-          p +
-          '&page_size=500'
+      for (let p = 1; p <= 5; p++) {
         let resp = null
         try {
           resp = $http.send({
-            url: url,
+            url:
+              baseUrl +
+              '/integration-engine/get/stocks?token=' +
+              encodeURIComponent(apiToken) +
+              '&product_id=' +
+              prodId +
+              '&page_number=' +
+              p +
+              '&page_size=500',
             method: 'GET',
-            headers: { Accept: 'application/json', 'User-Agent': 'HelpVida-BackfillAZ/1.0' },
-            timeout: 25,
+            headers: { Accept: 'application/json', 'User-Agent': 'HelpVida-BackfillAZ/2.0' },
+            timeout: 20,
           })
         } catch (_) {
           break
@@ -158,8 +211,8 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
                   p +
                   '&page_size=500',
                 method: 'GET',
-                headers: { Accept: 'application/json', 'User-Agent': 'HelpVida-BackfillAZ/1.0' },
-                timeout: 25,
+                headers: { Accept: 'application/json', 'User-Agent': 'HelpVida-BackfillAZ/2.0' },
+                timeout: 20,
               })
             } catch (_) {
               break
@@ -286,8 +339,8 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
       }
     }
 
-    // ---- LOTE: 400 produtos por execução, ordem alfabética ----
-    const LOTE = 400
+    // ---- LOTE: 60 produtos por execução, ordem alfabética ----
+    const LOTE = 60
     const totalNoBanco = app.countRecords('produtos_spincare')
     const produtos = app.findRecordsByFilter(
       'produtos_spincare',
@@ -297,8 +350,45 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
       resumeOffset,
     )
 
+    if (!produtos || produtos.length === 0) {
+      // Offset além do fim do catálogo → varredura concluída.
+      try {
+        writeMarker(
+          'BACKFILL_AZ_DONE',
+          'sucesso',
+          'Backfill AZ in-process concluído: catálogo inteiro varrido (total=' + totalNoBanco + ')',
+        )
+        console.log('[Backfill AZ] Varredura A–Z CONCLUÍDA (total=' + totalNoBanco + ').')
+      } catch (doneErr) {
+        console.error('[Backfill AZ] Erro ao gravar marca de conclusão:', doneErr)
+      }
+      return
+    }
+
+    // ---- MARCADOR INICIAL ANTES DE PROCESSAR (obrigatório) ----
+    try {
+      writeMarker(
+        'BACKFILL_AZ_LOTE_INI',
+        'em_progresso',
+        'Backfill AZ in-process: start_offset=' +
+          resumeOffset +
+          ', next_offset=' +
+          (resumeOffset + produtos.length) +
+          ', produtos_no_lote=' +
+          produtos.length +
+          ', total=' +
+          totalNoBanco,
+      )
+    } catch (iniErr) {
+      console.error(
+        '[Backfill AZ] FALHA ao gravar marcador inicial — abortando tick (sem processar):',
+        iniErr,
+      )
+      return
+    }
+
     console.log(
-      '[Backfill AZ Temp] Lote offset=' +
+      '[Backfill AZ] Lote offset=' +
         resumeOffset +
         ' com ' +
         produtos.length +
@@ -316,63 +406,90 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     for (let i = 0; i < produtos.length; i++) {
       const rec = produtos[i]
       const prodId = rec.getInt('spincare_id')
-      if (!prodId) continue
-
-      const allStocks = requestStocks(prodId)
-      const { ultimaCompra, custoMedio, hasCompras } = calcStockValues(prodId, allStocks)
-
-      let fontePreco = ''
-      let ucFinal = 0
-      let cmFinal = 0
-      if (hasCompras && (ultimaCompra > 0 || custoMedio > 0)) {
-        ucFinal = ultimaCompra > 0 ? ultimaCompra : custoMedio
-        cmFinal = custoMedio > 0 ? custoMedio : ultimaCompra
-        fontePreco = 'nf_compra'
-      } else {
-        semCompras++
-        const catalogPrice = rec.getFloat('price')
-        const existingUc = rec.getFloat('ultima_compra_price')
-        const existingCm = rec.getFloat('custo_medio_price')
-        if (catalogPrice > 0) {
-          ucFinal = catalogPrice
-          cmFinal = catalogPrice
-          fontePreco = 'catalogo'
-          fallbackCatalogo++
-        } else if (existingUc > 0 && existingCm > 0) {
-          ucFinal = existingUc
-          cmFinal = existingCm
-          fontePreco = 'preservado'
-        } else {
-          semPreco++
-        }
+      if (!prodId) {
+        processados++
+        continue
       }
 
-      if (fontePreco) {
-        rec.set('ultima_compra_price', ucFinal)
-        rec.set('custo_medio_price', cmFinal)
-        rec.set('fonte_preco', fontePreco)
-        rec.set('synced_at', new Date().toISOString())
-        try {
-          app.save(rec)
-          atualizados++
-        } catch (saveErr) {
-          console.error('[Backfill AZ Temp] Erro ao salvar produto ' + prodId + ':', saveErr)
+      try {
+        const allStocks = requestStocks(prodId)
+        const { ultimaCompra, custoMedio, hasCompras } = calcStockValues(prodId, allStocks)
+
+        let fontePreco = ''
+        let ucFinal = 0
+        let cmFinal = 0
+        if (hasCompras && (ultimaCompra > 0 || custoMedio > 0)) {
+          ucFinal = ultimaCompra > 0 ? ultimaCompra : custoMedio
+          cmFinal = custoMedio > 0 ? custoMedio : ultimaCompra
+          fontePreco = 'nf_compra'
+        } else {
+          semCompras++
+          const catalogPrice = rec.getFloat('price')
+          const existingUc = rec.getFloat('ultima_compra_price')
+          const existingCm = rec.getFloat('custo_medio_price')
+          if (catalogPrice > 0) {
+            ucFinal = catalogPrice
+            cmFinal = catalogPrice
+            fontePreco = 'catalogo'
+            fallbackCatalogo++
+          } else if (existingUc > 0 && existingCm > 0) {
+            ucFinal = existingUc
+            cmFinal = existingCm
+            fontePreco = 'preservado'
+          } else {
+            semPreco++
+          }
         }
+
+        // GUARD ANTI-ZERO: nunca grava 0/blank sobre valores existentes.
+        if (fontePreco && (ucFinal > 0 || cmFinal > 0)) {
+          rec.set('ultima_compra_price', ucFinal)
+          rec.set('custo_medio_price', cmFinal)
+          rec.set('fonte_preco', fontePreco)
+          rec.set('synced_at', new Date().toISOString())
+          try {
+            app.save(rec)
+            atualizados++
+          } catch (saveErr) {
+            console.error('[Backfill AZ] Erro ao salvar produto ' + prodId + ':', saveErr)
+          }
+        }
+      } catch (prodErr) {
+        console.error(
+          '[Backfill AZ] Erro no produto ' + prodId + ' (seguindo pro próximo):',
+          prodErr,
+        )
       }
       processados++
-
-      if (sleep && typeof sleep === 'function') {
+      // Progresso persistido a cada 10 produtos: se o tick for morto no
+      // meio, o próximo retoma do ponto consolidado (nunca do offset 0).
+      if (processados > 0 && processados % 10 === 0 && i < produtos.length - 1) {
         try {
-          sleep(40)
-        } catch (_) {}
+          writeMarker(
+            'BACKFILL_AZ_LOTE',
+            'em_progresso',
+            'Backfill AZ in-process (progresso parcial): start_offset=' +
+              resumeOffset +
+              ', processados=' +
+              processados +
+              ', atualizados=' +
+              atualizados +
+              ', next_offset=' +
+              (resumeOffset + processados) +
+              ', total=' +
+              totalNoBanco,
+          )
+        } catch (progErr) {
+          console.error('[Backfill AZ] Erro ao gravar progresso parcial:', progErr)
+        }
       }
     }
 
-    const nextOffset = resumeOffset + produtos.length
-    const done = nextOffset >= totalNoBanco || produtos.length === 0
+    const nextOffset = resumeOffset + processados
+    const done = nextOffset >= totalNoBanco
 
     console.log(
-      '[Backfill AZ Temp] Lote concluído: processados=' +
+      '[Backfill AZ] Lote concluído: processados=' +
         processados +
         ', atualizados=' +
         atualizados +
@@ -388,20 +505,12 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
         done,
     )
 
-    // ---- Marcador de progresso em audit_logs (retomada + trava) ----
+    // ---- Marcador final de progresso (retomada do próximo tick) ----
     try {
-      const auditCol = app.findCollectionByNameOrId('audit_logs')
-      const auditRecord = new Record(auditCol)
-      auditRecord.set('colecao', 'produtos_spincare')
-      auditRecord.set('registro_id', 'backfill_az_temp')
-      auditRecord.set('acao', done ? 'BACKFILL_AZ_DONE' : 'BACKFILL_AZ_LOTE')
-      auditRecord.set('usuario_nome', 'Cron Backfill AZ')
-      auditRecord.set('usuario_email', 'cron@helpvida.internal')
-      auditRecord.set('usuario_role', 'sistema')
-      auditRecord.set('status_novo', done ? 'sucesso' : 'em_progresso')
-      auditRecord.set(
-        'detalhes',
-        'Backfill AZ in-process: offset=' +
+      writeMarker(
+        done ? 'BACKFILL_AZ_DONE' : 'BACKFILL_AZ_LOTE',
+        done ? 'sucesso' : 'em_progresso',
+        'Backfill AZ in-process: start_offset=' +
           resumeOffset +
           ', processados=' +
           processados +
@@ -418,11 +527,10 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
           ', total=' +
           totalNoBanco,
       )
-      app.save(auditRecord)
     } catch (auditErr) {
-      console.error('[Backfill AZ Temp] Erro ao gravar marcador:', auditErr)
+      console.error('[Backfill AZ] Erro ao gravar marcador final:', auditErr)
     }
   } catch (err) {
-    console.error('[Backfill AZ Temp] Erro fatal no tick:', err)
+    console.error('[Backfill AZ] Erro fatal no tick:', err)
   }
 })
