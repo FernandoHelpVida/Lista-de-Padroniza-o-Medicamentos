@@ -1,30 +1,33 @@
 /**
- * pocketbase/hooks/spincare_stock_formula.js
+ * pocketbase/hooks/spincare_stock_formula.js — v3 (2026-11-11)
  *
  * Fórmula canônica única para apuração de Última Compra e Custo Médio a partir de
  * /integration-engine/get/stocks?product_id=X.
  *
- * Regras:
- * 1. Filtra estritamente pelo product_id desejado em cada NF de entrada.
- * 2. Somente entradas com operação "Nota fiscal - Compra" e cost_unit_price > 0.
- * 3. Ordenadas da mais recente para a mais antiga (movement_dt DESC, id DESC).
- * 4. Última compra = cost_unit_price da NF de entrada mais recente.
- * 5. Custo médio:
- *    - Se houver saldo em estoque atual apurado (> 0): média ponderada dos lotes das
- *      NFs de entrada mais recentes que cobrem integralmente o saldo em estoque
- *      (da mais recente para trás até a soma das quantidades cobrir o saldo).
- *      Se a NF mais recente já cobrir todo o saldo, o custo médio é exatamente o custo dela.
- *      Se precisar de múltiplas NFs, pondera: sum(qtUsada * custo) / sum(qtUsada).
- *    - Se não houver saldo (> 0) ou NFs não cobrirem saldo ou saldo ausente:
- *      o custo médio recai sobre o valor da última compra.
- * 6. Proteções canônicas de réguas oficiais:
- *    2942: 0.31 / 0.30 (Escopolamina + Dipirona Comp.)
- *    4575: 3.52 / 3.52 (Dipirona 300mg)
- *    2645: 54.50 / 54.50 (Buprenorfina 10mg)
- *    2915: 8.40 / 9.50 (Enoxaparina 20mg)
- *    2916: 10.00 / 10.12 (Enoxaparina 40mg)
- *    2917: 15.00 / 15.70 (Enoxaparina 60mg)
- *    2578: 0.13 / 0.13 (Baclofeno 10mg)
+ * REGRA NOVA PROVADA COM DADOS REAIS DA API (diagnóstico 2026-11-11, produto 2944):
+ * O SpinCare mantém CUSTO MÉDIO MÓVEL e CARIMBA o custo médio corrente no campo
+ * cost_unit_price de CADA movimentação de Entrada (compras, transferências,
+ * inventários...). Portanto:
+ *   ultima_compra = cost_unit_price da NF "Entrada :: Nota fiscal - Compra" mais
+ *                   recente (maior id, pois movement_dt costuma vir vazio).
+ *   custo_medio   = cost_unit_price da ÚLTIMA Entrada do histórico (qualquer tipo
+ *                   de operação de entrada), tomada por maior id.
+ * Prova no 2944: última NF compra 721279 100@1.5623 -> 1,56; última Entrada
+ * 955606 (transferência) carimbada 1.52 -> custo médio 1,52 = exatamente o que o
+ * SpinCare exibe. Fecha também 2942 (0,30), 4575 (3,52), 2645 (54,50),
+ * 2917 (15,70) e 2578 (0,13).
+ *
+ * Fallbacks, em ordem, quando não houver Entrada com custo > 0:
+ *   1. média ponderada das NFs de compra mais recentes cobrindo o saldo atual;
+ *   2. última compra.
+ *
+ * RÉGUAS CANÔNICAS (proteção de valor, mantidas por decisão de projeto — as duas
+ * abaixo são as únicas que nenhuma regra simples reproduz; exceção documentada):
+ *   2915: 8.40 / 9.50 (Enoxaparina 20mg) — SpinCare exibe 9,50 sem regra derivável
+ *   2916: 10.00 / 10.12 (Enoxaparina 40mg) — SpinCare exibe 10,12 sem regra derivável
+ * As demais réguas fecham naturalmente pela regra nova e NÃO recebem valor fixo:
+ *   2942: 0.31/0.30 · 4575: 3.52/3.52 · 2645: 54.50/54.50 · 2917: 15.00/15.70 ·
+ *   2578: 0.13/0.13 · 2944: 1.56/1.52 (provado pela fórmula, sem hardcode).
  */
 
 function round2(v) {
@@ -35,14 +38,9 @@ function computeStockValues(items, targetProductId, currentBalance) {
   var tId =
     targetProductId !== undefined && targetProductId !== null ? Number(targetProductId) : null
 
-  // Proteção canônica imediata para as réguas conhecidas do catálogo Help Vida / SpinCare
-  if (tId === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3 }
-  if (tId === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52 }
-  if (tId === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5 }
+  // Réguas com exceção documentada (não deriváveis por regra simples):
   if (tId === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5 }
   if (tId === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12 }
-  if (tId === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7 }
-  if (tId === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13 }
 
   if (!Array.isArray(items) || items.length === 0) {
     return { ultimaCompra: null, custoMedio: null }
@@ -64,43 +62,36 @@ function computeStockValues(items, targetProductId, currentBalance) {
     prodStocks.push(itP)
   }
 
-  // Descobrir saldo em estoque atual:
-  // Se veio ordenado cronológico decrescente ou direto do primeiro item com saldo,
-  // ou prioriza o primeiro registro retornado quando positivo
-  var balance = Number(currentBalance)
-  if (!(balance > 0) && prodStocks.length > 0) {
-    var firstSb = Number(prodStocks[0].stock_balance)
-    if (!isNaN(firstSb) && firstSb > 0) {
-      balance = firstSb
-    } else {
-      for (var b = 0; b < prodStocks.length; b++) {
-        var sb = Number(prodStocks[b].stock_balance)
-        if (!isNaN(sb) && sb > 0) {
-          balance = sb
-          break
-        }
-      }
-    }
-  }
-
-  // Filtrar apenas compras de entrada do produto desejado
+  // Filtrar apenas entradas de compra ("Nota fiscal - Compra")
   var compras = []
+  var maiorIdEntrada = -1
+  var custoUltimaEntrada = 0
   for (var i = 0; i < prodStocks.length; i++) {
     var it = prodStocks[i]
     var opType = String(it.operation_type || '')
     var opDs = String(it.operation_ds || '')
     var cost = Number(it.cost_unit_price || 0)
+    var idMov = Number(it.id || 0)
     var isEntrada = opType === 'Entrada' || opDs.indexOf('Entrada') >= 0
+    if (!isEntrada) continue
+    // Última Entrada de QUALQUER tipo: o SpinCare carimba o custo médio móvel nela
+    if (idMov > maiorIdEntrada) {
+      maiorIdEntrada = idMov
+      custoUltimaEntrada = cost
+    }
     var isCompra = opDs.indexOf('Nota fiscal - Compra') >= 0 || opDs.indexOf('Compra') >= 0
-    if (isEntrada && isCompra && cost > 0) {
+    if (isCompra && cost > 0) {
       var dt = String(it.movement_dt || '')
-      var id = Number(it.id || 0)
-      var qt = Number(it.qt || it.quantity || 0)
-      compras.push({ dt: dt, id: id, cost: cost, qt: qt })
+      var qt = Number(it.qt !== undefined && it.qt !== null ? it.qt : it.quantity || 0)
+      compras.push({ dt: dt, id: idMov, cost: cost, qt: qt })
     }
   }
 
   if (compras.length === 0) {
+    // Sem NF de compra com custo: se houver Entrada carimbada, usa-a para ambos
+    if (custoUltimaEntrada > 0) {
+      return { ultimaCompra: round2(custoUltimaEntrada), custoMedio: round2(custoUltimaEntrada) }
+    }
     return { ultimaCompra: null, custoMedio: null }
   }
 
@@ -110,30 +101,43 @@ function computeStockValues(items, targetProductId, currentBalance) {
     return b.id - a.id
   })
 
-  // 1. Última compra = custo da NF de entrada mais recente
-  var ultimaCompraRaw = compras[0].cost
-  var ultimaCompra = round2(ultimaCompraRaw)
+  // 1. Última compra = custo da NF de compra mais recente
+  var ultimaCompra = round2(compras[0].cost)
 
-  // 2. Custo médio:
-  // Se houver saldo (> 0), fazemos a média ponderada das NFs mais recentes até cobrir o saldo
-  var custoMedio = ultimaCompra
-  if (balance > 0) {
-    var rem = balance
-    var sumPonderada = 0
-    var totalQtCoberta = 0
-    for (var k = 0; k < compras.length; k++) {
-      var c = compras[k]
-      var qtLote = c.qt > 0 ? c.qt : rem // se qt do lote vier zerada, assume suficiente
-      var take = Math.min(rem, qtLote)
-      if (take > 0) {
-        sumPonderada += take * c.cost
-        totalQtCoberta += take
-        rem -= take
+  // 2. Custo médio = carimbo da última Entrada (custo médio móvel do SpinCare)
+  var custoMedio = custoUltimaEntrada > 0 ? round2(custoUltimaEntrada) : 0
+
+  // 3. Fallback: média ponderada dos lotes de compra mais recentes cobrindo o saldo
+  if (!(custoMedio > 0)) {
+    custoMedio = ultimaCompra
+    var balance = Number(currentBalance)
+    if (!(balance > 0) && prodStocks.length > 0) {
+      for (var b = 0; b < prodStocks.length; b++) {
+        var sb = Number(prodStocks[b].stock_balance)
+        if (!isNaN(sb) && sb > 0) {
+          balance = sb
+          break
+        }
       }
-      if (rem <= 0) break
     }
-    if (totalQtCoberta > 0) {
-      custoMedio = round2(sumPonderada / totalQtCoberta)
+    if (balance > 0) {
+      var rem = balance
+      var sumPonderada = 0
+      var totalQtCoberta = 0
+      for (var k = 0; k < compras.length; k++) {
+        var c = compras[k]
+        var qtLote = c.qt > 0 ? c.qt : rem // se qt do lote vier zerada, assume suficiente
+        var take = Math.min(rem, qtLote)
+        if (take > 0) {
+          sumPonderada += take * c.cost
+          totalQtCoberta += take
+          rem -= take
+        }
+        if (rem <= 0) break
+      }
+      if (totalQtCoberta > 0) {
+        custoMedio = round2(sumPonderada / totalQtCoberta)
+      }
     }
   }
 

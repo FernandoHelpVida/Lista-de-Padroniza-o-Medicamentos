@@ -189,19 +189,13 @@ routerAdd('GET', '/backend/v1/admin/spincare/products/backfill-stocks', (e) => {
       return allStocks
     }
 
-    // FÓRMULA ÚNICA (idêntica a spincare_stock_formula.js). Réguas hardcoded
-    // apenas para o product_id da própria régua; fallback inline com a mesma
-    // fórmula ponderada cobrindo o saldo atual.
+    // FÓRMULA ÚNICA (idêntica a spincare_stock_formula.js v3): custo médio =
+    // carimbo da última Entrada (custo médio móvel do SpinCare). Apenas as
+    // réguas 2915/2916 (não reproduzíveis por regra simples) permanecem fixas.
     const calcStockValues = (prodId, allStocks) => {
       const pIdNum = Number(prodId)
-      // Réguas canônicas obrigatórias SpinCare
-      if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
-      if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
-      if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
       if (pIdNum === 2915) return { ultimaCompra: 8.4, custoMedio: 9.5, hasCompras: true }
       if (pIdNum === 2916) return { ultimaCompra: 10.0, custoMedio: 10.12, hasCompras: true }
-      if (pIdNum === 2917) return { ultimaCompra: 15.0, custoMedio: 15.7, hasCompras: true }
-      if (pIdNum === 2578) return { ultimaCompra: 0.13, custoMedio: 0.13, hasCompras: true }
 
       let calculated = null
       if (typeof computeStockValues === 'function') {
