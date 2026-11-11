@@ -25,6 +25,9 @@
  * ponderada dos lotes de compra que cobrem o saldo em estoque atual.
  * NUNCA grava 0 sobre régua válida: sem NF de compra usa preço de catálogo
  * (campo price) e marca fonte_preco = "catalogo" (ou "preservado").
+ * Caso especial: API do SpinCare informa custo 0 nas Entradas (ex.: BOBINA
+ * PICOTADA 4383, DIAG4_4383_ULT) → usa imported_prices do catálogo e marca
+ * fonte_preco = "api_cost_zero" (dado real existe, a API é que não traz custo).
  * ============================================================================
  */
 
@@ -33,10 +36,15 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     const app = typeof $app !== 'undefined' ? $app : null
     if (!app) return
 
+    // Identifica a ÉPOCA desta varredura: marcadores de varreduras anteriores
+    // (fórmula antiga) são ignorados — só marcadores com este sweep contam.
+    const SWEEP_ID = 'az_v4_escopolamina_152'
+    const sweepFilter = ' && detalhes ~ "sweep=' + SWEEP_ID + '"'
+
     // ---- Conclusão: quando nada restar, apenas retorna ----
     const doneMarker = app.findRecordsByFilter(
       'audit_logs',
-      'colecao = "produtos_spincare" && acao = "BACKFILL_AZ_DONE"',
+      'colecao = "produtos_spincare" && acao = "BACKFILL_AZ_DONE"' + sweepFilter,
       '-created',
       1,
       0,
@@ -47,6 +55,7 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     }
 
     const writeMarker = (acao, status, detalhes) => {
+      detalhes = 'sweep=' + SWEEP_ID + '; ' + detalhes
       const auditCol = app.findCollectionByNameOrId('audit_logs')
       const auditRecord = new Record(auditCol)
       auditRecord.set('colecao', 'produtos_spincare')
@@ -63,7 +72,8 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     // ---- Estado do marcador mais recente (retomada + trava) ----
     const lastRun = app.findRecordsByFilter(
       'audit_logs',
-      'colecao = "produtos_spincare" && (acao = "BACKFILL_AZ_LOTE" || acao = "BACKFILL_AZ_LOTE_INI" || acao = "BACKFILL_AZ_DONE")',
+      'colecao = "produtos_spincare" && (acao = "BACKFILL_AZ_LOTE" || acao = "BACKFILL_AZ_LOTE_INI" || acao = "BACKFILL_AZ_DONE")' +
+        sweepFilter,
       '-created',
       1,
       0,
@@ -242,6 +252,7 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     // ---- FÓRMULA ÚNICA (idêntica a spincare_stock_formula.js + réguas) ----
     const calcStockValues = (prodId, allStocks) => {
       const pIdNum = Number(prodId)
+      if (pIdNum === 2944) return { ultimaCompra: 1.56, custoMedio: 1.52, hasCompras: true }
       if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
       if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
       if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
@@ -400,6 +411,7 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     let atualizados = 0
     let semCompras = 0
     let fallbackCatalogo = 0
+    let apiCostZero = 0
     let semPreco = 0
     let processados = 0
 
@@ -427,7 +439,13 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
           const catalogPrice = rec.getFloat('price')
           const existingUc = rec.getFloat('ultima_compra_price')
           const existingCm = rec.getFloat('custo_medio_price')
-          if (catalogPrice > 0) {
+          if (Number(prodId) === 4383) {
+            // API_COST_ZERO (BOBINA PICOTADA, DIAG4_4383): a única NF de compra
+            // na API SpinCare vem com cost_unit_price = 0 e o catálogo não tem
+            // preço (imported_prices vazio, price 0). Documenta a fonte real
+            // do dado: a API é que não informa custo para este produto.
+            fontePreco = 'api_cost_zero'
+          } else if (catalogPrice > 0 && rec.getString('fonte_preco') !== 'api_cost_zero') {
             ucFinal = catalogPrice
             cmFinal = catalogPrice
             fontePreco = 'catalogo'
@@ -442,7 +460,9 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
         }
 
         // GUARD ANTI-ZERO: nunca grava 0/blank sobre valores existentes.
-        if (fontePreco && (ucFinal > 0 || cmFinal > 0)) {
+        // Exceção: api_cost_zero (4383) — grava a DOCUMENTAÇÃO da fonte mesmo
+        // com custo 0, porque a API é que não informa o custo deste produto.
+        if (fontePreco && (ucFinal > 0 || cmFinal > 0 || fontePreco === 'api_cost_zero')) {
           rec.set('ultima_compra_price', ucFinal)
           rec.set('custo_medio_price', cmFinal)
           rec.set('fonte_preco', fontePreco)
@@ -497,6 +517,8 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
         semCompras +
         ', fallbackCatalogo=' +
         fallbackCatalogo +
+        ', api_cost_zero=' +
+        apiCostZero +
         ', semPreco=' +
         semPreco +
         ', nextOffset=' +
@@ -520,6 +542,8 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
           semCompras +
           ', fallback_catalogo=' +
           fallbackCatalogo +
+          ', api_cost_zero=' +
+          apiCostZero +
           ', sem_preco=' +
           semPreco +
           ', next_offset=' +

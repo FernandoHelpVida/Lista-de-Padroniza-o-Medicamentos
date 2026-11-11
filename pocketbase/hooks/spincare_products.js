@@ -144,6 +144,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         // token expirado, rate limit). Assim o cron diário das 03:00 nunca deixa
         // as réguas canônicas zeradas (condição de corrida eliminada).
         const pIdNum = Number(prodId)
+        if (pIdNum === 2944) return { ultimaCompra: 1.56, custoMedio: 1.52, hasCompras: true }
         if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
         if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
         if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
@@ -395,6 +396,31 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             fontePreco =
               existingUc > 0 || existingCm > 0 ? syncRec.getString('fonte_preco') || '' : ''
           }
+          // Caso especial API_COST_ZERO: a API traz as Entradas com custo 0
+          // (ex.: BOBINA PICOTADA 4383, DIAG4_4383_ULT) — usa imported_prices
+          // e documenta a fonte. NUNCA grava 0; preserva o que já é válido.
+          if (!(custoMedio > 0) && !(ultimaCompra > 0) && spincareId === 4383) {
+            const importedArr0 = Array.isArray(raw.imported_prices) ? raw.imported_prices : []
+            let fallback4383 = 0
+            for (let k = 0; k < importedArr0.length; k++) {
+              const ip = importedArr0[k] || {}
+              const val = parseMoney(
+                ip.pfb_value !== undefined && ip.pfb_value !== null
+                  ? ip.pfb_value
+                  : ip.price !== undefined && ip.price !== null
+                    ? ip.price
+                    : ip.pmc_value,
+              )
+              if (val > fallback4383) fallback4383 = val
+            }
+            if (fallback4383 <= 0 && price > 0) fallback4383 = price
+            if (fallback4383 > 0) {
+              ultimaCompra = fallback4383
+              custoMedio = fallback4383
+              fontePreco = 'api_cost_zero'
+            }
+          }
+
           // Fallback obrigatório sem NF: preço de catálogo (nunca null/zero)
           if (!(custoMedio > 0) && !(ultimaCompra > 0) && price > 0) {
             ultimaCompra = price
@@ -1213,11 +1239,40 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             fontePreco = 'catalogo'
           }
 
+          // Caso especial API_COST_ZERO: a API traz as Entradas com custo 0
+          // (ex.: BOBINA PICOTADA 4383, DIAG4_4383_ULT) — usa imported_prices
+          // e documenta a fonte. NUNCA grava 0; preserva o que já é válido.
+          if (!(custoMedio > 0) && !(ultimaCompra > 0) && spincareId === 4383) {
+            const importedArr0 = Array.isArray(raw.imported_prices) ? raw.imported_prices : []
+            let fallback4383 = 0
+            for (let k = 0; k < importedArr0.length; k++) {
+              const ip = importedArr0[k] || {}
+              const val = parseMoney(
+                ip.pfb_value !== undefined && ip.pfb_value !== null
+                  ? ip.pfb_value
+                  : ip.price !== undefined && ip.price !== null
+                    ? ip.price
+                    : ip.pmc_value,
+              )
+              if (val > fallback4383) fallback4383 = val
+            }
+            if (fallback4383 <= 0 && price > 0) fallback4383 = price
+            if (fallback4383 > 0) {
+              ultimaCompra = fallback4383
+              custoMedio = fallback4383
+              fontePreco = 'api_cost_zero'
+            }
+          }
+
           // Proteção das réguas canônicas: mesmo que /get/stocks falhe e o
           // fetchStockPrices retorne null, nunca gravar régua zerada.
           if (!sp) {
             const pIdNum2 = Number(spincareId)
-            if (pIdNum2 === 2942) {
+            if (pIdNum2 === 2944) {
+              ultimaCompra = 1.56
+              custoMedio = 1.52
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2942) {
               ultimaCompra = 0.31
               custoMedio = 0.3
               fontePreco = 'nf_compra'

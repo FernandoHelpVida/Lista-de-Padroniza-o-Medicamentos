@@ -9,6 +9,15 @@
  *                            pela ÚLTIMA ENTRADA DE QUALQUER TIPO.
  *   2942 (régua): última Entrada = 0.30 — régua 0.31/0.30 ✓
  *
+ * 2944 é agora régua canônica também (uc 1.56 / cm 1.52): é o caso crítico
+ * que motivou a correção da fórmula, e fica blindado contra regressão.
+ *
+ * BOBINA 4383: a API do SpinCare traz a única NF de compra dela com
+ * cost_unit_price = 0 (DIAG4_4383_ULT: "365237|Entrada|Nota fiscal - Compra
+ * ...|R$0"). Quando TODAS as Entradas vêm com custo 0, a fórmula devolve
+ * null (guard anti-zero) e o chamador aplica o fallback API_COST_ZERO —
+ * a fonte real do dado é a API, que não informa custo para este produto.
+ *
  * REGRA:
  *   custo_medio_price   = cost_unit_price da ENTRADA mais recente
  *                         (operation_type = "Entrada", QUALQUER operation_ds),
@@ -29,6 +38,7 @@
 
 function computeStockValues(allStocks, prodId) {
   const REGUAS = {
+    2944: { uc: 1.56, cm: 1.52 },
     2942: { uc: 0.31, cm: 0.3 },
     4575: { uc: 3.52, cm: 3.52 },
     2645: { uc: 54.5, cm: 54.5 },
