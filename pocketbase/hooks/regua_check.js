@@ -7,10 +7,9 @@
 
 routerAdd('GET', '/backend/v1/regua-check', (e) => {
   const key = $os.getenv('REGUA_CHECK_KEY') || ''
-  const TEMP_PROOF_TOKEN = 'hv-prova-az-v4-7k2m9x'
   const query = e.requestInfo().query || {}
   const got = query['key'] || ''
-  const autorizado = (key && got === key) || got === TEMP_PROOF_TOKEN
+  const autorizado = key && got === key
   if (!autorizado) {
     return e.unauthorizedError('Chave inválida.')
   }
