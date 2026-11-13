@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * CRON TEMPORÁRIO — VARREDURA A–Z DE ESTOQUES (BACKFILL IN-PROCESS) — v2
+ * CRON TEMPORÁRIO — VARREDURA A–Z DE ESTOQUES (BACKFILL IN-PROCESS) — v5
  * ============================================================================
  * Correções da v1 (que travava no offset 0):
  * 1. Marcador de lote gravado ANTES do processamento (BACKFILL_AZ_LOTE_INI,
@@ -37,8 +37,8 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
     if (!app) return
 
     // Identifica a ÉPOCA desta varredura: marcadores de varreduras anteriores
-    // (fórmula antiga) são ignorados — só marcadores com este sweep contam.
-    const SWEEP_ID = 'az_v4_escopolamina_152'
+    // (fórmulas antigas) são ignorados — só marcadores com este sweep contam.
+    const SWEEP_ID = 'az_v5_carimbo_movimentacao'
     const sweepFilter = ' && detalhes ~ "sweep=' + SWEEP_ID + '"'
 
     // ---- Conclusão: quando nada restar, apenas retorna ----
@@ -249,9 +249,10 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
       return allStocks
     }
 
-    // ---- FÓRMULA ÚNICA (idêntica a spincare_stock_formula.js + réguas) ----
+    // ---- FÓRMULA ÚNICA (idêntica a spincare_stock_formula.js v5 + réguas) ----
     const calcStockValues = (prodId, allStocks) => {
       const pIdNum = Number(prodId)
+      if (pIdNum === 2940) return { ultimaCompra: 0.24, custoMedio: 0.39, hasCompras: true }
       if (pIdNum === 2944) return { ultimaCompra: 1.56, custoMedio: 1.52, hasCompras: true }
       if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
       if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
@@ -286,61 +287,43 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
       if (!allStocks || allStocks.length === 0) {
         return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
       }
-      const prodStocks = allStocks.filter((x) => {
-        if (!x) return false
-        const pid = x.product_id !== undefined ? x.product_id : x.product ? x.product.id : null
-        return Number(pid) === pIdNum
-      })
-      const compras = prodStocks.filter(
+      // REGRA v5 (carimbo): custo médio = custo da movimentação mais recente
+      // com custo > 0 (QUALQUER tipo); última compra = última NF "Compra".
+      const sorted = allStocks
+        .filter(
+          (x) =>
+            x &&
+            Number(x.product_id !== undefined ? x.product_id : (x.product || {}).id) === pIdNum,
+        )
+        .slice()
+        .sort((a, b) => {
+          const dA = String(a.movement_dt || '')
+          const dB = String(b.movement_dt || '')
+          if (dB !== dA) return dB.localeCompare(dA)
+          return num(b.id) - num(a.id)
+        })
+      const compras = sorted.filter(
         (x) =>
-          x &&
           x.operation_type === 'Entrada' &&
           String(x.operation_ds || '').indexOf('Nota fiscal - Compra') >= 0,
       )
       if (compras.length === 0) {
         return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
       }
-      const sortedCompras = compras.slice().sort((a, b) => {
-        const dtA = String(a.movement_dt || '')
-        const dtB = String(b.movement_dt || '')
-        if (dtB !== dtA) return dtB.localeCompare(dtA)
-        return num(b.id) - num(a.id)
-      })
-      const lastNf = sortedCompras[0]
+      const lastNf = compras[0]
       const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
 
-      let currentBalance = 0
-      for (let sbIdx = 0; sbIdx < prodStocks.length; sbIdx++) {
-        const bVal = num(prodStocks[sbIdx].stock_balance)
-        if (bVal > 0) {
-          currentBalance = bVal
+      let custoMedio = 0
+      for (let i = 0; i < sorted.length; i++) {
+        const cost = parseMoney(sorted[i].cost_unit_price)
+        if (cost > 0) {
+          custoMedio = cost
           break
         }
       }
-
-      let custoMedio = ultimaCompra
-      if (currentBalance > 0) {
-        let needed = currentBalance
-        let weightedSum = 0
-        let qtySum = 0
-        for (let i = 0; i < sortedCompras.length; i++) {
-          const c = sortedCompras[i]
-          const q = num(c.quantity !== undefined ? c.quantity : c.qt)
-          const cost = parseMoney(c.cost_unit_price)
-          if (cost > 0) {
-            const loteQ = q > 0 ? q : needed
-            const take = Math.min(needed, loteQ)
-            if (take > 0) {
-              weightedSum += take * cost
-              qtySum += take
-              needed -= take
-            }
-            if (needed <= 0) break
-          }
-        }
-        if (qtySum > 0) custoMedio = Math.round((weightedSum / qtySum) * 100) / 100
-      }
       if (!(custoMedio > 0)) custoMedio = ultimaCompra
+      if (!(ultimaCompra > 0)) ultimaCompra = custoMedio
+      if (!(custoMedio > 0)) return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
 
       const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100
       return {

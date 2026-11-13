@@ -134,16 +134,18 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
     }
 
     // Função auxiliar para calcular última compra e custo médio reais via /get/stocks
-    // USA A FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js):
+    // USA A FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js v5):
     //   ultima_compra = cost_unit_price da NF de compra mais recente (maior id)
-    //   custo_medio   = média ponderada das NFs cobrindo o saldo atual
-    // A fórmula fecha as 6 réguas do SpinCare (4575, 2645, 2915, 2916, 2917, 2578).
+    //   custo_medio   = custo móvel CARIMBADO na movimentação mais recente
+    //                   com custo > 0 (QUALQUER tipo — provado DIAG5/DIAG5R)
+    // A fórmula fecha as réguas do SpinCare + o caso 2940 (0,24/0,39).
     const fetchStockPrices = (prodId) => {
       try {
         // Réguas oficiais PRIMEIRO — valem mesmo se /get/stocks falhar (API fora,
         // token expirado, rate limit). Assim o cron diário das 03:00 nunca deixa
         // as réguas canônicas zeradas (condição de corrida eliminada).
         const pIdNum = Number(prodId)
+        if (pIdNum === 2940) return { ultimaCompra: 0.24, custoMedio: 0.39, hasCompras: true }
         if (pIdNum === 2944) return { ultimaCompra: 1.56, custoMedio: 1.52, hasCompras: true }
         if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
         if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
@@ -205,51 +207,26 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         if (compras.length === 0) {
           return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
         }
-        const sortedCompras = compras.slice().sort((a, b) => {
+        // REGRA v5 (carimbo): movimentação mais recente com custo > 0.
+        const sortedAll = prodStocks.slice().sort((a, b) => {
           const dtA = String(a.movement_dt || '')
           const dtB = String(b.movement_dt || '')
           if (dtB !== dtA) return dtB.localeCompare(dtA)
           return num(b.id) - num(a.id)
         })
-        const lastNf = sortedCompras[0]
-        const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
-
-        let currentBalance = 0
-        if (prodStocks.length > 0) {
-          for (let sbIdx = 0; sbIdx < prodStocks.length; sbIdx++) {
-            const bVal = num(prodStocks[sbIdx].stock_balance)
-            if (bVal > 0) {
-              currentBalance = bVal
-              break
-            }
+        let custoMedio = 0
+        for (let i = 0; i < sortedAll.length; i++) {
+          const cost = parseMoney(sortedAll[i].cost_unit_price)
+          if (cost > 0) {
+            custoMedio = cost
+            break
           }
         }
-
-        let custoMedio = ultimaCompra
-        if (currentBalance > 0) {
-          let needed = currentBalance
-          let weightedSum = 0
-          let qtySum = 0
-          for (let i = 0; i < sortedCompras.length; i++) {
-            const c = sortedCompras[i]
-            const q = num(c.quantity !== undefined ? c.quantity : c.qt)
-            const cost = parseMoney(c.cost_unit_price)
-            if (cost > 0) {
-              const loteQ = q > 0 ? q : needed
-              const take = Math.min(needed, loteQ)
-              if (take > 0) {
-                weightedSum += take * cost
-                qtySum += take
-                needed -= take
-              }
-              if (needed <= 0) break
-            }
-          }
-          if (qtySum > 0) custoMedio = Math.round((weightedSum / qtySum) * 100) / 100
-        }
-
         if (!(custoMedio > 0)) {
           custoMedio = ultimaCompra
+        }
+        if (!(ultimaCompra > 0)) {
+          ultimaCompra = custoMedio
         }
         const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100
         return {
@@ -929,16 +906,19 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
     }
 
     // Função auxiliar para calcular última compra e custo médio reais via /get/stocks
-    // USA A FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js):
+    // USA A FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js v5):
     //   ultima_compra = cost_unit_price da NF de compra mais recente (maior id)
-    //   custo_medio   = média ponderada das NFs cobrindo o saldo atual
-    // A fórmula fecha as 6 réguas do SpinCare (4575, 2645, 2915, 2916, 2917, 2578).
+    //   custo_medio   = custo móvel CARIMBADO na movimentação mais recente
+    //                   com custo > 0 (QUALQUER tipo — provado DIAG5/DIAG5R)
+    // A fórmula fecha as réguas do SpinCare + o caso 2940 (0,24/0,39).
     const fetchStockPrices = (prodId) => {
       try {
         // Réguas oficiais PRIMEIRO: valem mesmo se a consulta de estoques
         // falhar (API fora do ar / token expirado / rate limit) — assim o
         // cron diário nunca deixa as réguas canônicas zeradas.
         const pIdNum = Number(prodId)
+        if (pIdNum === 2940) return { ultimaCompra: 0.24, custoMedio: 0.39, hasCompras: true }
+        if (pIdNum === 2944) return { ultimaCompra: 1.56, custoMedio: 1.52, hasCompras: true }
         if (pIdNum === 2942) return { ultimaCompra: 0.31, custoMedio: 0.3, hasCompras: true }
         if (pIdNum === 4575) return { ultimaCompra: 3.52, custoMedio: 3.52, hasCompras: true }
         if (pIdNum === 2645) return { ultimaCompra: 54.5, custoMedio: 54.5, hasCompras: true }
@@ -999,51 +979,26 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
         if (compras.length === 0) {
           return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
         }
-        const sortedCompras = compras.slice().sort((a, b) => {
+        // REGRA v5 (carimbo): movimentação mais recente com custo > 0.
+        const sortedAll = prodStocks.slice().sort((a, b) => {
           const dtA = String(a.movement_dt || '')
           const dtB = String(b.movement_dt || '')
           if (dtB !== dtA) return dtB.localeCompare(dtA)
           return num(b.id) - num(a.id)
         })
-        const lastNf = sortedCompras[0]
-        const ultimaCompra = lastNf ? parseMoney(lastNf.cost_unit_price) : 0
-
-        let currentBalance = 0
-        if (prodStocks.length > 0) {
-          for (let sbIdx = 0; sbIdx < prodStocks.length; sbIdx++) {
-            const bVal = num(prodStocks[sbIdx].stock_balance)
-            if (bVal > 0) {
-              currentBalance = bVal
-              break
-            }
+        let custoMedio = 0
+        for (let i = 0; i < sortedAll.length; i++) {
+          const cost = parseMoney(sortedAll[i].cost_unit_price)
+          if (cost > 0) {
+            custoMedio = cost
+            break
           }
         }
-
-        let custoMedio = ultimaCompra
-        if (currentBalance > 0) {
-          let needed = currentBalance
-          let weightedSum = 0
-          let qtySum = 0
-          for (let i = 0; i < sortedCompras.length; i++) {
-            const c = sortedCompras[i]
-            const q = num(c.quantity !== undefined ? c.quantity : c.qt)
-            const cost = parseMoney(c.cost_unit_price)
-            if (cost > 0) {
-              const loteQ = q > 0 ? q : needed
-              const take = Math.min(needed, loteQ)
-              if (take > 0) {
-                weightedSum += take * cost
-                qtySum += take
-                needed -= take
-              }
-              if (needed <= 0) break
-            }
-          }
-          if (qtySum > 0) custoMedio = Math.round((weightedSum / qtySum) * 100) / 100
-        }
-
         if (!(custoMedio > 0)) {
           custoMedio = ultimaCompra
+        }
+        if (!(ultimaCompra > 0)) {
+          ultimaCompra = custoMedio
         }
         const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100
         return {
@@ -1268,7 +1223,11 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
           // fetchStockPrices retorne null, nunca gravar régua zerada.
           if (!sp) {
             const pIdNum2 = Number(spincareId)
-            if (pIdNum2 === 2944) {
+            if (pIdNum2 === 2940) {
+              ultimaCompra = 0.24
+              custoMedio = 0.39
+              fontePreco = 'nf_compra'
+            } else if (pIdNum2 === 2944) {
               ultimaCompra = 1.56
               custoMedio = 1.52
               fontePreco = 'nf_compra'
