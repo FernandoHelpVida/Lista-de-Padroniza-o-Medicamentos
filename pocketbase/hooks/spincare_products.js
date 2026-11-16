@@ -1198,14 +1198,28 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
               }
             }
           }
-          // FÓRMULA ÚNICA VALIDADA (spincare_stock_formula.js): /get/stocks é
-          // consultado em TODA sincronização (cron 03:00 e Sincronizar agora
-          // compartilham o mesmo código). Sem NF de compra acessível, preserva
-          // os valores já gravados.
+          // FONTE OFICIAL (Swagger): last_buy_value (última compra) e
+          // medium_cost (custo médio) expostos no get/products. Quando
+          // presentes (> 0), são a fonte primária (fonte_preco='oficial') e a
+          // fórmula v5 (/get/stocks, carimbo móvel) vira FALLBACK para produtos
+          // sem medium_cost. Guard anti-zero: só grava valor > 0 — nunca zero
+          // sobre um preço válido.
           let custoMedio = 0
           let fontePreco = ''
-          const sp = fetchStockPrices(spincareId)
-          if (sp && sp.hasCompras) {
+          const oficialUc =
+            raw.last_buy_value !== undefined && raw.last_buy_value !== null
+              ? parseMoney(raw.last_buy_value)
+              : 0
+          const oficialCm =
+            raw.medium_cost !== undefined && raw.medium_cost !== null
+              ? parseMoney(raw.medium_cost)
+              : 0
+          const sp = oficialUc > 0 || oficialCm > 0 ? null : fetchStockPrices(spincareId)
+          if (oficialUc > 0 || oficialCm > 0) {
+            ultimaCompra = oficialUc > 0 ? oficialUc : oficialCm
+            custoMedio = oficialCm > 0 ? oficialCm : oficialUc
+            fontePreco = 'oficial'
+          } else if (sp && sp.hasCompras) {
             ultimaCompra = sp.ultimaCompra
             custoMedio = sp.custoMedio
             fontePreco = 'nf_compra'
