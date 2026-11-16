@@ -51,9 +51,12 @@ migrate(
       if (rs.length > 0) {
         const r = rs[0]
         partes.push(
-          pid + ':' +
-            (Number(r.getFloat('ultima_compra_price')) || 0).toFixed(2) + '/' +
-            (Number(r.getFloat('custo_medio_price')) || 0).toFixed(2) + '/' +
+          pid +
+            ':' +
+            (Number(r.getFloat('ultima_compra_price')) || 0).toFixed(2) +
+            '/' +
+            (Number(r.getFloat('custo_medio_price')) || 0).toFixed(2) +
+            '/' +
             r.getString('fonte_preco'),
         )
       } else {
@@ -74,19 +77,33 @@ migrate(
 
     // fontes
     for (const fonte of ['nf_compra', 'catalogo', 'api_cost_zero']) {
-      const n = app
-        .findRecordsByFilter('produtos_spincare', 'active = true && fonte_preco = "' + fonte + '"', '-updated', 1, 0)
+      const n = app.findRecordsByFilter(
+        'produtos_spincare',
+        'active = true && fonte_preco = "' + fonte + '"',
+        '-updated',
+        1,
+        0,
+      )
       mk('DIAG6_FONTE_' + fonte, 'contagem=' + n.length)
     }
 
     // (d) 4383
-    const r4383 = app.findRecordsByFilter('produtos_spincare', 'spincare_id = 4383', '-updated', 1, 0)
+    const r4383 = app.findRecordsByFilter(
+      'produtos_spincare',
+      'spincare_id = 4383',
+      '-updated',
+      1,
+      0,
+    )
     if (r4383.length > 0) {
       mk(
         'DIAG6_4383',
-        'fonte=' + r4383[0].getString('fonte_preco') +
-        ' uc=' + (Number(r4383[0].getFloat('ultima_compra_price')) || 0).toFixed(2) +
-        ' cm=' + (Number(r4383[0].getFloat('custo_medio_price')) || 0).toFixed(2),
+        'fonte=' +
+          r4383[0].getString('fonte_preco') +
+          ' uc=' +
+          (Number(r4383[0].getFloat('ultima_compra_price')) || 0).toFixed(2) +
+          ' cm=' +
+          (Number(r4383[0].getFloat('custo_medio_price')) || 0).toFixed(2),
       )
     }
   },

@@ -372,30 +372,35 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
             if (existingCm > 0) custoMedio = existingCm
             fontePreco =
               existingUc > 0 || existingCm > 0 ? syncRec.getString('fonte_preco') || '' : ''
-          }
-          // Caso especial API_COST_ZERO: a API traz as Entradas com custo 0
-          // (ex.: BOBINA PICOTADA 4383, DIAG4_4383_ULT) — usa imported_prices
-          // e documenta a fonte. NUNCA grava 0; preserva o que já é válido.
-          if (!(custoMedio > 0) && !(ultimaCompra > 0) && spincareId === 4383) {
-            const importedArr0 = Array.isArray(raw.imported_prices) ? raw.imported_prices : []
-            let fallback4383 = 0
-            for (let k = 0; k < importedArr0.length; k++) {
-              const ip = importedArr0[k] || {}
-              const val = parseMoney(
-                ip.pfb_value !== undefined && ip.pfb_value !== null
-                  ? ip.pfb_value
-                  : ip.price !== undefined && ip.price !== null
-                    ? ip.price
-                    : ip.pmc_value,
+            // PRESERVAÇÃO api_cost_zero: sem NF com custo e com o catálogo sem
+            // preço (imported_prices vazio, price = 0, sem last_buy), mantém a
+            // classificação 'api_cost_zero' com custos zerados — caso VÁLIDO
+            // para o guard anti-zero (a API não informa o custo deste produto).
+            const semPrecoCatalogo =
+              !(price > 0) &&
+              !(Array.isArray(raw.imported_prices) && raw.imported_prices.length > 0) &&
+              !(
+                raw.last_buy_value !== undefined &&
+                raw.last_buy_value !== null &&
+                parseMoney(raw.last_buy_value) > 0
               )
-              if (val > fallback4383) fallback4383 = val
-            }
-            if (fallback4383 <= 0 && price > 0) fallback4383 = price
-            if (fallback4383 > 0) {
-              ultimaCompra = fallback4383
-              custoMedio = fallback4383
+            if (semPrecoCatalogo && !(ultimaCompra > 0) && !(custoMedio > 0)) {
+              ultimaCompra = 0
+              custoMedio = 0
               fontePreco = 'api_cost_zero'
             }
+          }
+          // API_COST_ZERO (regra geral, ex.: BOBINA PICOTADA 4383): quando a API
+          // NÃO informa custo (nenhuma NF de compra com custo > 0, imported_prices
+          // vazio e price = 0), grava a DOCUMENTAÇÃO da fonte em vez de "compra a
+          // R$ 0,00": fonte_preco = 'api_cost_zero' com custos zerados, caso VÁLIDO
+          // para o guard anti-zero. Idempotente: um api_cost_zero já gravado nunca
+          // é derrubado por um sync com a API sem custo.
+          const semCustoNaApi = !(custoMedio > 0) && !(ultimaCompra > 0)
+          if (semCustoNaApi) {
+            ultimaCompra = 0
+            custoMedio = 0
+            fontePreco = 'api_cost_zero'
           }
 
           // Fallback obrigatório sem NF: preço de catálogo (nunca null/zero)
@@ -1186,6 +1191,23 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             if (existingCm > 0) custoMedio = existingCm
             fontePreco =
               existingUc > 0 || existingCm > 0 ? syncRec.getString('fonte_preco') || '' : ''
+            // PRESERVAÇÃO api_cost_zero: sem NF com custo e com o catálogo sem
+            // preço (imported_prices vazio, price = 0, sem last_buy), mantém a
+            // classificação 'api_cost_zero' com custos zerados — caso VÁLIDO
+            // para o guard anti-zero (a API não informa o custo deste produto).
+            const semPrecoCatalogo =
+              !(price > 0) &&
+              !(Array.isArray(raw.imported_prices) && raw.imported_prices.length > 0) &&
+              !(
+                raw.last_buy_value !== undefined &&
+                raw.last_buy_value !== null &&
+                parseMoney(raw.last_buy_value) > 0
+              )
+            if (semPrecoCatalogo && !(ultimaCompra > 0) && !(custoMedio > 0)) {
+              ultimaCompra = 0
+              custoMedio = 0
+              fontePreco = 'api_cost_zero'
+            }
           }
           // Fallback obrigatório sem NF: preço de catálogo (nunca null/zero)
           if (!(custoMedio > 0) && !(ultimaCompra > 0) && price > 0) {
@@ -1194,29 +1216,17 @@ routerAdd('POST', '/backend/v1/spincare/products/sync', (e) => {
             fontePreco = 'catalogo'
           }
 
-          // Caso especial API_COST_ZERO: a API traz as Entradas com custo 0
-          // (ex.: BOBINA PICOTADA 4383, DIAG4_4383_ULT) — usa imported_prices
-          // e documenta a fonte. NUNCA grava 0; preserva o que já é válido.
-          if (!(custoMedio > 0) && !(ultimaCompra > 0) && spincareId === 4383) {
-            const importedArr0 = Array.isArray(raw.imported_prices) ? raw.imported_prices : []
-            let fallback4383 = 0
-            for (let k = 0; k < importedArr0.length; k++) {
-              const ip = importedArr0[k] || {}
-              const val = parseMoney(
-                ip.pfb_value !== undefined && ip.pfb_value !== null
-                  ? ip.pfb_value
-                  : ip.price !== undefined && ip.price !== null
-                    ? ip.price
-                    : ip.pmc_value,
-              )
-              if (val > fallback4383) fallback4383 = val
-            }
-            if (fallback4383 <= 0 && price > 0) fallback4383 = price
-            if (fallback4383 > 0) {
-              ultimaCompra = fallback4383
-              custoMedio = fallback4383
-              fontePreco = 'api_cost_zero'
-            }
+          // API_COST_ZERO (regra geral, ex.: BOBINA PICOTADA 4383): quando a API
+          // NÃO informa custo (nenhuma NF de compra com custo > 0, imported_prices
+          // vazio e price = 0), grava a DOCUMENTAÇÃO da fonte em vez de "compra a
+          // R$ 0,00": fonte_preco = 'api_cost_zero' com custos zerados, caso VÁLIDO
+          // para o guard anti-zero. Idempotente: um api_cost_zero já gravado nunca
+          // é derrubado por um sync com a API sem custo.
+          const semCustoNaApi = !(custoMedio > 0) && !(ultimaCompra > 0)
+          if (semCustoNaApi) {
+            ultimaCompra = 0
+            custoMedio = 0
+            fontePreco = 'api_cost_zero'
           }
 
           // Proteção das réguas canônicas: mesmo que /get/stocks falhe e o

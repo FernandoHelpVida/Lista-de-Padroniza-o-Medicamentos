@@ -409,6 +409,12 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
       try {
         const allStocks = requestStocks(prodId)
         const { ultimaCompra, custoMedio, hasCompras } = calcStockValues(prodId, allStocks)
+        // API_COST_ZERO (regra geral, ex.: BOBINA PICOTADA 4383): quando a API
+        // NÃO informa custo para o produto (nenhuma NF/movimentação com
+        // cost_unit_price > 0 E catálogo sem preço), a classificação correta é
+        // 'api_cost_zero' com custos zerados — caso VÁLIDO para o guard
+        // anti-zero, nunca tratado como falha.
+        const apiSemCusto = !(ultimaCompra > 0) && !(custoMedio > 0) && !hasCompras
 
         let fontePreco = ''
         let ucFinal = 0
@@ -422,11 +428,12 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
           const catalogPrice = rec.getFloat('price')
           const existingUc = rec.getFloat('ultima_compra_price')
           const existingCm = rec.getFloat('custo_medio_price')
-          if (Number(prodId) === 4383) {
-            // API_COST_ZERO (BOBINA PICOTADA, DIAG4_4383): a única NF de compra
-            // na API SpinCare vem com cost_unit_price = 0 e o catálogo não tem
-            // preço (imported_prices vazio, price 0). Documenta a fonte real
-            // do dado: a API é que não informa custo para este produto.
+          if (apiSemCusto) {
+            // API_COST_ZERO (regra geral; caso BOBINA PICOTADA 4383, DIAG4_4383):
+            // a API não informa custo para este produto — catálogo sem preço e
+            // nenhuma movimentação com cost_unit_price > 0. Documenta a fonte
+            // real do dado ('api_cost_zero', custos zerados): caso VÁLIDO para
+            // o guard anti-zero, nunca derrubado pelo sync seguinte.
             fontePreco = 'api_cost_zero'
           } else if (catalogPrice > 0 && rec.getString('fonte_preco') !== 'api_cost_zero') {
             ucFinal = catalogPrice
@@ -440,11 +447,13 @@ cronAdd('spincare_backfill_az_temp', '* * * * *', () => {
           } else {
             semPreco++
           }
+          if (fontePreco === 'api_cost_zero') apiCostZero++
         }
 
         // GUARD ANTI-ZERO: nunca grava 0/blank sobre valores existentes.
-        // Exceção: api_cost_zero (4383) — grava a DOCUMENTAÇÃO da fonte mesmo
-        // com custo 0, porque a API é que não informa o custo deste produto.
+        // Exceção: api_cost_zero — grava a DOCUMENTAÇÃO da fonte mesmo com
+        // custo 0, porque a API é que não informa o custo do produto (caso
+        // VÁLIDO, não é falha).
         if (fontePreco && (ucFinal > 0 || cmFinal > 0 || fontePreco === 'api_cost_zero')) {
           rec.set('ultima_compra_price', ucFinal)
           rec.set('custo_medio_price', cmFinal)
