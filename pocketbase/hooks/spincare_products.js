@@ -211,7 +211,7 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         const sortedAll = prodStocks.slice().sort((a, b) => {
           const dtA = String(a.movement_dt || '')
           const dtB = String(b.movement_dt || '')
-          if (dtB !== dtA) return dtB.localeCompare(dtA)
+          if (dtB !== dtA) return dtB.localeCompare(dA)
           return num(b.id) - num(a.id)
         })
         let custoMedio = 0
@@ -227,6 +227,13 @@ cronAdd('spincare_products_daily_sync', '0 3 * * *', () => {
         }
         if (!(ultimaCompra > 0)) {
           ultimaCompra = custoMedio
+        }
+        // GUARD v5 (idêntico à fórmula e ao backfill): se NENHUMA movimentação
+        // tem cost_unit_price > 0, não há dado de custo — retorna hasCompras:
+        // false para o chamador classificar como 'api_cost_zero' (nunca
+        // 'nf_compra' com 0/0, caso BOBINA PICOTADA 4383).
+        if (!(custoMedio > 0)) {
+          return { ultimaCompra: 0, custoMedio: 0, hasCompras: false }
         }
         const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100
         return {

@@ -2,11 +2,12 @@
 // PROVA v5 — PARTE 2 (DIAG7): prova os critérios da varredura az_v5_carimbo_movimentacao
 // e reclassifica a BOBINA PICOTADA 4383 como 'api_cost_zero' (idempotente).
 //
-// Diferença da DIAG6 (1793100012): NÃO trava 45 min — esta migração roda já com a
-// varredura concluída (ou registra o offset atual, sem declarar pronto). Idempotente:
-// roda em banco vazio (no-op) e reclassifica apenas o registro exato do 4383.
+// Roda já com a varredura concluída (ou registra o offset atual, sem declarar pronto).
+// Idempotente: roda em banco vazio (no-op) e reclassifica apenas o registro exato
+// do 4383 (spincare_id = 4383, registro 73m7k0p7iagusgb) — somente quando estiver
+// com fonte != api_cost_zero e custos zerados (nunca toca em régua válida).
 //
-// Grava em audit_logs: DIAG7_REGUAS, DIAG7_4383, DIAG7_ANTI_ZERO, DIAG7_DONE_V5.
+// Grava em audit_logs: DIAG7_REGUAS, DIAG7_4383_RECLASS, DIAG7_ANTI_ZERO, DIAG7_DONE_V5.
 
 migrate(
   (app) => {
@@ -41,7 +42,7 @@ migrate(
       console.log('[diag7] erro no 4383: ' + e4383)
     }
 
-    // ---- (2) Réguas + 2940/2944 + 4383 ----
+    // ---- (2) Réguas + 2940/2944 + 4383 (prova: nada muda de valor) ----
     const reguaIds = [2940, 2942, 4575, 2645, 2915, 2916, 2917, 2578, 2944, 4383]
     const partes = []
     for (const pid of reguaIds) {
