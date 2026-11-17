@@ -271,6 +271,15 @@ export default function Layout() {
     ...(isAdmin
       ? [
           {
+            title: 'Importar Relatório de Saldo',
+            path: '/importar-relatorio',
+            icon: FileSpreadsheet,
+          },
+        ]
+      : []),
+    ...(isAdmin
+      ? [
+          {
             title: 'Equipe',
             path: '/equipe',
             icon: Users,

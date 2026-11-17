@@ -19,6 +19,7 @@ import ConfirmarEmail from '@/pages/ConfirmarEmail'
 import Index from '@/pages/Index'
 import Medicamentos from '@/pages/Medicamentos'
 import Importar from '@/pages/Importar'
+import ImportarRelatorio from '@/pages/ImportarRelatorio'
 import Assistente from '@/pages/Assistente'
 import Solicitacoes from '@/pages/Solicitacoes'
 import Equipe from '@/pages/Equipe'
@@ -76,6 +77,7 @@ const App = () => (
             <Route path="/relatorio-orcamentos" element={<RelatorioOrcamentos />} />
             <Route path="/produtos" element={<Produtos />} />
             <Route path="/importar" element={<Importar />} />
+            <Route path="/importar-relatorio" element={<ImportarRelatorio />} />
             <Route path="/equipe" element={<Equipe />} />
             <Route path="/assistente" element={<Assistente />} />
             <Route path="/configuracoes" element={<Configuracoes />} />

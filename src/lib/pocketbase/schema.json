@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-17T12:08:24.603Z",
+  "generatedAt": "2026-11-17T13:32:30.128Z",
   "collections": [
     {
       "name": "users",
@@ -1159,6 +1159,67 @@
         "CREATE UNIQUE INDEX idx_disp_sync_spincare_id ON dispensacoes_spincare (spincare_id)",
         "CREATE INDEX idx_disp_sync_expected_dt ON dispensacoes_spincare (expected_deliver_dt)",
         "CREATE INDEX idx_disp_sync_status ON dispensacoes_spincare (status)"
+      ]
+    },
+    {
+      "name": "spincare_saldo_estoque",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.email = 'fernandofernandes@helpvida.com.br')"
+      },
+      "fields": [
+        {
+          "name": "spincare_id",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "saldo",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "custo_medio_report",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "raw_json",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "imported_at",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_saldo_estoque_spincare_id ON spincare_saldo_estoque (spincare_id)",
+        "CREATE INDEX idx_saldo_estoque_custo_medio ON spincare_saldo_estoque (custo_medio_report)",
+        "CREATE INDEX idx_saldo_estoque_code ON spincare_saldo_estoque (code)"
       ]
     }
   ]
