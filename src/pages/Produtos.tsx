@@ -71,10 +71,13 @@ function formatDateTimeIso(iso: string): string {
   })
 }
 
+const TOOLTIP_CLASSE =
+  "Ranking Help Vida por impacto financeiro (A/B/C). O SpinCare exibe uma 'curva calculada' própria, não exposta pela API — por isso podem divergir."
+
 const CLASSE_BADGE: Record<CurvaAbcItem['classe'], { label: string; className: string }> = {
-  A: { label: 'Classe A', className: 'bg-green-100 text-green-800 border-green-300' },
-  B: { label: 'Classe B', className: 'bg-amber-100 text-amber-800 border-amber-300' },
-  C: { label: 'Classe C', className: 'bg-gray-100 text-gray-600 border-gray-300' },
+  A: { label: 'Classe Help Vida A', className: 'bg-green-100 text-green-800 border-green-300' },
+  B: { label: 'Classe Help Vida B', className: 'bg-amber-100 text-amber-800 border-amber-300' },
+  C: { label: 'Classe Help Vida C', className: 'bg-gray-100 text-gray-600 border-gray-300' },
 }
 
 type CatSortField = 'code' | 'description' | 'group_description' | 'type_description' | 'price'
@@ -340,7 +343,7 @@ export default function Produtos() {
         ]
         XLSX.utils.book_append_sheet(workbook, ws, 'Curva ABC')
 
-        const classeFiltroTexto = abcClasseFiltro ? ` · Classe: ${abcClasseFiltro}` : ''
+        const classeFiltroTexto = abcClasseFiltro ? ` · Classe Help Vida: ${abcClasseFiltro}` : ''
         const resumoRows: Array<Record<string, string | number>> = [
           {
             Classe: `Período: ${abcInicio} a ${abcFim} · Convênio: ${convenioLabel}${classeFiltroTexto}`,
@@ -777,7 +780,8 @@ export default function Produtos() {
                   <Filter size={14} className="text-[#0D8272]" />
                   <span>
                     Filtrado pela{' '}
-                    <strong className="font-semibold">Classe {abcClasseFiltro}</strong>: exibindo{' '}
+                    <strong className="font-semibold">Classe Help Vida {abcClasseFiltro}</strong>:
+                    exibindo{' '}
                     <strong className="font-semibold">{curvaFiltradaEOrdenada.length}</strong> de{' '}
                     {curva.itens.length} produto(s)
                   </span>
@@ -845,7 +849,12 @@ export default function Produtos() {
                         Valor Total
                         {abcSortField === 'valorTotal' && (abcSortDir === 'asc' ? ' ▲' : ' ▼')}
                       </th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-slate-600">Classe</th>
+                      <th
+                        className="px-3 py-2.5 text-left font-semibold text-slate-600 whitespace-nowrap"
+                        title={TOOLTIP_CLASSE}
+                      >
+                        Classe Help Vida
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -862,7 +871,8 @@ export default function Produtos() {
                             <div className="flex flex-col items-center justify-center gap-2">
                               <span>
                                 Nenhum produto encontrado na{' '}
-                                <strong>Classe {abcClasseFiltro}</strong> com os filtros aplicados.
+                                <strong>Classe Help Vida {abcClasseFiltro}</strong> com os filtros
+                                aplicados.
                               </span>
                               <Button
                                 variant="outline"
@@ -932,7 +942,7 @@ export default function Produtos() {
                   </span>
                   {abcClasseFiltro && (
                     <span>
-                      Total exibido (Classe {abcClasseFiltro}):{' '}
+                      Total exibido (Classe Help Vida {abcClasseFiltro}):{' '}
                       <strong className="text-emerald-700">
                         {formatCurrency(
                           curvaFiltradaEOrdenada.reduce((acc, it) => acc + it.valorTotal, 0),
@@ -951,6 +961,10 @@ export default function Produtos() {
                   </span>
                   <span className="text-slate-500">
                     Cálculo: Qtd. Enviada Casa × Custo Médio (2 casas decimais).
+                  </span>
+                  <span className="text-slate-500 max-w-xl">
+                    <strong className="font-medium text-slate-600">Classe Help Vida:</strong>{' '}
+                    {TOOLTIP_CLASSE}
                   </span>
                   <span className="text-slate-400 italic">
                     * Nota de conciliação: Na ENOXAPARINA 40MG (código 0000077066), a última compra

@@ -272,10 +272,10 @@ export function computeCurvaAbc(
     const valor = arredondar2(daClasse.reduce((acc, i) => acc + i.valorTotal, 0))
     const rotulo =
       classe === 'A'
-        ? 'Classe A — até 80% acumulado'
+        ? 'Classe Help Vida A — até 80% acumulado'
         : classe === 'B'
-          ? 'Classe B — 80% a 95% acumulado'
-          : 'Classe C — 95% a 100% acumulado'
+          ? 'Classe Help Vida B — 80% a 95% acumulado'
+          : 'Classe Help Vida C — 95% a 100% acumulado'
     return {
       classe,
       rotulo,
