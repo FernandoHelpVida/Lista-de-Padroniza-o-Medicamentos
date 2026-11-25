@@ -50,10 +50,7 @@ const cacheDescricao = new Map<string, boolean>()
  * medicamento deve aparecer na descrição delimitado por espaço/início/fim
  * (a dosagem faz parte do nome, evitando trocar concentrações).
  */
-export function ehProdutoPadronizado(
-  descricao: string,
-  nomesPadronizados: Set<string>,
-): boolean {
+export function ehProdutoPadronizado(descricao: string, nomesPadronizados: Set<string>): boolean {
   const desc = normalizarNomeProduto(descricao)
   if (!desc) return false
   const emCache = cacheDescricao.get(desc)
